@@ -6,21 +6,27 @@ import { Heading } from "@astryxdesign/core/Heading";
 import { Text } from "@astryxdesign/core/Text";
 import { TopNav, TopNavHeading } from "@astryxdesign/core/TopNav";
 import { VStack } from "@astryxdesign/core/VStack";
-import type { Health } from "../server/health";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { useAtom, useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
+import { Cause, Option } from "effect";
+import { readAtom, transformAtom } from "../features/probe/atoms";
 
 export default function HomePage() {
-  const [message, setMessage] = useState("Ready to test the backend.");
-
-  async function testBackend() {
-    try {
-      const response = await fetch("/api/health");
-      if (!response.ok) throw new Error(`API returned ${response.status}`);
-      const health: Health = await response.json();
-      setMessage(`${health.message} — ${health.timestamp}`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Backend request failed.");
-    }
-  }
+  const [input, setInput] = useState("");
+  const snapshot = useAtomValue(readAtom);
+  const refresh = useAtomRefresh(readAtom);
+  const [transform, submit] = useAtom(transformAtom);
+  const lastSnapshot = AsyncResult.value(snapshot);
+  const transformError = AsyncResult.isFailure(transform)
+    ? Cause.findErrorOption(transform.cause)
+    : Option.none();
+  const errorMessage =
+    Option.isSome(transformError) && transformError.value._tag === "InvalidProbeInput"
+      ? `InvalidProbeInput: ${transformError.value.message}`
+      : AsyncResult.isFailure(transform)
+        ? "Transport error: the RPC request failed. Try again."
+        : undefined;
 
   return (
     <AppShell
@@ -42,11 +48,52 @@ export default function HomePage() {
           </Text>
         </VStack>
         <VStack gap={4} hAlign="start">
-          <Heading level={2}>Backend smoke test</Heading>
-          <Button label="Test backend" variant="primary" clickAction={testBackend} />
+          <Heading level={2}>Server snapshot</Heading>
+          <Button label="Refresh" isLoading={snapshot.waiting} onClick={refresh} />
           <Text as="p" role="status" aria-live="polite">
-            {message}
+            {Option.isSome(lastSnapshot)
+              ? `${lastSnapshot.value.message} — ${lastSnapshot.value.observedAt}`
+              : "Loading snapshot…"}
           </Text>
+          {snapshot.waiting && (
+            <Text as="p" role="status">
+              Refreshing; retaining the last snapshot.
+            </Text>
+          )}
+          {AsyncResult.isFailure(snapshot) && (
+            <Text as="p" role="alert">
+              Transport error: snapshot refresh failed. Try again.
+            </Text>
+          )}
+        </VStack>
+        <VStack gap={4} hAlign="start">
+          <Heading level={2}>Stateless transform</Heading>
+          <TextInput
+            label="Text to transform"
+            value={input}
+            onChange={setInput}
+            description="1–80 characters after trimming. Submit blank text to see a typed failure."
+          />
+          <Button
+            label="Transform"
+            variant="primary"
+            isLoading={transform.waiting}
+            onClick={() => submit({ payload: { input } })}
+          />
+          <Text as="p" type="supporting">
+            The result is temporary browser state. Transforming does not change or refresh the
+            snapshot.
+          </Text>
+          {AsyncResult.isSuccess(transform) && (
+            <Text as="p" role="status" aria-live="polite">
+              {transform.value.input} → {transform.value.output}
+            </Text>
+          )}
+          {errorMessage && (
+            <Text as="p" role="alert">
+              {errorMessage}
+            </Text>
+          )}
         </VStack>
       </VStack>
     </AppShell>
