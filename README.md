@@ -30,6 +30,36 @@ Alchemy loads the same Vite configuration and injects its own runtime plugin on
 deployment. The config's injection guard prevents duplicate plugin instances.
 The compatibility date is pinned to `2026-07-01`, supported by the bundled workerd.
 
+## Reference sources
+
+`scripts/refs.ts` is an Effect CLI executed directly by Node's TypeScript stripping
+(Node 22.18+). It downloads source archives, not installed packages or Git checkouts.
+
+```sh
+pnpm refs list
+pnpm refs fetch tan-query tan-form
+pnpm refs:all
+pnpm refs:check
+```
+
+References include Alchemy, Vite+, TanStack Start/Router/Query/Form, Astryx, Effect,
+Cloudflare docs, and the private Baton repository. Library tags follow exact `package.json` pins;
+Baton snapshots `main` using your existing `gh` authentication (`gh auth login`).
+Fetching requires `curl` and `tar`, plus `gh` for Baton.
+
+Downloaded sources and `.ref.json` stamps live under `refs/`, which is excluded
+from Git, TypeScript, linting, formatting, and the app's test discovery. Do not
+import application code from refs. `check` exits nonzero for missing, stale, or
+invalid copies; branch snapshots report their fetch date, not upstream freshness.
+Refresh Baton explicitly with `pnpm refs fetch baton`. Downloads are staged before
+replacement, and a failed download leaves the existing reference intact.
+
+Cloudflare docs snapshot the upstream `production` branch; refresh them with
+`pnpm refs fetch cloudflare-docs`.
+
+These package scripts also work through `vp run`; do not enable task caching for
+reference fetches.
+
 ## Deployment
 
 Deployed to Cloudflare using the `default` OAuth profile, stage `live_mw`:

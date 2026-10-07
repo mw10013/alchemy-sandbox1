@@ -20,8 +20,9 @@ export default defineConfig(({ mode }) => ({
         ],
   server: { port: 3000, strictPort: true },
   test: { include: ["src/**/*.test.ts"] },
-  fmt: { ignorePatterns: ["src/routeTree.gen.ts", "AGENTS.md"] },
+  fmt: { ignorePatterns: ["src/routeTree.gen.ts", "AGENTS.md", "refs/**"] },
   lint: {
+    ignorePatterns: ["refs/**"],
     jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
     rules: { "vite-plus/prefer-vite-plus-imports": "error" },
     options: { typeAware: true, typeCheck: true },

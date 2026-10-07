@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "refs": "node scripts/refs.ts",
+    "refs:all": "node scripts/refs.ts fetch --all",
+    "refs:check": "node scripts/refs.ts check",
     "dev": "vp dev",
     "dev:worker": "alchemy dev",
     "build": "vp build",
@@ -19,6 +22,8 @@
     "@astryxdesign/theme-neutral": "0.6.5",
     "@effect/platform-node": "4.0.1",
     "@stylexjs/stylex": "0.19.1",
+    "@tanstack/react-form": "1.33.5",
+    "@tanstack/react-query": "5.104.1",
     "@tanstack/react-router": "1.170.41",
     "@tanstack/react-start": "1.168.60",
     "alchemy": "2.0.0-beta.81",
