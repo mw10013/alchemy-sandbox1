@@ -1,0 +1,17 @@
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export const Website = Cloudflare.Website.Vite("Website", {
+  compatibility: { date: "2026-07-01", flags: ["nodejs_compat"] },
+  dev: { port: 3000 },
+});
+
+export default Alchemy.Stack(
+  "Alchemy-sandbox1",
+  { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  Effect.gen(function* () {
+    const website = yield* Website;
+    return { websiteUrl: website.url.as<string>() };
+  }),
+);
