@@ -81,6 +81,28 @@ can access/provision real cloud resources; use `vp run dev` for offline developm
 
 ## Dependencies and Astryx
 
+### Changing Node or pnpm versions
+
+`package.json` is the source of truth for the Node version (`devEngines.runtime`)
+and pnpm version (`devEngines.packageManager` and `packageManager`; keep these two
+pnpm declarations in sync). pnpm also records the resolved runtime and package
+manager in `pnpm-lock.yaml`; those entries are generated, not edited by hand.
+
+After changing a version in `package.json`, run:
+
+```sh
+pnpm install --lockfile-only
+pnpm install --frozen-lockfile
+```
+
+Commit **both `package.json` and `pnpm-lock.yaml`** before pushing. Cloudflare's
+Git integration uses `pnpm install --frozen-lockfile`, which rejects a lockfile
+that does not match the version declarations—even when only Node changed.
+With `devEngines.runtime.onFail: "download"`, pnpm downloads the declared Node
+runtime for project commands; Cloudflare's initial Node version can differ.
+
+### Package dependencies
+
 All direct dependencies are exact versions from the npm `latest` tag at setup.
 Alchemy's current latest is the Effect-based `2.0.0-beta.81`; Effect is `4.0.1`.
 Vite is intentionally aliased to the latest Vite+ core (`1.1.0`), as scaffolded
