@@ -43,6 +43,7 @@ const refs: readonly Ref[] = [
   },
   { name: "astryx", repo: "facebook/astryx", dep: "@astryxdesign/core", tag: "v{v}" },
   { name: "effect", repo: "Effect-TS/effect", dep: "effect", tag: "effect@{v}" },
+  { name: "effect-tanstack-start", repo: "lucas-barake/effect-tanstack-start", branch: "main" },
 ];
 
 const Manifest = Schema.fromJsonString(
