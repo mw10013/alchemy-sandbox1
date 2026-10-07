@@ -84,7 +84,7 @@ can access/provision real cloud resources; use `vp run dev` for offline developm
 All direct dependencies are exact versions from the npm `latest` tag at setup.
 Alchemy's current latest is the Effect-based `2.0.0-beta.81`; Effect is `4.0.1`.
 Vite is intentionally aliased to the latest Vite+ core (`1.1.0`), as scaffolded
-by VP. `pnpm-lock.yaml` locks transitive dependencies; `.npmrc` enables exact saves
+by VP. `pnpm-lock.yaml` locks transitive dependencies; `pnpm-workspace.yaml` enables exact saves
 for future additions. To add a dependency at the latest exact version:
 
 ```sh
