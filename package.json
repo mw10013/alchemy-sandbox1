@@ -4,18 +4,18 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "refs": "node scripts/refs.ts",
-    "refs:all": "node scripts/refs.ts fetch --all",
-    "refs:check": "node scripts/refs.ts check",
-    "dev": "vp dev",
-    "dev:worker": "alchemy dev",
+    "dev": "alchemy dev --stage dev",
     "build": "vp build",
     "typecheck": "tsc --noEmit",
     "check": "vp check",
     "test": "vp test run",
     "preview": "vp preview",
-    "deploy": "alchemy deploy",
-    "astryx": "node node_modules/@astryxdesign/cli/clients/cli/bin/astryx.mjs"
+    "deploy:staging": "alchemy deploy --stage staging --yes",
+    "deploy:production": "alchemy deploy --stage production --yes",
+    "astryx": "node node_modules/@astryxdesign/cli/clients/cli/bin/astryx.mjs",
+    "refs": "node scripts/refs.ts",
+    "refs:all": "node scripts/refs.ts fetch --all",
+    "refs:check": "node scripts/refs.ts check"
   },
   "dependencies": {
     "@astryxdesign/core": "0.6.5",
