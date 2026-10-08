@@ -14,7 +14,7 @@ files only, and history retained across restarts. These are reasonable initial
 limits, not a measured requirement or a strict disk quota.
 
 Integration adopted: `pnpm dev` now pipes `alchemy dev --stage dev` through
-s6-log into `./.log/dev`, and `.gitignore` excludes `/.log/`. The underlying
+s6-log into `./logs/dev`, covered by the existing `logs` ignore rule. The underlying
 dev command changed from `vp dev` after the original research; integration
 preserves that newer command. The logger was tested in temporary directories,
 not against the actual development server.
@@ -30,8 +30,10 @@ not against the actual development server.
   separately first, especially for port conflicts.
 - `command -v s6-log` returned `/opt/homebrew/bin/s6-log`.
 - `brew list --versions s6` returned `s6 2.15.1.0`.
-- `.gitignore` now excludes `/.log/`, including `current` and timestamp-named
-  archives. The existing `*.log` rule alone does not cover these files.
+- `.gitignore` already excludes `logs`, including `current` and timestamp-named
+  archives beneath it. No additional ignore rule is needed. Use visible `logs/`
+  rather than hidden `.log/` so debugging output is easy to discover and browse.
+  The existing `*.log` rule alone does not cover these files.
 
 ## Adopted command
 
@@ -47,10 +49,10 @@ pnpm dev
 Equivalent expanded command (do not pipe `pnpm dev` again):
 
 ```sh
-mkdir -p ./.log/dev
+mkdir -p ./logs/dev
 set -o pipefail
 NO_COLOR=1 alchemy dev --stage dev 2>&1 |
-  s6-log -b -l 65536 n20 s5242880 S104857600 T ./.log/dev 1
+  s6-log -b -l 65536 n20 s5242880 S104857600 T ./logs/dev 1
 ```
 
 `2>&1` merges the producer's stderr into stdout **before** the pipe. Without it,
@@ -72,7 +74,7 @@ on the package runner's default shell supporting `pipefail`:
 
 ```json
 {
-  "dev": "bash -o pipefail -c 'mkdir -p ./.log/dev && NO_COLOR=1 alchemy dev --stage dev 2>&1 | s6-log -b -l 65536 n20 s5242880 S104857600 T ./.log/dev 1'"
+  "dev": "bash -o pipefail -c 'mkdir -p ./logs/dev && NO_COLOR=1 alchemy dev --stage dev 2>&1 | s6-log -b -l 65536 n20 s5242880 S104857600 T ./logs/dev 1'"
 }
 ```
 
@@ -97,7 +99,7 @@ For the commands above:
 
 | Producer | Active file |
 | --- | --- |
-| `pnpm dev` | `./.log/dev/current` |
+| `pnpm dev` | `./logs/dev/current` |
 
 Each directory contains:
 
@@ -109,7 +111,7 @@ Each directory contains:
   internal rotation/processor bookkeeping, not ordinary log files to search.
 
 One directory per independently running producer is essential. Two concurrent
-instances of the same command need distinct paths, such as `.log/dev-instance2`.
+instances of the same command need distinct paths, such as `logs/dev-instance2`.
 Do not delete the directory on startup: that would discard the retained history.
 
 ## Evaluation of the Notes settings
@@ -186,12 +188,12 @@ logs were flushed before an abrupt crash or power loss.
 From the repository root:
 
 ```sh
-tail -n 200 ./.log/dev/current
+tail -n 200 ./logs/dev/current
 
 rg --hidden --no-ignore -n -i -C 3 --glob current --glob '@*.s' --glob '@*.u' \
-  'error|exception|failed|EADDRINUSE' ./.log/dev
+  'error|exception|failed|EADDRINUSE' ./logs/dev
 
-tail -F ./.log/dev/current
+tail -F ./logs/dev/current
 ```
 
 `--no-ignore` allows this explicitly scoped search to read the ignored logs.

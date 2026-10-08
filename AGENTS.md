@@ -1,6 +1,7 @@
 # AGENTS.md
 
-Project-specific guidance for AI coding agents.
+## Logs
+Dev logs: `logs/dev/current`. Rotated archives: `logs/dev/`.
 
 <!-- ASTRYX:START -->
 Astryx v0.6.5 · 166 components
