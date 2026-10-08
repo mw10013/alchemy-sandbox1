@@ -11,9 +11,12 @@ vp install
 vp run dev
 ```
 
-Open http://localhost:3000 and click **Test backend**. Local development uses
-Alchemy's Cloudflare runtime plugin (workerd); no cloud resources or credentials
-are required. No official `@cloudflare/vite-plugin` or Wrangler config is needed.
+Open http://localhost:3000. `vp run dev` runs Alchemy under stage `dev`, using
+local implementations where available and cloud resources when needed. The shared
+Cloudflare state backend requires cloud access. Development logs are captured by
+`s6-log` (install with `brew install s6`) in `.log/dev`. `vp dev` is the app-only
+fallback without Alchemy reconciliation. No official `@cloudflare/vite-plugin`
+or Wrangler config is needed.
 
 ## Validate
 
@@ -62,22 +65,25 @@ reference fetches.
 
 ## Deployment
 
-Deployed to Cloudflare using the `default` OAuth profile, stage `live_mw`:
+Staging runs on Cloudflare under stage `staging`:
 
-https://alchemy-sandbox1-website-live-mw-zl2qcdtfjxhdlfbx.mw10013.workers.dev
+https://alchemy-sandbox1-website-staging-a6uwn3bzazl3yzgy.mw10013.workers.dev
 
-The live homepage, `/api/health`, and interactive backend button were verified.
-To authenticate on another machine or redeploy:
+The staging homepage and server snapshot were verified. Git pushes to `main`
+deploy through Cloudflare Builds using `pnpm exec vp run deploy:staging`.
+To authenticate on another machine, review changes, or redeploy:
 
 ```sh
 vp exec alchemy profile edit --add Cloudflare
-vp run deploy
+vp exec alchemy plan --stage staging
+vp run deploy:staging
 ```
 
 Alchemy stores authentication in its profiles; do not put credentials in source
-files. Deployment also provisions Alchemy's Cloudflare state store. Review the
-plan before confirming. `vp run dev:worker` runs Alchemy-managed development and
-can access/provision real cloud resources; use `vp run dev` for offline development.
+files. Deployment uses Alchemy's shared Cloudflare state store. Review the plan
+before running the deployment script, which auto-approves with `--yes`. Production
+is reserved for a separate future instance. See
+[environment research](docs/alchemy-stages-and-deployments-research.md) for details.
 
 ## Dependencies and Astryx
 

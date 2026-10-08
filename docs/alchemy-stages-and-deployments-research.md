@@ -1,6 +1,6 @@
 # Alchemy: dev, staging, and production
 
-Updated 2026-10-08 · Alchemy `2.0.0-beta.81` · Development validated; staging deployed and HTTP response verified; Git integration connected. First Git-triggered deployment awaits verification.
+Updated 2026-10-08 · Alchemy `2.0.0-beta.81` · Development and staging work; Git integration connected and reported working by the operator. Cloudflare deployment history shows a subsequent active deployment.
 
 ## Accepted target
 
@@ -112,7 +112,7 @@ The reviewed plan contained only `[Website] create`, with no updates or deletion
 - HTTP verification returned the app's “Hello, Alchemy.” page and a server snapshot. Browser interaction testing remains separate.
 - The build emitted a non-blocking warning about chunks larger than 500 kB.
 
-### 4. Git integration connected; validate the first build
+### 4. Git integration connected and working
 
 The operator connected the staging Worker to `mw10013/alchemy-sandbox1`. The saved configuration shows:
 
@@ -122,13 +122,15 @@ The operator connected the staging Worker to `mw10013/alchemy-sandbox1`. The sav
 - Root directory: `/`
 - API token: `Workers Builds - 2026-05-31 17:29`
 
-Preview builds were unchecked before submission. The saved Production settings screenshot does not expose that setting; confirm the persisted value in Preview Builds. Keep previews off.
+Preview builds are confirmed disabled through Chrome MCP: Settings → Builds → Previews Base shows the “Builds for Preview branches” switch unchecked. No preview toggle change or settings save was performed during verification.
 
 The selected token displays a warning about missing email-routing read/write and artifacts read/write permissions. Do not broaden access merely to suppress the warning. Review actual deployment requirements as a follow-up, or add specific required permissions if the first build fails with an authorization error.
 
 Cloudflare installs repository dependencies before executing the deploy command. `pnpm exec` resolves the project-local `vp` supplied by the `vite-plus` dependency; do not rely on a global `vp` installation. CI must have credentials and access to the same Alchemy state backend so it updates the existing staging Worker.
 
-The initial script commits were pushed before Git was connected. Push this documentation update to test the new integration. Confirm a Git build logs stage `staging`, loads shared state, updates the existing Worker rather than creating a new one, and serves the app at the recorded URL. Build success has not yet been verified. Update README links. Cloudflare's label “Production” for the Worker's primary branch does not change its role as our staging environment.
+Commit `d478c4b` was pushed to `main` after Git was connected to exercise the integration. The operator reports the workflow is working, and the supplied Cloudflare deployment-history screenshot shows a subsequent active deployment, version `ab71e541`, receiving 100% of traffic. The screenshot labels the source as API, consistent with an Alchemy upload; it does not itself expose the Git commit or build logs. No independent build-log inspection was performed for this final confirmation.
+
+Core setup is complete. README now links to staging and documents the current development/deployment commands. An optional final check is to inspect the successful build's commit/stage and shared-state logs. Cloudflare's label “Production” for the Worker's primary branch does not change its role as our staging environment.
 
 ### 5. Add production later
 
