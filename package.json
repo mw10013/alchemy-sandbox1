@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "alchemy dev --stage dev",
+    "dev": "bash -o pipefail -c 'mkdir -p ./.log/dev && NO_COLOR=1 alchemy dev --stage dev 2>&1 | s6-log -b -l 65536 n20 s5242880 S104857600 T ./.log/dev 1'",
     "build": "vp build",
     "typecheck": "tsc --noEmit",
     "check": "vp check",
