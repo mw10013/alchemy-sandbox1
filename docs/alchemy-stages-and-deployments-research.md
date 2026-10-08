@@ -1,6 +1,6 @@
 # Alchemy: dev, staging, and production
 
-Updated 2026-10-08 · Alchemy `2.0.0-beta.81` · Package scripts applied; no new deployment created.
+Updated 2026-10-08 · Alchemy `2.0.0-beta.81` · Package scripts applied; development validated; staging deployed and HTTP response verified. Git integration remains to be configured.
 
 ## Accepted target
 
@@ -87,15 +87,15 @@ A different stage selects another tracked instance; it does not rename an existi
 
 The agreed package-script changes are applied. No Cloudflare website deployment is needed before starting development.
 
-### 2. Validate development
+### 2. Development validated
 
 ```sh
 vp run dev
 ```
 
-Confirm the local app starts, changes reload, and any required supporting resources reconcile under `dev`.
+The local development workflow has been validated by the operator. Supporting resources reconcile under `dev`.
 
-### 3. Create staging
+### 3. Staging created
 
 ```sh
 # Review proposed staging resources:
@@ -105,19 +105,24 @@ vp exec alchemy plan --stage staging
 vp exec alchemy deploy --stage staging
 ```
 
-Record the Worker name and URL. The first deploy is interactive; the routine script uses `--yes` for CI after setup has been validated.
+The reviewed plan contained only `[Website] create`, with no updates or deletions. Deployment was applied with `--yes` under explicit operator authorization and succeeded.
+
+- Worker: `alchemy-sandbox1-website-staging-a6uwn3bzazl3yzgy`
+- URL: <https://alchemy-sandbox1-website-staging-a6uwn3bzazl3yzgy.mw10013.workers.dev>
+- HTTP verification returned the app's “Hello, Alchemy.” page and a server snapshot. Browser interaction testing remains separate.
+- The build emitted a non-blocking warning about chunks larger than 500 kB.
 
 ### 4. Connect and validate staging Git deployment
 
-Connect the new staging Worker to `mw10013/alchemy-sandbox1`, branch `main`, with `vp run deploy:staging` as its deploy command. Configure CI credentials, no separate build command, and previews off.
+Connect the new staging Worker to `mw10013/alchemy-sandbox1`, branch `main`, with `pnpm exec vp run deploy:staging` as its deploy command. Configure CI credentials, no separate build command, and previews off.
 
-Verify `vp` is available in the build environment. If no global binary exists, use the installed project-local binary: `./node_modules/.bin/vp run deploy:staging`.
+Cloudflare installs repository dependencies before executing the deploy command. `pnpm exec` resolves the project-local `vp` supplied by the `vite-plus` dependency; do not rely on a global `vp` installation. CI must have credentials and access to the same Alchemy state backend so it updates the existing staging Worker.
 
 Confirm a Git build logs stage `staging`, updates the connected Worker, and serves the app at the recorded URL. Update README links. Cloudflare's label “Production” for the Worker's primary branch does not change its role as our staging environment.
 
 ### 5. Add production later
 
-Create a separate `production` instance/Worker and connect the protected `production` branch with `vp run deploy:production`. Keep runtime data, secrets, and domains separate from staging.
+Create a separate `production` instance/Worker and connect the protected `production` branch with `pnpm exec vp run deploy:production` as the Git integration deploy command. Keep runtime data, secrets, and domains separate from staging.
 
 ## Sources
 
