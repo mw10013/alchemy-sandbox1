@@ -2,6 +2,7 @@
 
 ## Logs
 Dev logs: `logs/dev/current`. Rotated archives: `logs/dev/`.
+Staging logs: use `cf o11y telemetry query` on `cloudflare-workers`, filtering `$metadata.service` to `alchemy-sandbox1-website-staging-a6uwn3bzazl3yzgy`.
 
 <!-- ASTRYX:START -->
 Astryx v0.6.5 · 166 components
