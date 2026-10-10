@@ -2,7 +2,7 @@
 
 ## Git
 - Do not git commit unless you are explicitly instructed.
-- In the main checkout, commit to `main`. In a linked worktree, commit to that worktree's branch and never check out `main` there. Do not create other branches.
+- Commit only to the branch checked out where you work: `main` in the main checkout, `wt-NN` in a worktree. Create no other branches, except a new `wt-NN` when setting up a worktree.
 
 ## Effect
 - Validation, parsing, encoding: Effect Schema. Never trim, length-check or regex-test input by hand.
@@ -10,7 +10,7 @@
 - Effect's own idiom guide is in `refs/effect/ai-docs/src` and `refs/effect/LLMS.md`.
 
 ## Dev server
-`http://localhost:$(pnpm port)`
+Start with `vp run dev:start`, not `vp run dev`. Then `http://localhost:$(pnpm port)`.
 
 ## Logs
 Dev logs: `logs/dev/current`. Rotated archives: `logs/dev/`.

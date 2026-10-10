@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * `pnpm worktree:init`: prepares the linked worktree `wt-NN` it runs in to
+ * `vp run worktree:init`: prepares the linked worktree `wt-NN` it runs in to
  * serve its own dev server beside the main checkout's. Run it after
- * `pnpm install --frozen-lockfile` in a worktree T3 Code just created; it
+ * `vp install --frozen-lockfile` in a worktree T3 Code just created; it
  * needs `node_modules` to run.
  *
  * The index comes from the branch name: `wt-01` is index 1 and serves on the
@@ -17,7 +17,7 @@
  *    no secrets) with `WEBSITE_PORT` set for this worktree.
  * 3. `refs`: a symlink to the main checkout's `refs/`.
  *
- * It does not start the server; `pnpm dev:start` does.
+ * It does not start the server; `vp run dev:start` does.
  */
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as Console from "effect/Console";
@@ -144,7 +144,7 @@ const init = Effect.gen(function* () {
         .pipe(Effect.andThen(Console.log(`ok    refs -> ${refsTarget}`))),
   });
 
-  yield* Console.log(`\n${branch} ready on port ${String(port)}. Next: pnpm dev:start`);
+  yield* Console.log(`\n${branch} ready on port ${String(port)}. Next: vp run dev:start`);
 });
 
 // Every failure of `init` is a message for the person at the terminal.

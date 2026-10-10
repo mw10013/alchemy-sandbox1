@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * `pnpm dev:start | dev:stop | dev:status | dev:logs`: one command that an
- * agent and a person both use to get this checkout's dev server (`pnpm dev`,
+ * `vp run dev:start | dev:stop | dev:status | dev:logs`: one command that an
+ * agent and a person both use to get this checkout's dev server (`vp run dev`,
  * which runs `alchemy dev`) running, and to find it again. Every checkout,
  * the main one and each `wt-NN` worktree, runs its own server on its own
  * `WEBSITE_PORT` from its `.env`.
@@ -27,7 +27,7 @@
  * herdr is asked whether it runs (`herdr status`), never `HERDR_ENV`: T3 Code
  * agents run outside herdr but can still drive it over its socket.
  *
- * The server's output always goes to `logs/dev/current` (`pnpm dev` pipes it
+ * The server's output always goes to `logs/dev/current` (the `dev` script pipes it
  * through `s6-log`), and to the pane or terminal it runs in.
  *
  * `start` and `stop` hold `logs/dev.lock` so parallel agents in one checkout
@@ -119,7 +119,7 @@ const cwdOf = (pid: number) =>
     Effect.orElseSucceed(() => Option.none<string>()),
   );
 
-/** Processes whose command line runs `alchemy dev` in this checkout (the `pnpm dev` shell and Alchemy's CLI). */
+/** Processes whose command line runs `alchemy dev` in this checkout (the `dev` script's shell and Alchemy's CLI). */
 const serverPids = runCommand("pgrep", ["-f", SERVER_PROCESS]).pipe(
   Effect.map(pidsFrom),
   Effect.orElseSucceed((): number[] => []),
@@ -344,12 +344,12 @@ const placeServer = Effect.gen(function* () {
 
 const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
-const pnpmDev = (options: ChildProcess.CommandOptions) =>
-  ChildProcess.make("pnpm", ["dev"], { cwd: ROOT, ...options });
+const runDev = (options: ChildProcess.CommandOptions) =>
+  ChildProcess.make("vp", ["run", "dev"], { cwd: ROOT, ...options });
 
 /**
  * Starts the server where {@link placeServer} says. A foreground start returns
- * the handle of `pnpm dev`, which owns the caller's terminal until it exits;
+ * the handle of `vp run dev`, which owns the caller's terminal until it exits;
  * the other placements return once the server is launched and outlive the
  * command.
  */
@@ -363,14 +363,14 @@ const launchServer = Effect.fn("launchServer")(function* (placement: Placement) 
           10_000,
           250,
         );
-        yield* Herdr.runInPane(paneId, `cd ${shellQuote(ROOT)} && pnpm dev`);
+        yield* Herdr.runInPane(paneId, `cd ${shellQuote(ROOT)} && vp run dev`);
         yield* Console.log(`ok    started in herdr tab "${DEV_TAB}" (pane ${paneId})`);
         return Option.none<ChildProcessSpawner.ChildProcessHandle>();
       }),
     Background: () =>
       Effect.gen(function* () {
         const handle = yield* spawner.spawn(
-          pnpmDev({ stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true }),
+          runDev({ stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true }),
         );
         // Unreferenced, the process survives this command's scope closing.
         yield* handle.unref;
@@ -379,7 +379,7 @@ const launchServer = Effect.fn("launchServer")(function* (placement: Placement) 
       }),
     Foreground: () =>
       spawner
-        .spawn(pnpmDev({ stdin: "inherit", stdout: "inherit", stderr: "inherit", detached: false }))
+        .spawn(runDev({ stdin: "inherit", stdout: "inherit", stderr: "inherit", detached: false }))
         .pipe(Effect.map(Option.some)),
   });
 });
@@ -392,7 +392,7 @@ const waitAnswering = (port: number) =>
         (answered) => answered,
         () =>
           fail(
-            `no answer on port ${String(port)} after ${String(START_TIMEOUT_MS / 1000)}s; see pnpm dev:logs`,
+            `no answer on port ${String(port)} after ${String(START_TIMEOUT_MS / 1000)}s; see vp run dev:logs`,
           ),
       ),
     ),
@@ -528,7 +528,7 @@ const logsCommand = Command.make(
 Command.make("dev").pipe(
   Command.withDescription(
     [
-      "Run this checkout's dev server (pnpm dev) for an agent or a person.",
+      "Run this checkout's dev server (vp run dev) for an agent or a person.",
       "Where it runs, first match wins:",
       "  1. a server already running for this checkout is adopted;",
       `  2. with herdr running: the checkout's workspace, tab "${DEV_TAB}" (opened if needed);`,
