@@ -1,9 +1,10 @@
-import { createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
+import { createRootRouteWithContext, HeadContent, Scripts } from "@tanstack/react-router";
+import type * as AtomRegistry from "effect/reactivity/AtomRegistry";
 import stylesheet from "../styles.css?url";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { Heading } from "@astryxdesign/core/Heading";
 
-export const Route = createRootRoute({
+export const Route = createRootRouteWithContext<{ registry: AtomRegistry.AtomRegistry }>()({
   head: () => ({
     meta: [
       { charSet: "utf-8" },

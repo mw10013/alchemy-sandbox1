@@ -1,35 +1,23 @@
 import * as Cloudflare from "alchemy/Cloudflare";
-import { DateTime, Effect, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { RpcSerialization, RpcServer } from "effect/rpc";
+import { BackendRpcs } from "../api/backend.ts";
+import { BackendHandlers } from "./handlers.ts";
 
-export class InvalidInput extends Schema.TaggedError<InvalidInput>()("InvalidInput", {
-  message: Schema.String,
-}) {}
-
-// Private Effect Worker. Start reaches it only through the `BACKEND` service
-// binding, calling these methods with `toRpcAsync` from `alchemy/Cloudflare/Bridge`.
-export default class Backend extends Cloudflare.Worker<Backend>()(
+// Private Effect Worker. The Website reaches it only through the `BACKEND`
+// service binding, as Effect RPC over HTTP (ndjson).
+export default class Backend extends Cloudflare.RpcWorker<Backend>()(
   "Backend",
   {
     main: import.meta.filename,
+    schema: BackendRpcs,
     workersDev: false,
     compatibility: { date: "2026-07-01", flags: ["nodejs_compat"] },
   },
-  Effect.succeed({
-    hello: Effect.fn("Backend.hello")(function* () {
-      const now = yield* DateTime.now;
-      return {
-        message: "Hello from the backend Worker.",
-        servedAt: DateTime.formatIso(now),
-      };
-    }),
-    shout: Effect.fn("Backend.shout")(function* (input: string) {
-      const trimmed = input.trim();
-      if (trimmed.length < 1 || trimmed.length > 80) {
-        return yield* new InvalidInput({
-          message: "Enter between 1 and 80 characters after trimming.",
-        });
-      }
-      return { input: trimmed, output: trimmed.toUpperCase() };
-    }),
-  }),
+  Effect.sync(() =>
+    RpcServer.toHttpEffect(BackendRpcs).pipe(
+      Effect.provide(Layer.mergeAll(BackendHandlers, RpcSerialization.layerNdjson)),
+    ),
+  ),
 ) {}
