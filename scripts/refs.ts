@@ -1,56 +1,112 @@
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
-import { Console, DateTime, Effect, FileSystem, Path, Schema } from "effect";
+import * as Console from "effect/Console";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Match from "effect/Match";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { Argument, CliError, Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-interface Ref {
-  readonly name: string;
-  readonly repo: string;
-  readonly dep?: string;
-  readonly tag?: string;
-  readonly branch?: string;
-  readonly private?: boolean;
-}
+import { checkoutKind } from "./lib/worktree.ts";
+
+/** A reference source is pinned either to a branch or to a dependency's installed version. */
+type Ref =
+  | {
+      readonly _tag: "Branch";
+      readonly name: string;
+      readonly repo: string;
+      readonly branch: string;
+      readonly private?: boolean;
+    }
+  | {
+      readonly _tag: "Dependency";
+      readonly name: string;
+      readonly repo: string;
+      readonly dep: string;
+      /** The tag template; `{v}` is the installed version. */
+      readonly tag: string;
+    };
 
 const refs: readonly Ref[] = [
-  { name: "baton", repo: "mw10013/baton", branch: "main", private: true },
-  { name: "cloudflare-docs", repo: "cloudflare/cloudflare-docs", branch: "production" },
-  { name: "alchemy", repo: "alchemy-run/alchemy", dep: "alchemy", tag: "v{v}" },
-  { name: "vite-plus", repo: "voidzero-dev/vite-plus", dep: "vite-plus", tag: "v{v}" },
+  { _tag: "Branch", name: "baton", repo: "mw10013/baton", branch: "main", private: true },
   {
+    _tag: "Branch",
+    name: "cloudflare-docs",
+    repo: "cloudflare/cloudflare-docs",
+    branch: "production",
+  },
+  { _tag: "Dependency", name: "alchemy", repo: "alchemy-run/alchemy", dep: "alchemy", tag: "v{v}" },
+  {
+    _tag: "Dependency",
+    name: "vite-plus",
+    repo: "voidzero-dev/vite-plus",
+    dep: "vite-plus",
+    tag: "v{v}",
+  },
+  {
+    _tag: "Dependency",
     name: "tan-start",
     repo: "TanStack/router",
     dep: "@tanstack/react-start",
     tag: "@tanstack/react-start@{v}",
   },
   {
+    _tag: "Dependency",
     name: "tan-router",
     repo: "TanStack/router",
     dep: "@tanstack/react-router",
     tag: "@tanstack/react-router@{v}",
   },
   {
+    _tag: "Dependency",
     name: "tan-query",
     repo: "TanStack/query",
     dep: "@tanstack/react-query",
     tag: "@tanstack/react-query@{v}",
   },
   {
+    _tag: "Dependency",
     name: "tan-form",
     repo: "TanStack/form",
     dep: "@tanstack/react-form",
     tag: "@tanstack/react-form@{v}",
   },
-  { name: "astryx", repo: "facebook/astryx", dep: "@astryxdesign/core", tag: "v{v}" },
-  { name: "effect", repo: "Effect-TS/effect", dep: "effect", tag: "effect@{v}" },
-  { name: "effect-tanstack-start", repo: "lucas-barake/effect-tanstack-start", branch: "main" },
   {
+    _tag: "Dependency",
+    name: "astryx",
+    repo: "facebook/astryx",
+    dep: "@astryxdesign/core",
+    tag: "v{v}",
+  },
+  {
+    _tag: "Dependency",
+    name: "effect",
+    repo: "Effect-TS/effect",
+    dep: "effect",
+    tag: "effect@{v}",
+  },
+  {
+    _tag: "Branch",
+    name: "effect-tanstack-start",
+    repo: "lucas-barake/effect-tanstack-start",
+    branch: "main",
+  },
+  {
+    _tag: "Dependency",
     name: "yielded-auth",
     repo: "yielded-dev/auth",
     dep: "@yielded/auth",
     tag: "@yielded/auth@{v}",
   },
-  { name: "better-auth", repo: "better-auth/better-auth", dep: "better-auth", tag: "v{v}" },
+  {
+    _tag: "Dependency",
+    name: "better-auth",
+    repo: "better-auth/better-auth",
+    dep: "better-auth",
+    tag: "v{v}",
+  },
 ];
 
 const Manifest = Schema.fromJsonString(
@@ -59,8 +115,10 @@ const Manifest = Schema.fromJsonString(
     devDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   }),
 );
-const ExactVersion = Schema.String.pipe(
-  Schema.check(Schema.isPattern(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u)),
+const ExactVersion = Schema.String.check(
+  Schema.isPattern(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u, {
+    message: "the dependency must have an exact version pin, like 1.2.3",
+  }),
 );
 const Stamp = Schema.fromJsonString(
   Schema.Struct({
@@ -72,49 +130,52 @@ const Stamp = Schema.fromJsonString(
   { space: 2 },
 );
 
-const userError = (message: string) =>
-  new CliError.UserError({
-    cause: message,
-    userMessage: message,
-  });
-const toUserError = (error: unknown) =>
-  error instanceof CliError.UserError
-    ? error
-    : userError(error instanceof Error ? error.message : String(error));
+export class RefError extends Schema.TaggedError<RefError>()("RefError", {
+  message: Schema.String,
+}) {}
 
 const root = Effect.gen(function* () {
   const path = yield* Path.Path;
   return path.resolve(path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))), "..");
 });
 
+/** The git ref to download, and the installed version for a dependency-pinned ref. */
 const resolve = Effect.fn("resolveRef")(function* (ref: Ref) {
-  if (ref.branch) return { target: ref.branch, version: undefined };
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const manifest = yield* Schema.decodeEffect(Manifest)(
-    yield* fs.readFileString(path.join(yield* root, "package.json")),
-  );
-  const pin = manifest.dependencies?.[ref.dep ?? ""] ?? manifest.devDependencies?.[ref.dep ?? ""];
-  const version = yield* Schema.decodeUnknownEffect(ExactVersion)(pin).pipe(
-    Effect.mapError(() =>
-      userError(`${ref.name}: ${ref.dep} must have an exact version pin; got ${String(pin)}`),
-    ),
-  );
-  return { target: (ref.tag ?? "{v}").replace("{v}", version), version };
+  return yield* Match.valueTags(ref, {
+    Branch: ({ branch }) => Effect.succeed({ target: branch, version: undefined }),
+    Dependency: ({ dep, tag }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const manifest = yield* Schema.decodeEffect(Manifest)(
+          yield* fs.readFileString(path.join(yield* root, "package.json")),
+        );
+        const pin = manifest.dependencies?.[dep] ?? manifest.devDependencies?.[dep];
+        const version = yield* Schema.decodeUnknownEffect(ExactVersion)(pin).pipe(
+          Effect.mapError((error) => new RefError({ message: `${dep}: ${error.message}` })),
+        );
+        return { target: tag.replace("{v}", version), version };
+      }),
+  });
 });
 
 const download = Effect.fn("downloadRef")(function* (ref: Ref, target: string, staging: string) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const command = ref.private
-    ? ChildProcess.make("gh", ["api", `repos/${ref.repo}/tarball/${target}`], { stderr: "inherit" })
-    : ChildProcess.make(
-        "curl",
-        [
-          "-fsSL",
-          `https://github.com/${ref.repo}/archive/refs/${ref.branch ? "heads" : "tags"}/${target}.tar.gz`,
-        ],
-        { stderr: "inherit" },
-      );
+  // The tarball comes from `gh` for a private repo (authenticated), from GitHub's archive URL otherwise.
+  const { bin, args } = Match.valueTags(ref, {
+    Branch: ({ repo, private: isPrivate }) =>
+      isPrivate
+        ? { bin: "gh", args: ["api", `repos/${repo}/tarball/${target}`] }
+        : {
+            bin: "curl",
+            args: ["-fsSL", `https://github.com/${repo}/archive/refs/heads/${target}.tar.gz`],
+          },
+    Dependency: ({ repo }) => ({
+      bin: "curl",
+      args: ["-fsSL", `https://github.com/${repo}/archive/refs/tags/${target}.tar.gz`],
+    }),
+  });
+  const command = ChildProcess.make(bin, args, { stderr: "inherit" });
   yield* Effect.scoped(
     Effect.gen(function* () {
       const source = yield* spawner.spawn(command);
@@ -126,9 +187,9 @@ const download = Effect.fn("downloadRef")(function* (ref: Ref, target: string, s
       );
       const downloaded = yield* source.exitCode;
       if (downloaded !== 0 || extracted !== 0) {
-        return yield* userError(
-          `${ref.name}: download/extraction failed (${String(downloaded)}/${String(extracted)})`,
-        );
+        return yield* new RefError({
+          message: `download/extraction failed (${String(downloaded)}/${String(extracted)})`,
+        });
       }
     }),
   );
@@ -177,36 +238,35 @@ const fetchRef = Effect.fn("fetchRef")(function* (ref: Ref) {
   );
 });
 
-const report = Effect.fn("reportRefs")(function* () {
+/** Succeeds with the status line of an up-to-date ref; fails with the line of a missing, stale or broken one. */
+const checkRef = Effect.fn("checkRef")(function* (ref: Ref) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const directory = path.join(yield* root, "refs");
-  let stale = 0;
-  for (const ref of refs) {
-    yield* Effect.gen(function* () {
-      const { target } = yield* resolve(ref);
-      const file = path.join(directory, ref.name, ".ref.json");
-      if (!(yield* fs.exists(file))) {
-        stale++;
-        return yield* Console.log(`${ref.name}: MISSING (want ${target})`);
-      }
-      const stamp = yield* Schema.decodeEffect(Stamp)(yield* fs.readFileString(file));
-      if (stamp.repo !== ref.repo || stamp.resolved !== target) {
-        stale++;
-        return yield* Console.log(`${ref.name}: STALE (have ${stamp.resolved}, want ${target})`);
-      }
-      yield* Console.log(
-        `${ref.name}: ok ${target}${ref.branch ? ` (snapshot fetched ${stamp.fetchedAt}; upstream freshness not checked)` : ""}`,
-      );
-    }).pipe(
-      Effect.catch((error) => {
-        stale++;
-        return Console.error(`${ref.name}: ERROR ${toUserError(error).userMessage}`);
-      }),
-    );
-  }
-  return stale;
+  const { target } = yield* resolve(ref);
+  const file = path.join(yield* root, "refs", ref.name, ".ref.json");
+  if (!(yield* fs.exists(file)))
+    return yield* new RefError({ message: `MISSING (want ${target})` });
+  const stamp = yield* Schema.decodeEffect(Stamp)(yield* fs.readFileString(file));
+  if (stamp.repo !== ref.repo || stamp.resolved !== target)
+    return yield* new RefError({ message: `STALE (have ${stamp.resolved}, want ${target})` });
+  const freshness = Match.valueTags(ref, {
+    Branch: () => ` (snapshot fetched ${stamp.fetchedAt}; upstream freshness not checked)`,
+    Dependency: () => "",
+  });
+  return `ok ${target}${freshness}`;
 });
+
+/** Prints one line per ref and returns the names of the refs that are not ok. */
+const report = Effect.partition(refs, (ref) =>
+  checkRef(ref).pipe(
+    Effect.tap((line) => Console.log(`${ref.name}: ${line}`)),
+    Effect.tapError((error) => Console.error(`${ref.name}: ${error.message}`)),
+    Effect.mapError(() => ref.name),
+  ),
+).pipe(Effect.map(([, failed]) => failed));
+
+const userError = (message: string) =>
+  new CliError.UserError({ cause: message, userMessage: message });
 
 const fetchCommand = Command.make(
   "fetch",
@@ -219,33 +279,36 @@ const fetchCommand = Command.make(
   },
   Effect.fn("fetchRefs")(function* ({ all, names }) {
     if (!all && names.length === 0) return yield* userError("Name refs to fetch, or pass --all");
-    const failures: string[] = [];
-    for (const ref of refs.filter((ref) => all || names.includes(ref.name))) {
-      yield* fetchRef(ref).pipe(
-        Effect.catch((error) => {
-          failures.push(ref.name);
-          return Console.error(`${ref.name}: ${toUserError(error).userMessage}`);
-        }),
-      );
-    }
-    if (failures.length > 0) return yield* userError(`Failed to fetch: ${failures.join(", ")}`);
+    // A linked worktree's refs is a symlink to the main checkout's; fetch there.
+    const { linked, mainCheckout } = yield* checkoutKind.pipe(
+      Effect.mapError((error) => userError(error.message)),
+    );
+    if (linked) return yield* userError(`refs are shared: run refs fetch in ${mainCheckout}`);
+    const [, failed] = yield* Effect.partition(
+      refs.filter((ref) => all || names.includes(ref.name)),
+      (ref) =>
+        fetchRef(ref).pipe(
+          Effect.tapError((error) => Console.error(`${ref.name}: ${error.message}`)),
+          Effect.mapError(() => ref.name),
+        ),
+    );
+    if (failed.length > 0) return yield* userError(`Failed to fetch: ${failed.join(", ")}`);
   }),
 ).pipe(Command.withDescription("Download pinned sources; private repos use gh authentication"));
 
 const checkCommand = Command.make("check", {}, () =>
   Effect.gen(function* () {
-    const stale = yield* report();
-    if (stale > 0)
-      return yield* userError(`${String(stale)} reference(s) missing, stale, or invalid`);
+    const failed = yield* report;
+    if (failed.length > 0)
+      return yield* userError(`${String(failed.length)} reference(s) missing, stale, or invalid`);
   }),
 );
-const listCommand = Command.make("list", {}, () => report().pipe(Effect.asVoid));
+const listCommand = Command.make("list", {}, () => report.pipe(Effect.asVoid));
 
 Command.make("refs").pipe(
   Command.withDescription("Manage reference sources in refs/"),
   Command.withSubcommands([fetchCommand, checkCommand, listCommand]),
   Command.run({ version: "1.0.0" }),
-  Effect.mapError(toUserError),
   Effect.provide(NodeServices.layer),
   NodeRuntime.runMain,
 );
