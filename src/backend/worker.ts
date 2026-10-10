@@ -13,6 +13,8 @@ export default class Backend extends Cloudflare.RpcWorker<Backend>()(
     main: import.meta.filename,
     schema: BackendRpcs,
     workersDev: false,
+    // Only reached through the service binding, so any free port will do.
+    dev: { port: 0 },
     compatibility: { date: "2026-07-01", flags: ["nodejs_compat"] },
   },
   Effect.sync(() =>

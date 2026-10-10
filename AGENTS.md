@@ -4,6 +4,9 @@
 - Do not git commit unless you are explicitly instructed.
 - In the main checkout, commit to `main`. In a linked worktree, commit to that worktree's branch and never check out `main` there. Do not create other branches.
 
+## Dev server
+`http://localhost:$(pnpm port)`
+
 ## Logs
 Dev logs: `logs/dev/current`. Rotated archives: `logs/dev/`.
 Staging logs: use `cf o11y telemetry query` on `cloudflare-workers`, filtering `$metadata.service` to `alchemy-sandbox1-website-staging-a6uwn3bzazl3yzgy`.

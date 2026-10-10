@@ -16,6 +16,7 @@ dist-ssr
 .wrangler
 .env
 .env.*
+!.env.example
 *.local
 
 # Editor directories and files

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "bash -o pipefail -c 'mkdir -p ./logs/dev && NO_COLOR=1 alchemy dev --stage dev 2>&1 | s6-log -b -l 65536 n20 s5242880 S104857600 T ./logs/dev 1'",
+    "port": "node --env-file-if-exists=.env -p \"process.env.WEBSITE_PORT ?? (console.error('WEBSITE_PORT is not set'), process.exit(1))\"",
     "build": "vp build",
     "typecheck": "tsc --noEmit",
     "check": "vp check",

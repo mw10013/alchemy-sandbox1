@@ -12,7 +12,7 @@ vp install
 vp run dev
 ```
 
-Open http://localhost:3000. `vp run dev` runs Alchemy under stage `dev`, using
+Open `http://localhost:$(pnpm port)`. `vp run dev` runs Alchemy under stage `dev`, using
 local implementations where available and cloud resources when needed. The shared
 Cloudflare state backend requires cloud access. Development logs are captured by
 `s6-log` (install with `brew install s6`) in `.log/dev`. `vp dev` is the app-only

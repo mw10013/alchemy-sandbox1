@@ -1,9 +1,15 @@
-import { defineConfig } from "vite-plus";
+import { defineConfig, loadEnv } from "vite-plus";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import react from "@vitejs/plugin-react";
 import cloudflare from "@alchemy.run/cloudflare-runtime/vite";
 
-export default defineConfig(({ mode }) => ({
+const websitePort = (mode: string) => {
+  const port = loadEnv(mode, process.cwd(), "WEBSITE_").WEBSITE_PORT;
+  if (!port) throw new Error("WEBSITE_PORT is not set");
+  return Number(port);
+};
+
+export default defineConfig(({ command, mode }) => ({
   plugins:
     mode === "test"
       ? []
@@ -18,7 +24,8 @@ export default defineConfig(({ mode }) => ({
           tanstackStart(),
           react(),
         ],
-  server: { port: 3000, strictPort: true },
+  // Only used by the app-only `vp dev` fallback; Alchemy serves the public port.
+  server: command === "serve" ? { port: websitePort(mode), strictPort: true } : undefined,
   test: { include: ["src/**/*.test.ts"], passWithNoTests: true },
   fmt: { ignorePatterns: ["src/routeTree.gen.ts", "AGENTS.md", "refs/**"] },
   lint: {
