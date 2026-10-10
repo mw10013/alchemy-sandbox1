@@ -44,6 +44,8 @@ const refs: readonly Ref[] = [
   { name: "astryx", repo: "facebook/astryx", dep: "@astryxdesign/core", tag: "v{v}" },
   { name: "effect", repo: "Effect-TS/effect", dep: "effect", tag: "effect@{v}" },
   { name: "effect-tanstack-start", repo: "lucas-barake/effect-tanstack-start", branch: "main" },
+  { name: "yielded-auth", repo: "yielded-dev/auth", dep: "@yielded/auth", tag: "@yielded/auth@{v}" },
+  { name: "better-auth", repo: "better-auth/better-auth", dep: "better-auth", tag: "v{v}" },
 ];
 
 const Manifest = Schema.fromJsonString(

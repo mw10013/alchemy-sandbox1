@@ -15,6 +15,10 @@ minimumReleaseAgeExclude:
   - "@voidzero-dev/vite-plus-win32-arm64-msvc@1.1.0"
   - "@voidzero-dev/vite-plus-win32-x64-msvc@1.1.0"
   - vite-plus@1.1.0
+  - "@yielded/auth@0.1.0-beta.32"
+  - "@yielded/crypto@0.1.0-beta.32"
+  - "@yielded/jose@0.1.0-beta.32"
+  - "@yielded/oauth@0.1.0-beta.32"
 overrides:
   vite@*: npm:@voidzero-dev/vite-plus-core@1.1.0
 peerDependencyRules:
