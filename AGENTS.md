@@ -1,7 +1,8 @@
 # AGENTS.md
 
 ## Git
-Work directly on `main`; do not create branches. Commit to `main` and push `main`. Pushing `main` deploys staging through the Git integration.
+- Do not git commit unless you are explicitly instructed.
+- In the main checkout, commit to `main`. In a linked worktree, commit to that worktree's branch and never check out `main` there. Do not create other branches.
 
 ## Logs
 Dev logs: `logs/dev/current`. Rotated archives: `logs/dev/`.
