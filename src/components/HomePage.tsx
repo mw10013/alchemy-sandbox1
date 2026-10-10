@@ -9,9 +9,13 @@ import { TopNav, TopNavHeading } from "@astryxdesign/core/TopNav";
 import { VStack } from "@astryxdesign/core/VStack";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import * as Cause from "effect/Cause";
+import * as Match from "effect/Match";
 import * as Option from "effect/Option";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import type { RpcClientError } from "effect/rpc";
-import type { InvalidInput } from "../api/backend.ts";
+import { ShoutTextFromInput } from "../api/backend.ts";
 import { helloAtom, shoutAtom } from "../backend-client.ts";
 
 // Typed failure → its `_tag`; anything else (a defect) → "Defect".
@@ -21,19 +25,33 @@ const failureTag = (cause: Cause.Cause<{ readonly _tag: string }>) =>
     onSome: (error) => error._tag,
   });
 
-const describeShoutFailure = (cause: Cause.Cause<InvalidInput | RpcClientError.RpcClientError>) =>
+// Shout's only typed failure is the transport; a payload the server rejects is a defect.
+const describeShoutFailure = (cause: Cause.Cause<RpcClientError.RpcClientError>) =>
   Option.match(Cause.findErrorOption(cause), {
-    onNone: () => `Defect: ${Cause.pretty(cause).split("\n")[0]}`,
+    onNone: () => `Defect: ${String(Cause.squash(cause))}`,
     onSome: (error) =>
-      error._tag === "InvalidInput"
-        ? `InvalidInput: ${error.message}`
-        : "Transport error: the request failed. Try again.",
+      Match.valueTags(error, {
+        RpcClientError: () => "Transport error: the request failed. Try again.",
+      }),
   });
+
+const decodeShoutText = Schema.decodeUnknownResult(ShoutTextFromInput);
 
 export default function HomePage() {
   const [input, setInput] = useState("");
+  const [validation, setValidation] = useState<string | undefined>(undefined);
   const hello = useAtomValue(helloAtom);
   const [shoutResult, shout] = useAtom(shoutAtom);
+
+  // The shared codec decides what Shout accepts; a failure is shown as the field's error.
+  const submit = () =>
+    Result.match(decodeShoutText(input), {
+      onFailure: (error) => setValidation(error.message),
+      onSuccess: (text) => {
+        setValidation(undefined);
+        shout({ payload: { input: text }, reactivityKeys: ["hello"] });
+      },
+    });
 
   return (
     <AppShell
@@ -57,22 +75,24 @@ export default function HomePage() {
         </VStack>
         <VStack gap={4} hAlign="start">
           <Heading level={2}>Loader data</Heading>
-          {hello._tag === "Initial" && (
-            <Text as="p" role="status">
-              Loading…
-            </Text>
-          )}
-          {hello._tag === "Success" && (
-            <Text as="p" role="status">
-              {hello.value.message} — {hello.value.servedAt}
-              {hello.waiting ? " (refreshing…)" : ""}
-            </Text>
-          )}
-          {hello._tag === "Failure" && (
-            <Text as="p" role="alert">
-              {failureTag(hello.cause)}
-            </Text>
-          )}
+          {AsyncResult.match(hello, {
+            onInitial: () => (
+              <Text as="p" role="status">
+                Loading…
+              </Text>
+            ),
+            onSuccess: ({ value, waiting }) => (
+              <Text as="p" role="status">
+                {value.message} — {value.servedAt}
+                {waiting ? " (refreshing…)" : ""}
+              </Text>
+            ),
+            onFailure: ({ cause }) => (
+              <Text as="p" role="alert">
+                {failureTag(cause)}
+              </Text>
+            ),
+          })}
         </VStack>
         <VStack gap={4} hAlign="start">
           <Heading level={2}>Mutation</Heading>
@@ -80,24 +100,28 @@ export default function HomePage() {
             label="Text to shout"
             value={input}
             onChange={setInput}
-            description="1–80 characters after trimming. Submit blank text to see a typed failure."
+            description="1–80 characters after trimming. Submit blank text to see the validation message."
+            status={validation === undefined ? undefined : { type: "error", message: validation }}
           />
           <Button
             label="Shout"
             variant="primary"
             isLoading={shoutResult.waiting}
-            onClick={() => shout({ payload: { input }, reactivityKeys: ["hello"] })}
+            onClick={submit}
           />
-          {shoutResult._tag === "Success" && (
-            <Text as="p" role="status" aria-live="polite">
-              {shoutResult.value.input} → {shoutResult.value.output}
-            </Text>
-          )}
-          {shoutResult._tag === "Failure" && (
-            <Text as="p" role="alert">
-              {describeShoutFailure(shoutResult.cause)}
-            </Text>
-          )}
+          {AsyncResult.match(shoutResult, {
+            onInitial: () => null,
+            onSuccess: ({ value }) => (
+              <Text as="p" role="status" aria-live="polite">
+                {value.input} → {value.output}
+              </Text>
+            ),
+            onFailure: ({ cause }) => (
+              <Text as="p" role="alert">
+                {describeShoutFailure(cause)}
+              </Text>
+            ),
+          })}
         </VStack>
       </VStack>
     </AppShell>

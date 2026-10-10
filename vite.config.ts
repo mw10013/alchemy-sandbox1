@@ -31,7 +31,22 @@ export default defineConfig(({ command, mode }) => ({
   lint: {
     ignorePatterns: ["refs/**"],
     jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
-    rules: { "vite-plus/prefer-vite-plus-imports": "error" },
+    rules: {
+      "vite-plus/prefer-vite-plus-imports": "error",
+      // Effect is consumed one module at a time: `import * as Effect from "effect/Effect"`.
+      // The root barrel drags all 160 modules through Vite dev and the Worker bundle.
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "effect",
+              message: 'Import Effect modules by path: import * as Effect from "effect/Effect".',
+            },
+          ],
+        },
+      ],
+    },
     options: { typeAware: true, typeCheck: true },
   },
 }));

@@ -1,6 +1,6 @@
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { BackendRpcs, InvalidInput } from "../api/backend.ts";
+import { BackendRpcs } from "../api/backend.ts";
 
 export const BackendHandlers = BackendRpcs.toLayer({
   Hello: () =>
@@ -9,15 +9,10 @@ export const BackendHandlers = BackendRpcs.toLayer({
       const now = yield* DateTime.now;
       return { message: "Hello from the backend Worker.", servedAt: DateTime.formatIso(now) };
     }),
+  // `input` is a ShoutText: the payload schema validated it, so there is nothing to check here.
   Shout: ({ input }) =>
     Effect.gen(function* () {
       yield* Effect.log("Backend.Shout");
-      const trimmed = input.trim();
-      if (trimmed.length < 1 || trimmed.length > 80) {
-        return yield* new InvalidInput({
-          message: "Enter between 1 and 80 characters after trimming.",
-        });
-      }
-      return { input: trimmed, output: trimmed.toUpperCase() };
+      return { input, output: input.toUpperCase() };
     }),
 });
