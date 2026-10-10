@@ -28,22 +28,22 @@ Primary evidence is the locally fetched source of `lucas-barake/effect-tanstack-
 
 Key files, relative to `refs/effect-tanstack-start/`:
 
-| File | Architectural responsibility |
-| --- | --- |
-| `src/routes/index.tsx` | Initial loader, server function, hydration boundary |
-| `src/routes/__root.tsx` | React Atom registry provider |
-| `src/routes/-index/atoms.tsx` | Browser Effect runtime, query atom, mutation atoms, cache updates |
-| `src/api/api-client.ts` | Typed RPC and HTTP clients; fetch transport |
-| `src/api/domain-rpc.ts` | RPC method contracts |
-| `src/api/domain-api.ts` | REST-style HTTP API contracts |
-| `src/api/todo-schema.ts` | Shared data, input, and error schemas |
-| `src/routes/api/$.ts` | Start-to-Effect HTTP bridge; server runtime; shared memo map; cleanup |
-| `src/routes/api/-lib/todos-service.ts` | Business operations and in-memory storage |
-| `src/routes/api/-lib/todos-rpc-live.ts` | RPC-to-service adapter |
-| `src/routes/api/-lib/todos-api-live.ts` | HTTP-API-to-service adapter |
-| `src/lib/atom-utils.ts` | Serializable-atom typing helper and dehydration |
-| `src/router.tsx` | Router setup; no Query integration |
-| `vite.config.ts` | Nitro hosting integration |
+| File                                    | Architectural responsibility                                          |
+| --------------------------------------- | --------------------------------------------------------------------- |
+| `src/routes/index.tsx`                  | Initial loader, server function, hydration boundary                   |
+| `src/routes/__root.tsx`                 | React Atom registry provider                                          |
+| `src/routes/-index/atoms.tsx`           | Browser Effect runtime, query atom, mutation atoms, cache updates     |
+| `src/api/api-client.ts`                 | Typed RPC and HTTP clients; fetch transport                           |
+| `src/api/domain-rpc.ts`                 | RPC method contracts                                                  |
+| `src/api/domain-api.ts`                 | REST-style HTTP API contracts                                         |
+| `src/api/todo-schema.ts`                | Shared data, input, and error schemas                                 |
+| `src/routes/api/$.ts`                   | Start-to-Effect HTTP bridge; server runtime; shared memo map; cleanup |
+| `src/routes/api/-lib/todos-service.ts`  | Business operations and in-memory storage                             |
+| `src/routes/api/-lib/todos-rpc-live.ts` | RPC-to-service adapter                                                |
+| `src/routes/api/-lib/todos-api-live.ts` | HTTP-API-to-service adapter                                           |
+| `src/lib/atom-utils.ts`                 | Serializable-atom typing helper and dehydration                       |
+| `src/router.tsx`                        | Router setup; no Query integration                                    |
+| `vite.config.ts`                        | Nitro hosting integration                                             |
 
 Current TanStack documentation was also checked for the distinction between server functions, route loaders, and server routes. The reference source remains authoritative for what this particular project implements.
 

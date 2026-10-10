@@ -28,14 +28,14 @@ Questions and recommended answers that remain open are in section 9. Existing ac
 
 Primary evidence is the local source requested by the user, not unversioned snippets:
 
-| Item | Inspected version/evidence |
-| --- | --- |
-| Application | `package.json`, `pnpm-lock.yaml`, `alchemy.run.ts`, `vite.config.ts`, `src/` |
-| Alchemy | `refs/alchemy/.ref.json`: `v2.0.0-beta.81`; library manifest agrees |
-| Effect | `refs/effect/.ref.json`: `effect@4.0.1`; library manifest agrees |
-| React Atom adapter | Effect repository's `packages/atom/react/package.json`: `@effect/atom-react` `4.0.1` |
-| Application Start/Router | Start `1.168.60`, Router `1.170.41` in the application manifest |
-| Older architecture | `docs/tanstack-start-effect-architecture.md` and `refs/effect-tanstack-start/` |
+| Item                     | Inspected version/evidence                                                           |
+| ------------------------ | ------------------------------------------------------------------------------------ |
+| Application              | `package.json`, `pnpm-lock.yaml`, `alchemy.run.ts`, `vite.config.ts`, `src/`         |
+| Alchemy                  | `refs/alchemy/.ref.json`: `v2.0.0-beta.81`; library manifest agrees                  |
+| Effect                   | `refs/effect/.ref.json`: `effect@4.0.1`; library manifest agrees                     |
+| React Atom adapter       | Effect repository's `packages/atom/react/package.json`: `@effect/atom-react` `4.0.1` |
+| Application Start/Router | Start `1.168.60`, Router `1.170.41` in the application manifest                      |
+| Older architecture       | `docs/tanstack-start-effect-architecture.md` and `refs/effect-tanstack-start/`       |
 
 Both Alchemy and Effect reference snapshots were fetched on 2026-10-07. Their metadata identifies version tags, but does not record immutable commit SHAs. The application lockfile records Alchemy and its Cloudflare runtime using Effect `4.0.1`.
 
@@ -125,15 +125,15 @@ There is no Pages project in this declaration. The Worker can execute dynamic ap
 
 ### Our options
 
-| Option | What changes | Recommendation |
-| --- | --- | --- |
-| Keep `Cloudflare.Website.Vite` | Nothing about the Cloudflare resource kind; Vite/SSR packaging is handled for us | **Use this for the pilot** |
-| Name the exported variable `AppWorker` instead of `Website` | Only source terminology, if the logical resource ID stays `"Website"` | Optional clarity change, not technically necessary |
-| Plain `Cloudflare.Worker` with an external entry and assets | We own the server entry, build-output discovery, asset packaging, and dev integration | Valid, but adds work without changing the target from Workers to anything better |
-| `Cloudflare.Website.Vite` with a custom `main` | Still one Worker; custom entry wraps the framework and can add other handlers/exports | Consider only if the runtime experiment demonstrates a need |
+| Option                                                       | What changes                                                                                      | Recommendation                                                                               |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Keep `Cloudflare.Website.Vite`                               | Nothing about the Cloudflare resource kind; Vite/SSR packaging is handled for us                  | **Use this for the pilot**                                                                   |
+| Name the exported variable `AppWorker` instead of `Website`  | Only source terminology, if the logical resource ID stays `"Website"`                             | Optional clarity change, not technically necessary                                           |
+| Plain `Cloudflare.Worker` with an external entry and assets  | We own the server entry, build-output discovery, asset packaging, and dev integration             | Valid, but adds work without changing the target from Workers to anything better             |
+| `Cloudflare.Website.Vite` with a custom `main`               | Still one Worker; custom entry wraps the framework and can add other handlers/exports             | Consider only if the runtime experiment demonstrates a need                                  |
 | Effect-native `Cloudflare.Worker(..., implementationEffect)` | Alchemy bridges Effect handlers, service initialization, request scopes, and runtime capabilities | Useful for Effect-native backend code; not a drop-in replacement for Start's framework entry |
-| Separate Start Worker and Effect-native backend Worker | Adds a service-binding boundary and another deployment resource | Not selected by the user; unnecessary for this pilot |
-| Assets-only Worker or SPA fallback | Serves static files; does not demonstrate request-time Start SSR | Do not choose for this experiment |
+| Separate Start Worker and Effect-native backend Worker       | Adds a service-binding boundary and another deployment resource                                   | Not selected by the user; unnecessary for this pilot                                         |
+| Assets-only Worker or SPA fallback                           | Serves static files; does not demonstrate request-time Start SSR                                  | Do not choose for this experiment                                                            |
 
 Although `WorkerProps.vite` exists, it is marked **internal** (`Workers/Worker.ts:615–616`). Calling the supported `Website.Vite` wrapper is preferable to manually reproducing that internal configuration just to remove “Website” from the API name.
 
@@ -165,15 +165,15 @@ For the selected stateless design, share a `ProbeService.layer` and adapter comp
 
 Recommended execution ownership:
 
-| Boundary | Owner/lifetime |
-| --- | --- |
-| Resource deployment | Alchemy Stack and Cloudflare provider |
-| Outer HTTP routing and SSR | Start inside the Vite-packaged Worker |
-| Stateless domain service | Application layer definition; provide at the server execution boundary |
-| Initial service read | Start server-function handler; run the provided Effect there |
-| RPC protocol/server fibers | Request-local Effect scope for the first experiment |
-| SSR registry | Per render/request; never module-global |
-| Browser registry/runtime | Per mounted application/browser context |
+| Boundary                   | Owner/lifetime                                                         |
+| -------------------------- | ---------------------------------------------------------------------- |
+| Resource deployment        | Alchemy Stack and Cloudflare provider                                  |
+| Outer HTTP routing and SSR | Start inside the Vite-packaged Worker                                  |
+| Stateless domain service   | Application layer definition; provide at the server execution boundary |
+| Initial service read       | Start server-function handler; run the provided Effect there           |
+| RPC protocol/server fibers | Request-local Effect scope for the first experiment                    |
+| SSR registry               | Per render/request; never module-global                                |
+| Browser registry/runtime   | Per mounted application/browser context                                |
 
 No additional `ManagedRuntime` is necessary just to execute a stateless service. If later resources require a persistent composition root, that is a separate lifecycle decision.
 
@@ -187,18 +187,18 @@ Consequently, copying the reference's module-global RPC server and HMR disposal 
 
 The requested `refs/effect` source contains the current idioms in `LLMS.md`, `migration/services.md`, and the exported modules themselves.
 
-| Reference approach | Current local API/direction |
-| --- | --- |
-| `Effect.Service`, generated `.Default` | `Context.Service`, explicit `Layer.effect` / `Layer.succeed`, conventionally `.layer` |
-| Static service accessors | Prefer `const service = yield* ProbeService` inside a generator |
-| Reusable function wrapping `Effect.gen` | `Effect.fn("ProbeService.operation")`; generators for inline composition |
-| Old standalone platform/RPC packages | `effect/http/*`, `effect/rpc/*` |
-| `@effect-atom/atom` | `effect/reactivity/Atom`, `AtomRegistry`, `Hydration`, `AsyncResult` |
-| `@effect-atom/atom-react` | `@effect/atom-react` |
-| Atom `Result.fromExit` / `Result.Schema` | `AsyncResult.fromExit` / `AsyncResult.Schema` |
-| `HttpLayerRouter.toWebHandler` | `HttpRouter.toWebHandler`, or a direct scoped `RpcServer.toHttpEffect` with `HttpEffect.toWebHandler` |
-| Hand-built dehydrated envelope and typing cast | Public registry + `Hydration.dehydrate` API |
-| Custom RPC-backed query/mutation wiring | Evaluate built-in `AtomRpc.Service`, `.query`, `.mutation` first |
+| Reference approach                             | Current local API/direction                                                                           |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `Effect.Service`, generated `.Default`         | `Context.Service`, explicit `Layer.effect` / `Layer.succeed`, conventionally `.layer`                 |
+| Static service accessors                       | Prefer `const service = yield* ProbeService` inside a generator                                       |
+| Reusable function wrapping `Effect.gen`        | `Effect.fn("ProbeService.operation")`; generators for inline composition                              |
+| Old standalone platform/RPC packages           | `effect/http/*`, `effect/rpc/*`                                                                       |
+| `@effect-atom/atom`                            | `effect/reactivity/Atom`, `AtomRegistry`, `Hydration`, `AsyncResult`                                  |
+| `@effect-atom/atom-react`                      | `@effect/atom-react`                                                                                  |
+| Atom `Result.fromExit` / `Result.Schema`       | `AsyncResult.fromExit` / `AsyncResult.Schema`                                                         |
+| `HttpLayerRouter.toWebHandler`                 | `HttpRouter.toWebHandler`, or a direct scoped `RpcServer.toHttpEffect` with `HttpEffect.toWebHandler` |
+| Hand-built dehydrated envelope and typing cast | Public registry + `Hydration.dehydrate` API                                                           |
+| Custom RPC-backed query/mutation wiring        | Evaluate built-in `AtomRpc.Service`, `.query`, `.mutation` first                                      |
 
 **Important naming distinction:** `effect/Result` is the synchronous success/failure result type. It is not the Atom async-state model. Atom state uses `effect/reactivity/AsyncResult`, with `Initial`, `Success`, `Failure`, and `waiting`.
 
@@ -321,19 +321,19 @@ Keep the read and action results separate initially. A transform does not change
 
 ### Acceptance evidence for a later authorized experiment
 
-| Test | Evidence required |
-| --- | --- |
-| SSR, not static shell | Raw page response with JavaScript disabled contains the fixture message and request-time snapshot |
-| Initial direct read | Server logs show service read through the server function, without loopback HTTP RPC |
-| Browser hydration | Visible data matches SSR; no immediate duplicate `/api/rpc` read caused solely by mounting |
-| Refresh | Exactly the intended HTTP RPC read occurs and the displayed snapshot updates |
-| Transform | POST to the Effect RPC route produces the transformed value and mutation state |
-| Typed domain failure | Invalid input returns/decodes the declared error and renders a friendly message |
-| Transport failure | Network/decode failure is distinguishable from `InvalidProbeInput` |
-| Isolation | Concurrent SSR renders and separate browser contexts have independent registry values |
-| Worker lifetimes | Repeated requests and aborted response consumption do not leak protocol scopes/fibers or reuse request-bound I/O |
-| Browser bundle boundary | No infrastructure declaration, cloud credentials, Alchemy provider, or Node platform runtime is pulled into client output |
-| Deployment packaging | Alchemy build includes the SSR Worker entry and client assets; actual deployment is a Workers resource, not a Pages project |
+| Test                    | Evidence required                                                                                                           |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| SSR, not static shell   | Raw page response with JavaScript disabled contains the fixture message and request-time snapshot                           |
+| Initial direct read     | Server logs show service read through the server function, without loopback HTTP RPC                                        |
+| Browser hydration       | Visible data matches SSR; no immediate duplicate `/api/rpc` read caused solely by mounting                                  |
+| Refresh                 | Exactly the intended HTTP RPC read occurs and the displayed snapshot updates                                                |
+| Transform               | POST to the Effect RPC route produces the transformed value and mutation state                                              |
+| Typed domain failure    | Invalid input returns/decodes the declared error and renders a friendly message                                             |
+| Transport failure       | Network/decode failure is distinguishable from `InvalidProbeInput`                                                          |
+| Isolation               | Concurrent SSR renders and separate browser contexts have independent registry values                                       |
+| Worker lifetimes        | Repeated requests and aborted response consumption do not leak protocol scopes/fibers or reuse request-bound I/O            |
+| Browser bundle boundary | No infrastructure declaration, cloud credentials, Alchemy provider, or Node platform runtime is pulled into client output   |
+| Deployment packaging    | Alchemy build includes the SSR Worker entry and client assets; actual deployment is a Workers resource, not a Pages project |
 
 Use deterministic unit tests for the service and schemas, then a Worker-compatible integration test for transport and hydration. An eventual live test needs explicit authorization: `alchemy dev` can reconcile resources, and the upstream example's dev tests use cloud bindings. Research did not run those commands.
 

@@ -218,6 +218,9 @@ importers:
       '@astryxdesign/cli':
         specifier: 0.6.5
         version: 0.6.5(@astryxdesign/core@0.6.5(@stylexjs/stylex@0.19.1)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(@astryxdesign/theme-neutral@0.6.5(@astryxdesign/core@0.6.5(@stylexjs/stylex@0.19.1)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(@types/react@19.3.0)(react@19.3.0))
+      '@cloudflare/workers-types':
+        specifier: 5.20261006.1
+        version: 5.20261006.1
       '@types/node':
         specifier: 26.6.4
         version: 26.6.4

@@ -1,11 +1,15 @@
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
+import Backend from "./src/backend/worker.ts";
 
-export const Website = Cloudflare.Website.Vite("Website", {
+export class Website extends Cloudflare.Website.Vite<Website>()("Website", {
   compatibility: { date: "2026-07-01", flags: ["nodejs_compat"] },
   dev: { port: 3000 },
-});
+  env: { BACKEND: Backend },
+}) {}
+
+export type WebsiteEnv = Cloudflare.InferEnv<typeof Website>;
 
 export default Alchemy.Stack(
   "Alchemy-sandbox1",

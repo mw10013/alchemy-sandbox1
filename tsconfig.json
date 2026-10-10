@@ -3,7 +3,7 @@
     "target": "es2023",
     "module": "esnext",
     "lib": ["ES2023", "DOM"],
-    "types": ["vite/client", "node"],
+    "types": ["vite/client", "node", "@cloudflare/workers-types"],
     "jsx": "react-jsx",
     "strict": true,
     "allowArbitraryExtensions": true,

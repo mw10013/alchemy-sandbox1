@@ -8,10 +8,10 @@ Updated 2026-10-08 · Alchemy `2.0.0-beta.81` · Development and staging work; G
 
 Stages identify separate infrastructure/state instances. **The command determines whether resources run locally or remotely—not the stage name.**
 
-| Environment | Command | Where the app runs |
-| --- | --- | --- |
-| Development | `vp run dev` | Your machine; remote supporting resources only when needed |
-| Staging | `vp run deploy:staging` | Separate Cloudflare Worker, deployed from `main` |
+| Environment       | Command                    | Where the app runs                                                      |
+| ----------------- | -------------------------- | ----------------------------------------------------------------------- |
+| Development       | `vp run dev`               | Your machine; remote supporting resources only when needed              |
+| Staging           | `vp run deploy:staging`    | Separate Cloudflare Worker, deployed from `main`                        |
 | Production, later | `vp run deploy:production` | Separate Cloudflare Worker, deployed from protected `production` branch |
 
 ## Package scripts

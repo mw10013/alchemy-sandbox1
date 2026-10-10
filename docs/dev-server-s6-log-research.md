@@ -97,8 +97,8 @@ s6-log has no implicit Homebrew or system-wide destination. Its directory action
 chooses the location; relative paths are resolved against the launch directory.
 For the commands above:
 
-| Producer | Active file |
-| --- | --- |
+| Producer   | Active file          |
+| ---------- | -------------------- |
 | `pnpm dev` | `./logs/dev/current` |
 
 Each directory contains:
@@ -116,15 +116,15 @@ Do not delete the directory on startup: that would discard the retained history.
 
 ## Evaluation of the Notes settings
 
-| Setting | Meaning and assessment |
-| --- | --- |
-| `-b` | Stop consuming input while output buffers remain unflushed. Good initial choice to avoid unbounded pending output; slow disks or terminals can backpressure the server. |
-| `-l 65536` | Split input lines longer than 65,536 bytes. More generous than the 8,192-byte default, but can break large JSON records. Suitable provisionally for text logs. |
-| `n20` | Retain up to 20 archives. Count is not a duration guarantee. |
-| `s5242880` | Rotate near 5 MiB. Default rotation tolerance is 2,000 bytes; this is not an exact file-size cap. |
-| `S104857600` | Limit archive bytes to 100 MiB, excluding `current`. Works alongside the archive-count limit; either can remove older files. |
-| `T` | Local-time timestamp before each saved line. Useful for text; omit for JSON Lines if the application already supplies timestamps. |
-| directory followed by `1` | Save and echo through the same logger; no extra `tee` process required. |
+| Setting                   | Meaning and assessment                                                                                                                                                  |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-b`                      | Stop consuming input while output buffers remain unflushed. Good initial choice to avoid unbounded pending output; slow disks or terminals can backpressure the server. |
+| `-l 65536`                | Split input lines longer than 65,536 bytes. More generous than the 8,192-byte default, but can break large JSON records. Suitable provisionally for text logs.          |
+| `n20`                     | Retain up to 20 archives. Count is not a duration guarantee.                                                                                                            |
+| `s5242880`                | Rotate near 5 MiB. Default rotation tolerance is 2,000 bytes; this is not an exact file-size cap.                                                                       |
+| `S104857600`              | Limit archive bytes to 100 MiB, excluding `current`. Works alongside the archive-count limit; either can remove older files.                                            |
+| `T`                       | Local-time timestamp before each saved line. Useful for text; omit for JSON Lines if the application already supplies timestamps.                                       |
+| directory followed by `1` | Save and echo through the same logger; no extra `tee` process required.                                                                                                 |
 
 Keep archives uncompressed initially so agents can search them directly. Leave
 default retry and partial-line timeout settings alone; do not add `-p`, processors,
@@ -148,14 +148,14 @@ Tests used the installed binary and separate directories under the approved
 OpenCode temporary directory. They did not start Vite or Alchemy, write project
 logs, or change project configuration.
 
-| Check | Result |
-| --- | --- |
-| Production logger arguments, two newline-delimited markers | Exit 0; stdout unchanged; `current` contained local-time-prefixed markers. |
-| Clean restart into the same directory | Earlier markers remained and the new marker was appended. |
-| Real shell stdout/stderr merge, producer exit 7, bash `pipefail` | Both markers appeared in terminal output and `current`; pipeline status was 7. |
-| Paced rotation with `n3 s4096 S0`, numbered 197-byte input lines | Three `.s` archives retained, 2,280 bytes each; older archives removed. |
-| Paced byte retention with `n20 s4096 S5000` | Two `.s` archives retained, totaling 4,560 bytes: byte limit applied before count limit. |
-| Burst input of 1,500 numbered lines with stdout forwarding | All lines echoed unchanged and the final line was saved. |
+| Check                                                            | Result                                                                                   |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Production logger arguments, two newline-delimited markers       | Exit 0; stdout unchanged; `current` contained local-time-prefixed markers.               |
+| Clean restart into the same directory                            | Earlier markers remained and the new marker was appended.                                |
+| Real shell stdout/stderr merge, producer exit 7, bash `pipefail` | Both markers appeared in terminal output and `current`; pipeline status was 7.           |
+| Paced rotation with `n3 s4096 S0`, numbered 197-byte input lines | Three `.s` archives retained, 2,280 bytes each; older archives removed.                  |
+| Paced byte retention with `n20 s4096 S5000`                      | Two `.s` archives retained, totaling 4,560 bytes: byte limit applied before count limit. |
+| Burst input of 1,500 numbered lines with stdout forwarding       | All lines echoed unchanged and the final line was saved.                                 |
 
 One useful caution: the initial fast-burst test with `n3 s4096 S9000` left no
 archives. A rotation threshold must not be treated as a hard maximum under burst

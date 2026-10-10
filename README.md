@@ -1,7 +1,8 @@
 # Alchemy-sandbox1
 
-A minimal TanStack Start app with an Effect-powered `/api/health` endpoint,
-Astryx's standard neutral theme, and one Alchemy-managed Cloudflare Worker.
+A minimal TanStack Start app (`Website.Vite`) that calls a private Effect
+backend Worker over a service binding, styled with Astryx's standard neutral
+theme. Both Workers are managed by Alchemy (`alchemy.run.ts`).
 Created with `vp create` in the existing project directory.
 
 ## Run locally

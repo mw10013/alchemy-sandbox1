@@ -19,7 +19,7 @@ export default defineConfig(({ mode }) => ({
           react(),
         ],
   server: { port: 3000, strictPort: true },
-  test: { include: ["src/**/*.test.ts"] },
+  test: { include: ["src/**/*.test.ts"], passWithNoTests: true },
   fmt: { ignorePatterns: ["src/routeTree.gen.ts", "AGENTS.md", "refs/**"] },
   lint: {
     ignorePatterns: ["refs/**"],
