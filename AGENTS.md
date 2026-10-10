@@ -1,5 +1,8 @@
 # AGENTS.md
 
+## Git
+Work directly on `main`; do not create branches. Commit to `main` and push `main`. Pushing `main` deploys staging through the Git integration.
+
 ## Logs
 Dev logs: `logs/dev/current`. Rotated archives: `logs/dev/`.
 Staging logs: use `cf o11y telemetry query` on `cloudflare-workers`, filtering `$metadata.service` to `alchemy-sandbox1-website-staging-a6uwn3bzazl3yzgy`.
