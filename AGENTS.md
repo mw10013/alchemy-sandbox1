@@ -4,6 +4,11 @@
 - Do not git commit unless you are explicitly instructed.
 - In the main checkout, commit to `main`. In a linked worktree, commit to that worktree's branch and never check out `main` there. Do not create other branches.
 
+## Effect
+- Validation, parsing, encoding: Effect Schema. Never trim, length-check or regex-test input by hand.
+- Tag dispatch: `Match`. Errors: `Schema.TaggedError`. Reusable effects: `Effect.fn("name")`.
+- Effect's own idiom guide is in `refs/effect/ai-docs/src` and `refs/effect/LLMS.md`.
+
 ## Dev server
 `http://localhost:$(pnpm port)`
 
