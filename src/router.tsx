@@ -11,6 +11,9 @@ export function getRouter() {
   const router = createRouter({
     routeTree,
     scrollRestoration: true,
+    // The registry is the stale-while-revalidate layer. A background router reload would
+    // render a TTL-expired query as Initial ("Loading…") before loadQuery finishes.
+    defaultStaleReloadMode: "blocking",
     context: { registry },
     Wrap: ({ children }) => (
       <RegistryContext.Provider value={registry}>{children}</RegistryContext.Provider>

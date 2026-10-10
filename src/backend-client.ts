@@ -7,6 +7,7 @@ import * as AtomRpc from "effect/reactivity/AtomRpc";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { BackendRpcs } from "./api/backend.ts";
 import { env } from "./env.server.ts";
+import { refreshOnFocus } from "./query.ts";
 
 // Browser: same-origin proxy route. SSR: any absolute URL; the service binding ignores the host.
 const rpcUrl = createIsomorphicFn()
@@ -35,13 +36,10 @@ export class BackendClient extends AtomRpc.Service<BackendClient>()("BackendClie
   ),
 }) {}
 
-// Query atom. The serializable query is the inner atom: it is dehydrated by key and,
-// on hydration, set as valid, so the browser does not refetch it (research C2).
-// timeToLive keeps the primed value alive between the loader and dehydrate (C12).
-// The reactivity wrapper sits outside so that Shout can still invalidate it by key.
+// The reference page query. The pattern is documented in ./query.ts.
 export const helloAtom = BackendClient.query("Hello", undefined, {
   serializationKey: "hello",
-  timeToLive: "1 minute",
-}).pipe(Atom.withReactivity(["hello"]));
+  timeToLive: "5 minutes",
+}).pipe(Atom.withReactivity(["hello"]), refreshOnFocus);
 
 export const shoutAtom = BackendClient.mutation("Shout");
