@@ -18,7 +18,9 @@ import { Route as AdminMembersRouteImport } from './routes/admin.members'
 import { Route as ApiRpcRouteImport } from './routes/api.rpc'
 import { Route as ApiTestControlRouteImport } from './routes/api.test-control'
 import { Route as AppIndexRouteImport } from './routes/app.index'
+import { Route as ApiActorKeyRouteImport } from './routes/api.actor.$key'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
+import { Route as AppShopKeyRouteImport } from './routes/app.shop.$key'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -65,10 +67,20 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRoute,
 } as any)
+const ApiActorKeyRoute = ApiActorKeyRouteImport.update({
+  id: '/api/actor/$key',
+  path: '/api/actor/$key',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AppShopKeyRoute = AppShopKeyRouteImport.update({
+  id: '/shop/$key',
+  path: '/shop/$key',
+  getParentRoute: () => AppRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
@@ -81,7 +93,9 @@ export interface FileRoutesByFullPath {
   '/api/test-control': typeof ApiTestControlRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
+  '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/app/shop/$key': typeof AppShopKeyRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -91,7 +105,9 @@ export interface FileRoutesByTo {
   '/api/test-control': typeof ApiTestControlRoute
   '/admin': typeof AdminIndexRoute
   '/app': typeof AppIndexRoute
+  '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/app/shop/$key': typeof AppShopKeyRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -104,7 +120,9 @@ export interface FileRoutesById {
   '/api/test-control': typeof ApiTestControlRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
+  '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/app/shop/$key': typeof AppShopKeyRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -118,7 +136,9 @@ export interface FileRouteTypes {
     | '/api/test-control'
     | '/admin/'
     | '/app/'
+    | '/api/actor/$key'
     | '/api/auth/$'
+    | '/app/shop/$key'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -128,7 +148,9 @@ export interface FileRouteTypes {
     | '/api/test-control'
     | '/admin'
     | '/app'
+    | '/api/actor/$key'
     | '/api/auth/$'
+    | '/app/shop/$key'
   id:
     | '__root__'
     | '/'
@@ -140,7 +162,9 @@ export interface FileRouteTypes {
     | '/api/test-control'
     | '/admin/'
     | '/app/'
+    | '/api/actor/$key'
     | '/api/auth/$'
+    | '/app/shop/$key'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -150,6 +174,7 @@ export interface RootRouteChildren {
   SignInRoute: typeof SignInRoute
   ApiRpcRoute: typeof ApiRpcRoute
   ApiTestControlRoute: typeof ApiTestControlRoute
+  ApiActorKeyRoute: typeof ApiActorKeyRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
 }
 
@@ -218,12 +243,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/api/actor/$key': {
+      id: '/api/actor/$key'
+      path: '/api/actor/$key'
+      fullPath: '/api/actor/$key'
+      preLoaderRoute: typeof ApiActorKeyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
       fullPath: '/api/auth/$'
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/app/shop/$key': {
+      id: '/app/shop/$key'
+      path: '/shop/$key'
+      fullPath: '/app/shop/$key'
+      preLoaderRoute: typeof AppShopKeyRouteImport
+      parentRoute: typeof AppRoute
     }
   }
 }
@@ -242,10 +281,12 @@ const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
 interface AppRouteChildren {
   AppIndexRoute: typeof AppIndexRoute
+  AppShopKeyRoute: typeof AppShopKeyRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppIndexRoute: AppIndexRoute,
+  AppShopKeyRoute: AppShopKeyRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
@@ -257,6 +298,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignInRoute: SignInRoute,
   ApiRpcRoute: ApiRpcRoute,
   ApiTestControlRoute: ApiTestControlRoute,
+  ApiActorKeyRoute: ApiActorKeyRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
 }
 export const routeTree = rootRouteImport

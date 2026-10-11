@@ -1,7 +1,7 @@
 # Research: ShopActor proof of concept (Durable Object, hibernating WebSocket, Effect RPC, Effect Atom)
 
 Research date: 2026-10-11.
-Status: research only. Nothing implemented. Questions for the user in [§13](#13-questions-with-recommendations).
+Status: research only. All recommendations in [§13](#13-questions-with-recommendations) accepted in Plannotator on 2026-10-11; not implemented.
 Versions: Alchemy `2.0.0-beta.81` (`refs/alchemy` and the installed copy are byte-identical), Effect `4.0.1`, `@effect/atom-react` `4.0.1`, `@effect/sql-sqlite-do` `4.0.1` (in the pnpm store as Alchemy's dependency, not hoisted), `@cloudflare/workers-types` `5.20261006.1`, Baton pins `agents` `0.28.0`. Do not bump dependencies.
 Background: [glossary](./glossary.md) (**Actor** = a Durable Object named `<Key>Actor`), [loaded-data-path research](./loaded-data-path-and-direct-backend-research.md) §7.2 and Q2 (a WebSocket upgrade is a GET; the proxy route 405s it today; "decide the exact hop when that phase starts"), [IPC research](./start-to-effect-worker-ipc-research.md) D2 (every crossing is Schema-validated), [Worker split research](./tanstack-start-alchemy-worker-split-research.md) §2 (the Bridge), [auth integration plan](./better-auth-integration-plan.md).
 
@@ -269,7 +269,7 @@ Baton details worth keeping in mind for the real port, not the POC: role tags pe
 Q1. **Which server shape?** (E) `Cloudflare.RpcDurableObject` for RPC over HTTP and the hibernating WebSocket, plus a notice frame for invalidation ([§5](#5-the-push-problem-broadcasting-invalidations-under-hibernation)).
 Recommendation: E. It is the only option that satisfies all three of "Effect RPC over the socket", "hibernatable", and "broadcast invalidation", and it reuses Alchemy's transport instead of rewriting it. D is the fallback if the client-side tap misbehaves in the spike; A only if hibernation is deferred.
 
-- [ ] E: RpcDurableObject + notice frame (recommended)
+- [x] E: RpcDurableObject + notice frame (recommended)
 - [ ] D: notices over a hand-rolled socket, RPC stays HTTP via the Backend
 - [ ] A: stream subscription, accept no hibernation while clients are connected, revisit later
 - [ ] Other
@@ -277,48 +277,48 @@ Recommendation: E. It is the only option that satisfies all three of "Effect RPC
 Q2. **Who hosts the actor?** The Backend Worker, with the Website forwarding `/api/actor/$key` the way it forwards `/api/rpc` today.
 Recommendation: the Backend. It is the only Effect Worker, it already holds `Auth` for the session check, and a separate Actors Worker would add a cross-script binding (`ShopActor.from(ActorsWorker)`) for no benefit at this stage.
 
-- [ ] Backend hosts (recommended)
+- [x] Backend hosts (recommended)
 - [ ] A new Effect Worker hosts the actors
 - [ ] Other
 
 Q3. **Actor key for the POC.** The route has a `$key` param validated by `ActorKey`, and the member page links to one fixed key so two tabs land on the same object.
 Recommendation: a fixed key constant (name to be chosen; not "demo", per the house rule that sandbox code is reference code), with the param in the URL so a second key can be tried by hand. The key is the shop domain in Baton; the POC has no shops, so the constant is a stand-in and its JSDoc says so.
 
-- [ ] Fixed key constant behind a `$key` route param (recommended)
+- [x] Fixed key constant behind a `$key` route param (recommended)
 - [ ] No param at all; one hard-wired object
 - [ ] Other
 
 Q4. **Hibernation is a hard requirement for the POC.** The brief says critical.
 Recommendation: yes, and make the `Activation` procedure plus the integ idle test part of the definition of done, so hibernation is demonstrated rather than assumed.
 
-- [ ] Hard requirement with the Activation proof (recommended)
+- [x] Hard requirement with the Activation proof (recommended)
 - [ ] Nice to have; A is acceptable for the first pass
 - [ ] Other
 
 Q5. **Require a signed-in member to open the socket?**
 Recommendation: yes, checked in the Backend's `fetch` before `actors.fetch`, with the page under `/app`. Any member may open any key for now; authorization per key is a product decision deferred and noted in the handler's JSDoc. This mirrors Baton's gate-at-the-Worker shape without the token dance, because the cookie travels with a same-origin upgrade.
 
-- [ ] Yes, member-only, any key (recommended)
+- [x] Yes, member-only, any key (recommended)
 - [ ] No auth for the POC
 - [ ] Other
 
 Q6. **SQLite migrations: Effect's `SqliteMigrator.fromRecord` or Alchemy's `Cloudflare.SqlMigrations` directory?**
 Recommendation: `SqliteMigrator.fromRecord`. It is what the brief asks for and what Baton uses, migrations are typed code next to the handlers, and it runs under the same `blockConcurrencyWhile`. Alchemy's directory form stays an option if we later want one `.sql` convention across D1 and actors.
 
-- [ ] `SqliteMigrator.fromRecord` (recommended)
+- [x] `SqliteMigrator.fromRecord` (recommended)
 - [ ] `Cloudflare.SqlMigrations("./actor-migrations")`
 - [ ] Other
 
 Q7. **Scope of the client state for the POC.** One query (`GetCount`), one mutation (`Increment`), one notice stream, plus `Activation` as a dev aid.
 Recommendation: exactly that. No per-connection state, no presence, no streams, no alarms. Those are the real port's concerns and each has a known home (tags/attachments, `scheduleEvent`, `makeCallback`).
 
-- [ ] As proposed (recommended)
+- [x] As proposed (recommended)
 - [ ] Also show a stream RPC (knowing it blocks hibernation while subscribed)
 - [ ] Other
 
 Q8. **Tests in the first landing.** Integ (two clients, notice, idle activation check) and one Playwright spec with two pages; browser-mode component test for the page; no unit test for the handlers.
 Recommendation: as listed. The integ test is where every risk in [§12](#12-risks-and-what-the-spike-must-verify) is caught except the Start hop, which the e2e spec covers.
 
-- [ ] As proposed (recommended)
+- [x] As proposed (recommended)
 - [ ] Integ only for the first landing
 - [ ] Other

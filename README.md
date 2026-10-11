@@ -5,6 +5,12 @@ backend Worker over a service binding, styled with Astryx's standard neutral
 theme. Both Workers are managed by Alchemy (`alchemy.run.ts`).
 Created with `vp create` in the existing project directory.
 
+The Backend also hosts Durable Objects. A browser reaches an actor (`ShopActor`, one per shop
+key) over one WebSocket at `/api/actor/<key>`, through the Website and the Backend's session
+check, with Effect RPC on it; after a write the actor sends a notice naming the stale reactivity
+keys, and every tab refetches. SSR reads the same actor over HTTP through the binding. The
+member page is `/app/shop/alchemy-sandbox1`, and `vp run test:e2e` covers two tabs on it.
+
 ## Run locally
 
 Copy `.env.example` to `.env` first; it holds this checkout's port.

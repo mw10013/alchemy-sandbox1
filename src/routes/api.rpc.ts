@@ -7,7 +7,7 @@ export const Route = createFileRoute("/api/rpc")({
   server: {
     handlers: {
       POST: ({ request }) => rejectRequest(request) ?? env.BACKEND.fetch(request),
-      // WebSocket upgrades are GETs too; they get 405 until the Durable Object phase.
+      // HTTP only: WebSocket upgrades go to the actor route, /api/actor/$key.
       GET: () => text(405, "Method Not Allowed", { allow: "POST" }),
     },
   },

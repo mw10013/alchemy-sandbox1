@@ -1,0 +1,44 @@
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Atom from "effect/reactivity/Atom";
+import * as AtomRegistry from "effect/reactivity/AtomRegistry";
+import * as Reactivity from "effect/reactivity/Reactivity";
+import type * as RpcGroup from "effect/rpc/RpcGroup";
+import * as RpcTest from "effect/rpc/RpcTest";
+import { onTestFinished } from "vite-plus/test";
+import { ShopActorRpcs } from "../../src/api/shop-actor.ts";
+import { ShopActorClient } from "../../src/shop-actor-client.ts";
+
+type Handlers = RpcGroup.HandlersFrom<RpcGroup.Rpcs<typeof ShopActorRpcs>>;
+
+/** Dies on any RPC a test did not give a handler, so a test names every call its component makes. */
+const unexpected = Object.fromEntries(
+  [...ShopActorRpcs.requests.keys()].map((tag) => [tag, () => Effect.die(`unexpected ${tag}`)]),
+) as unknown as Handlers;
+
+/**
+ * {@link ShopActorClient} over the given handlers, in memory: no socket, notice tap or actor.
+ * `Reactivity.layer` is merged in because a seeded runtime layer replaces the factory's own,
+ * and `noticesAtom` invalidates through the runtime's `Reactivity`; the registry's memo map
+ * makes it the instance `Atom.withReactivity` listens on.
+ */
+export const shopActorClientLayer = (handlers: Partial<Handlers>) =>
+  Layer.effect(ShopActorClient, RpcTest.makeClient(ShopActorRpcs, { flatten: true })).pipe(
+    Layer.provide(ShopActorRpcs.toLayer({ ...unexpected, ...handlers })),
+    Layer.merge(Reactivity.layer),
+    // The runtime's layer type names only the client, though the factory always adds Reactivity.
+  ) as Layer.Layer<ShopActorClient>;
+
+/**
+ * A registry whose {@link ShopActorClient} atoms run on {@link shopActorClientLayer}, disposed
+ * when the test finishes; the same seam as `testRegistry` for `BackendClient`.
+ */
+export const shopTestRegistry = (handlers: Partial<Handlers>) => {
+  const registry = AtomRegistry.make({
+    initialValues: [
+      Atom.initialValue(ShopActorClient.runtime.layer, shopActorClientLayer(handlers)),
+    ],
+  });
+  onTestFinished(() => registry.dispose());
+  return registry;
+};

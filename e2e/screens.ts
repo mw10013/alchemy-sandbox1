@@ -13,6 +13,12 @@ export const shell = (page: Page) => ({
   members: page.getByRole("link", { name: "Members" }),
 });
 
+export const shop = (page: Page) => ({
+  count: page.getByRole("status", { name: "Count" }),
+  increment: page.getByRole("button", { name: "Increment" }),
+  activation: page.getByText(/^Activation /),
+});
+
 /** Submits the sign-in form on a hydrated `/sign-in` and waits for the confirmation. */
 export const requestMagicLink = async (page: Page, email: string) => {
   const screen = signIn(page);

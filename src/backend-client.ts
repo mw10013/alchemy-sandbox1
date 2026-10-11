@@ -1,12 +1,10 @@
 import { createIsomorphicFn } from "@tanstack/react-start";
-import { getRequestHeader } from "@tanstack/react-start/server";
 import * as Layer from "effect/Layer";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Atom from "effect/reactivity/Atom";
 import * as AtomRpc from "effect/reactivity/AtomRpc";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { BackendRpcs } from "./api/backend.ts";
-import { env } from "./env.server.ts";
+import { backendTransport } from "./backend-transport.ts";
 import { refreshOnFocus } from "./query.ts";
 
 /** Browser: the same-origin proxy route. SSR: any absolute URL; see `Backend`. */
@@ -14,26 +12,15 @@ const rpcUrl = createIsomorphicFn()
   .client(() => `${window.location.origin}/api/rpc`)
   .server(() => "https://backend/rpc");
 
-/** SSR goes through the service binding in-process and forwards the visitor's cookie. */
-const serverFetch: typeof fetch = (input, init) => {
-  const headers = new Headers(init?.headers);
-  const cookie = getRequestHeader("cookie");
-  if (cookie) headers.set("cookie", cookie);
-  return env.BACKEND.fetch(input, { ...init, headers });
-};
-
-const transport = createIsomorphicFn()
-  .client(() => FetchHttpClient.layer)
-  .server(() =>
-    FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch)(serverFetch))),
-  );
+/** The Backend's RPC protocol over HTTP; {@link BackendClient} and one-off calls share it. */
+export const backendProtocol = RpcClient.layerProtocolHttp({ url: rpcUrl() }).pipe(
+  Layer.provide(RpcSerialization.layerNdjson),
+  Layer.provide(backendTransport()),
+);
 
 export class BackendClient extends AtomRpc.Service<BackendClient>()("BackendClient", {
   group: BackendRpcs,
-  protocol: RpcClient.layerProtocolHttp({ url: rpcUrl() }).pipe(
-    Layer.provide(RpcSerialization.layerNdjson),
-    Layer.provide(transport()),
-  ),
+  protocol: backendProtocol,
 }) {}
 
 /** The reference page query; see `loadQuery`. */

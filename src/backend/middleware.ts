@@ -16,28 +16,39 @@ import { Auth } from "./auth.ts";
 const decodeMe = Schema.decodeUnknownEffect(Me);
 
 /**
- * Resolves the Better Auth session from the request cookie into {@link CurrentUser}. RPC
- * headers are lowercased and carry the cookie for browser calls, through the Website's proxy,
- * and for SSR calls, which forward the visitor's cookie.
+ * Resolves the Better Auth session from a `cookie` header value into the signed-in member, or
+ * fails {@link Unauthorized}. {@link CurrentUserLive} uses it for RPC; the Backend uses it to
+ * gate actor traffic before forwarding.
+ */
+export const currentUserFromCookie = Effect.fn("currentUserFromCookie")(function* (
+  cookie: string | undefined,
+) {
+  const { auth } = yield* Auth;
+  const session = yield* auth.getSession(new Headers({ cookie: cookie ?? "" })).pipe(
+    Effect.mapError(() => new Unauthorized()),
+    Effect.catchDefect(() => Effect.fail(new Unauthorized())),
+  );
+  if (session === null) return yield* new Unauthorized();
+  return yield* decodeMe({
+    id: session.user.id,
+    email: session.user.email,
+    role: session.user.role,
+  }).pipe(Effect.mapError(() => new Unauthorized()));
+});
+
+/**
+ * Provides {@link CurrentUser} from the request cookie through {@link currentUserFromCookie}.
+ * RPC headers are lowercased and carry the cookie for browser calls, through the Website's
+ * proxy, and for SSR calls, which forward the visitor's cookie.
  */
 export const CurrentUserLive = Layer.effect(
   CurrentUserMiddleware,
   Effect.gen(function* () {
-    const { auth } = yield* Auth;
+    const auth = yield* Auth;
     return CurrentUserMiddleware.of((effect, { headers }) =>
-      Effect.gen(function* () {
-        const session = yield* auth.getSession(new Headers({ cookie: headers.cookie ?? "" })).pipe(
-          Effect.mapError(() => new Unauthorized()),
-          Effect.catchDefect(() => Effect.fail(new Unauthorized())),
-        );
-        if (session === null) return yield* new Unauthorized();
-        const me = yield* decodeMe({
-          id: session.user.id,
-          email: session.user.email,
-          role: session.user.role,
-        }).pipe(Effect.mapError(() => new Unauthorized()));
-        return yield* Effect.provideService(effect, CurrentUser, me);
-      }).pipe(
+      currentUserFromCookie(headers.cookie).pipe(
+        Effect.flatMap((me) => Effect.provideService(effect, CurrentUser, me)),
+        Effect.provideService(Auth, auth),
         // RPC does not carry Alchemy's runtime marker; the Worker owns the request scope.
         Effect.provide(RuntimeContext.phantom),
       ),
