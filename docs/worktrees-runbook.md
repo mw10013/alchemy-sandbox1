@@ -16,9 +16,29 @@ There is a fixed set of worktrees, `wt-01`, `wt-02`, …, created once and reuse
 - **Shared:** `refs/` exists once, in main. Each worktree has a `refs` symlink to it.
 - **herdr:** each checkout's dev server runs in a `dev` tab in that checkout's herdr workspace.
 
+## Configure the project action (once)
+
+Do this in T3 before creating worktrees. Open a thread in **alchemy-sandbox1**, then open **Thread details** using the top-right panel toggle. Under **Workspace**, click **Add project script**. This opens **Add Action** for the thread's project.
+
+1. Set **Name** to `Bootstrap worktree` and paste this **Command**:
+
+   ```sh
+   if [ "$T3CODE_WORKTREE_PATH" != "$T3CODE_PROJECT_ROOT" ]; then
+     vp install --frozen-lockfile &&
+     vp run worktree:init &&
+     vp run dev:start &&
+     vp run dev:status
+   fi
+   ```
+
+2. Enable **Run automatically on worktree creation** and **Wait for it to finish before the agent starts**. Leave the settle and automatic preview options off; no keybinding or preview URL is needed.
+3. Click **Save action**. Reopen it to confirm the command and both switches were saved. It should be the project's only worktree setup action.
+
+T3 runs this action in the worktree's terminal before starting the agent. The guard skips the main checkout. Keep the thread's permission setting on **Auto**. See [the research](worktree-bootstrap-environment-research.md#manual-project-action-setup) for configuration details and rationale.
+
 ## Set up a worktree
 
-This is done once per worktree, by an agent in a T3 thread on the main checkout.
+This assumes the project action above has been saved. Create each worktree once, from a T3 thread on the main checkout.
 
 1. **Pick the next free `NN`.** `git worktree list` shows the existing ones. `main` must already contain the worktree scripts (`scripts/worktree.ts`, `scripts/dev.ts`), because a new worktree only gets committed files.
 2. **Create it with T3's `t3_thread_launch` tool:**
@@ -32,11 +52,11 @@ This is done once per worktree, by an agent in a T3 thread on the main checkout.
        "branch": "wt-NN",
        "startFromOrigin": false
      },
-     "message": "Set up this worktree: run `vp install --frozen-lockfile && vp run worktree:init`, then `vp run dev:start`, and report the result."
+     "message": "Review the Bootstrap worktree action result and report the dev URL, health, port, and Herdr placement. Report any setup failure."
    }
    ```
 
-   T3 creates the branch and folder, and starts a thread in the new worktree that runs the message. The T3 UI's **New worktree** can't do this, because it has no branch-name field.
+   T3 creates the named branch and folder, runs the setup action, and starts the agent after setup succeeds. Keep `workspaceStrategy.branch` explicit; use this launch instead of the UI's **New worktree** option.
 
 3. **Check what the new thread reports:**
    - `pnpm port` prints main's port + NN;
@@ -46,6 +66,8 @@ This is done once per worktree, by an agent in a T3 thread on the main checkout.
 `vp run worktree:init` is safe to run again; a second run only checks. If it fails, it says what to fix.
 
 **If the launch fails, stop and tell the user.** Don't work around it, for example by creating the worktree with git: T3 decides where worktrees live, and that can change between T3 releases.
+
+If setup fails, inspect the setup terminal's output. If no setup action ran, check the project action configuration before trying again.
 
 ## Open a thread on a worktree
 

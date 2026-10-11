@@ -4,6 +4,8 @@ Updated 2026-10-10 · T3 Code `pingdotgg/t3code` @ `50647de` (installed: Nightly
 
 Companion: [website-port-runbook.md](website-port-runbook.md) (how `WEBSITE_PORT` works today).
 
+Review update: [bootstrap execution and naming research](worktree-bootstrap-environment-research.md#naming-investigation-explicit-branches-versus-automatic-renaming) revisits the earlier choice to omit project setup actions. An explicitly supplied `wt-NN` branch skips automatic renaming, so named API launches can be paired with a host-side setup action. Generic New worktree launches remain incompatible with our branch-derived index: background renaming races setup, and the folder retains its temporary name. The recommendations below record the earlier design; the new setup-action proposal has not yet been registered or tested live.
+
 ## Summary of recommendations
 
 1. **A fixed set of long-lived worktrees named `wt-01`, `wt-02`, …** `wt-NN` is the branch, the folder name and the herdr workspace label, and `NN` is the port offset. Each of those is already scoped to the project, so Baton's `wt-01` can't collide with ours (§2). Worktrees are created once and reused task after task. Nothing creates them on demand.
