@@ -41,7 +41,7 @@ export default defineConfig(({ command, mode }) => ({
           tanstackStart(),
           react(),
         ],
-  // Only used by the app-only `vp dev` fallback; Alchemy serves the public port.
+  // Only used by `vp dev` (Vite without Alchemy, so no bindings); Alchemy serves the public port.
   server: command === "serve" ? { port: websitePort(mode), strictPort: true } : undefined,
   test: {
     passWithNoTests: true,

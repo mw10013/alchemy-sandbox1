@@ -25,7 +25,7 @@ Vite+. Never npm or npx.
 - Never reference plans or research docs; they go stale and get deleted. State the reason in the comment itself.
 
 ## Dev server
-Start with `vp run dev:start`, not `vp run dev`. Then `http://localhost:$(pnpm port)`.
+Start with `vp run dev:start`, never `vp dev`: the built-in runs Vite without Alchemy or the Backend. Then `http://localhost:$(pnpm port)`.
 
 ## Logs
 Dev logs: `logs/dev/current`. Rotated archives: `logs/dev/`.

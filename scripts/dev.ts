@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * `vp run dev:start | dev:stop | dev:status | dev:logs`: one command that an
- * agent and a person both use to get this checkout's dev server (`vp run dev`,
+ * agent and a person both use to get this checkout's dev server (`vp run dev:alchemy`,
  * which runs `alchemy dev`) running, and to find it again. Every checkout,
  * the main one and each `wt-NN` worktree, runs its own server on its own
  * `WEBSITE_PORT` from its `.env`.
@@ -27,7 +27,7 @@
  * herdr is asked whether it runs (`herdr status`), never `HERDR_ENV`: T3 Code
  * agents run outside herdr but can still drive it over its socket.
  *
- * The server's output always goes to `logs/dev/current` (the `dev` script pipes it
+ * The server's output always goes to `logs/dev/current` (the `dev:alchemy` script pipes it
  * through `s6-log`), and to the pane or terminal it runs in.
  *
  * `start` and `stop` hold `logs/dev.lock` so parallel agents in one checkout
@@ -65,7 +65,7 @@ const LOG = "logs/dev/current";
 const LOCK = "logs/dev.lock";
 const DEV_TAB = "dev";
 /**
- * Matched against command lines: the `dev` script's `--stage dev` keeps an e2e stage's
+ * Matched against command lines: the `dev:alchemy` script's `--stage dev` keeps an e2e stage's
  * `alchemy dev` in the same checkout (Playwright's web server, on another port) out of reach.
  */
 const SERVER_PROCESS = "alchemy dev --stage dev";
@@ -136,7 +136,7 @@ const cwdOf = (pid: number) =>
     Effect.orElseSucceed(() => Option.none<string>()),
   );
 
-/** Processes whose command line runs `alchemy dev` in this checkout (the `dev` script's shell and Alchemy's CLI). */
+/** Processes whose command line runs `alchemy dev` in this checkout (the `dev:alchemy` script's shell and Alchemy's CLI). */
 const serverPids = runCommand("pgrep", ["-f", SERVER_PROCESS]).pipe(
   Effect.map(pidsFrom),
   Effect.orElseSucceed((): number[] => []),
@@ -361,12 +361,17 @@ const placeServer = Effect.gen(function* () {
 
 const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
+/**
+ * The raw server, called only from here so adoption and the lock apply. Its name must not be
+ * `dev`: Vite+'s built-in `vp dev` cannot be overridden, runs Vite without Alchemy, and
+ * prints a note sending the caller to a `dev` script when one exists.
+ */
 const runDev = (options: ChildProcess.CommandOptions) =>
-  ChildProcess.make("vp", ["run", "dev"], { cwd: ROOT, ...options });
+  ChildProcess.make("vp", ["run", "dev:alchemy"], { cwd: ROOT, ...options });
 
 /**
  * Starts the server where {@link placeServer} says. A foreground start returns
- * the handle of `vp run dev`, which owns the caller's terminal until it exits;
+ * the handle of `vp run dev:alchemy`, which owns the caller's terminal until it exits;
  * the other placements return once the server is launched and outlive the
  * command.
  */
@@ -380,7 +385,7 @@ const launchServer = Effect.fn("launchServer")(function* (placement: Placement) 
           10_000,
           250,
         );
-        yield* Herdr.runInPane(paneId, `cd ${shellQuote(ROOT)} && vp run dev`);
+        yield* Herdr.runInPane(paneId, `cd ${shellQuote(ROOT)} && vp run dev:alchemy`);
         yield* Console.log(`ok    started in herdr tab "${DEV_TAB}" (pane ${paneId})`);
         return Option.none<ChildProcessSpawner.ChildProcessHandle>();
       }),
@@ -570,7 +575,7 @@ const logsCommand = Command.make(
 Command.make("dev").pipe(
   Command.withDescription(
     [
-      "Run this checkout's dev server (vp run dev) for an agent or a person.",
+      "Run this checkout's dev server (vp run dev:alchemy) for an agent or a person.",
       "Where it runs, first match wins:",
       "  1. a server already running for this checkout is adopted;",
       `  2. with herdr running: the checkout's workspace, tab "${DEV_TAB}" (opened if needed);`,

@@ -7,25 +7,25 @@ Created with `vp create` in the existing project directory.
 
 ## Run locally
 
-```sh
-vp install
-vp run dev
-```
-
-Open `http://localhost:$(pnpm port)`. `vp run dev` runs Alchemy under stage `dev`, using
-local implementations where available and cloud resources when needed. The shared
-Cloudflare state backend requires cloud access. Development logs are captured by
-`s6-log` (install with `brew install s6`) in `.log/dev`. `vp dev` is the app-only
-fallback without Alchemy reconciliation. No official `@cloudflare/vite-plugin`
-or Wrangler config is needed.
-
 Copy `.env.example` to `.env` first; it holds this checkout's port.
 
 ```sh
+vp install
 vp run dev:start   # start or adopt this checkout's dev server
+vp run dev:status
+vp run dev:logs
 vp run dev:stop
 vp run db:reset    # wipe and reseed the local auth database, then restart
 ```
+
+Open `http://localhost:$(pnpm port)`. The server is `alchemy dev` under stage `dev`, using
+local implementations where available and cloud resources when needed. The shared
+Cloudflare state backend requires cloud access. Development logs are captured by
+`s6-log` (install with `brew install s6`) in `logs/dev`. No official
+`@cloudflare/vite-plugin` or Wrangler config is needed.
+
+`vp dev` is Vite+'s built-in and runs Vite without Alchemy: the Website runs in workerd
+with no bindings, so every route that calls the Backend, the home page included, fails.
 
 Sign in at `/sign-in` with a seeded dev account (`seed/dev.sql`): `a@a.com` (admin),
 `m1@m.com` or `m2@m.com` (members). Under `alchemy dev` the magic link is shown on the

@@ -30,7 +30,7 @@ Each worktree needs its own `.env` with a port no other checkout uses, e.g. 3900
 | ----------------------- | ----------------------------------------------- |
 | `alchemy.run.ts`        | Reads `WEBSITE_PORT` in dev; sets `strictPort`  |
 | `src/backend/worker.ts` | Backend on an ephemeral dev port                |
-| `vite.config.ts`        | Same port for the app-only `vp dev` fallback    |
+| `vite.config.ts`        | Same port for `vp dev` (Vite without Alchemy)   |
 | `package.json`          | `pnpm port`                                     |
 | `.env.example`          | Template                                        |
 | `AGENTS.md`             | Dev server URL: `http://localhost:$(pnpm port)` |
