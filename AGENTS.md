@@ -9,6 +9,9 @@
 - Tag dispatch: `Match`. Errors: `Schema.TaggedError`. Reusable effects: `Effect.fn("name")`.
 - Effect's own idiom guide is in `refs/effect/ai-docs/src` and `refs/effect/LLMS.md`.
 
+## Comments
+- Comments and JSDoc never reference plans or research docs, or their labels (Q4, D14). Those docs go stale and get deleted; state the reason in the comment itself.
+
 ## Dev server
 Start with `vp run dev:start`, not `vp run dev`. Then `http://localhost:$(pnpm port)`.
 
