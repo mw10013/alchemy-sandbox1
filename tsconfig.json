@@ -22,6 +22,6 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "scripts", "alchemy.run.ts", "vite.config.ts"],
+  "include": ["src", "test", "scripts", "alchemy.run.ts", "vite.config.ts"],
   "exclude": ["refs/**"]
 }

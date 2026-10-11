@@ -7,6 +7,7 @@ import { RpcSerialization, RpcServer } from "effect/rpc";
 import { BackendRpcs } from "../api/backend.ts";
 import { Auth } from "./auth.ts";
 import { BackendHandlers, SignInLimiter } from "./handlers.ts";
+import { Mailer } from "./mailer.ts";
 import { Members } from "./members.ts";
 import { CurrentUserLive, RequireAdminLive } from "./middleware.ts";
 import { AuthDb } from "./resources.ts";
@@ -52,7 +53,8 @@ export default class Backend extends Cloudflare.Worker<Backend>()(
     });
     return { fetch };
   }).pipe(
-    Effect.provide(Layer.mergeAll(Auth.layer, Members.layer, SignInLimiter.layer)),
+    Effect.provide(Auth.layer),
+    Effect.provide(Layer.mergeAll(Members.layer, Mailer.layer, SignInLimiter.layer)),
     Effect.provide(CloudflareD1(AuthDb)),
     Effect.provide(Cloudflare.Email.SendBinding),
     Effect.provide(Cloudflare.Workers.RateLimitBinding),

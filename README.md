@@ -36,10 +36,17 @@ page and in `logs/dev/current` instead of being emailed.
 ```sh
 vp check
 vp run typecheck
-vp run test
+vp run test          # unit and integ projects
+vp run test:unit     # in-process tests under src/, Better Auth on an in-memory database
+vp run test:integ    # deploys the Backend into workerd (test/integ) and drives it over HTTP
 vp run build
 pnpm exec astryx doctor
 ```
+
+Tests are Effect tests on `@effect/vitest`; the `integ` project uses `alchemy/Test/Vitest` in
+dev mode, needs no running dev server and keeps its stack under `.alchemy/` on the `test_<user>`
+stage. The stack is never destroyed: a re-run redeploys it as a no-op, and `vp run db:reset`
+wipes its local D1 along with dev's.
 
 `vp run build` builds client assets and the Cloudflare-compatible server bundle.
 Alchemy loads the same Vite configuration and injects its own runtime plugin on

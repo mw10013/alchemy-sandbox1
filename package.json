@@ -16,6 +16,8 @@
     "typecheck": "tsc --noEmit",
     "check": "vp check",
     "test": "vp test run",
+    "test:unit": "vp test run --project unit",
+    "test:integ": "vp test run --project integ",
     "preview": "vp preview",
     "deploy:staging": "alchemy deploy --stage staging --yes",
     "deploy:production": "alchemy deploy --stage production --yes",
@@ -46,6 +48,7 @@
     "@alchemy.run/cloudflare-runtime": "2.0.0-beta.81",
     "@astryxdesign/cli": "0.6.5",
     "@cloudflare/workers-types": "5.20261006.1",
+    "@effect/vitest": "4.0.1",
     "@types/node": "26.6.4",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
@@ -55,7 +58,8 @@
     "playwright": "1.64.0",
     "typescript": "7.0.2",
     "vite": "npm:@voidzero-dev/vite-plus-core@1.1.0",
-    "vite-plus": "1.1.0"
+    "vite-plus": "1.1.0",
+    "vitest": "5.0.3"
   },
   "devEngines": {
     "packageManager": {

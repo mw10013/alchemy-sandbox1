@@ -50,4 +50,15 @@ export class Members extends Context.Service<Members, Effect.Success<typeof make
   "app/Members",
 ) {
   static readonly layer = Layer.effect(Members, make);
+
+  /** A fixed invite list, for tests. */
+  static readonly layerTest = (members: ReadonlyArray<Member>) =>
+    Layer.succeed(Members, {
+      findByEmail: (email: Email) =>
+        Effect.succeed(Option.fromUndefinedOr(members.find((member) => member.email === email))),
+      list: () =>
+        Effect.succeed(
+          [...members].sort((a, b) => a.createdAt - b.createdAt || a.email.localeCompare(b.email)),
+        ),
+    });
 }

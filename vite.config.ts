@@ -26,7 +26,25 @@ export default defineConfig(({ command, mode }) => ({
         ],
   // Only used by the app-only `vp dev` fallback; Alchemy serves the public port.
   server: command === "serve" ? { port: websitePort(mode), strictPort: true } : undefined,
-  test: { include: ["src/**/*.test.ts"], passWithNoTests: true },
+  test: {
+    passWithNoTests: true,
+    projects: [
+      { test: { name: "unit", include: ["src/**/*.test.ts"] } },
+      {
+        // Deploys the Backend in workerd through alchemy/Test; one file at a time, and
+        // ALCHEMY_DEV is read by the Worker's init at plan, so the test process must set it.
+        test: {
+          name: "integ",
+          include: ["test/integ/**/*.test.ts"],
+          env: { ALCHEMY_DEV: "1" },
+          testTimeout: 30_000,
+          hookTimeout: 120_000,
+          fileParallelism: false,
+          pool: "forks",
+        },
+      },
+    ],
+  },
   fmt: { ignorePatterns: ["src/routeTree.gen.ts", "AGENTS.md", "refs/**"] },
   lint: {
     ignorePatterns: ["refs/**"],

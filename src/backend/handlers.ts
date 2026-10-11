@@ -23,6 +23,13 @@ export class SignInLimiter extends Context.Service<SignInLimiter, Cloudflare.Rat
       return yield* SignInLimit;
     }),
   );
+
+  /** A limiter that always answers `success`, for tests. */
+  static readonly layerTest = (success: boolean) =>
+    Layer.succeed(SignInLimiter, {
+      raw: Effect.die("SignInLimiter.layerTest has no raw binding"),
+      limit: () => Effect.succeed({ success }),
+    });
 }
 
 export const BackendHandlers = BackendRpcs.toLayer(
