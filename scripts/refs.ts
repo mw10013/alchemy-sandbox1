@@ -11,7 +11,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { checkoutKind } from "./lib/worktree.ts";
 
-/** A reference source is pinned either to a branch or to a dependency's installed version. */
+/** Toolchain refs follow Vite+'s bundled versions rather than a separately maintained pin. */
 type Ref =
   | {
       readonly _tag: "Branch";
@@ -26,6 +26,13 @@ type Ref =
       readonly repo: string;
       readonly dep: string;
       /** The tag template; `{v}` is the installed version. */
+      readonly tag: string;
+    }
+  | {
+      readonly _tag: "Toolchain";
+      readonly name: string;
+      readonly repo: string;
+      readonly tool: "vite" | "vitest";
       readonly tag: string;
     };
 
@@ -43,6 +50,27 @@ const refs: readonly Ref[] = [
     name: "vite-plus",
     repo: "voidzero-dev/vite-plus",
     dep: "vite-plus",
+    tag: "v{v}",
+  },
+  {
+    _tag: "Toolchain",
+    name: "vite",
+    repo: "vitejs/vite",
+    tool: "vite",
+    tag: "v{v}",
+  },
+  {
+    _tag: "Toolchain",
+    name: "vitest",
+    repo: "vitest-dev/vitest",
+    tool: "vitest",
+    tag: "v{v}",
+  },
+  {
+    _tag: "Dependency",
+    name: "playwright",
+    repo: "microsoft/playwright",
+    dep: "playwright",
     tag: "v{v}",
   },
   {
@@ -95,13 +123,6 @@ const refs: readonly Ref[] = [
   },
   {
     _tag: "Dependency",
-    name: "yielded-auth",
-    repo: "yielded-dev/auth",
-    dep: "@yielded/auth",
-    tag: "@yielded/auth@{v}",
-  },
-  {
-    _tag: "Dependency",
     name: "better-auth",
     repo: "better-auth/better-auth",
     dep: "better-auth",
@@ -139,21 +160,60 @@ const root = Effect.gen(function* () {
   return path.resolve(path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))), "..");
 });
 
-/** The git ref to download, and the installed version for a dependency-pinned ref. */
+const dependencyVersion = Effect.fn("dependencyVersion")(function* (dep: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const manifest = yield* Schema.decodeEffect(Manifest)(
+    yield* fs.readFileString(path.join(yield* root, "package.json")),
+  );
+  return yield* Schema.decodeUnknownEffect(ExactVersion)(
+    manifest.dependencies?.[dep] ?? manifest.devDependencies?.[dep],
+  ).pipe(Effect.mapError((error) => new RefError({ message: `${dep}: ${error.message}` })));
+});
+
+/**
+ * Reject stale installations so refs follow the project's pinned Vite+ release.
+ * Vite's reported version selects an upstream release baseline; Vite+ may include
+ * additional patches.
+ * @see refs/vite-plus/packages/tools/src/brand-vite.ts — brandVite
+ */
+const toolchainVersion = Effect.fn("toolchainVersion")(function* (
+  tool: Extract<Ref, { readonly _tag: "Toolchain" }>["tool"],
+) {
+  const expected = yield* dependencyVersion("vite-plus");
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const packageUrl = yield* Effect.try({
+    try: () => import.meta.resolve("vite-plus/package.json"),
+    catch: () => new RefError({ message: "Vite+ is not installed; run vp install" }),
+  });
+  const installed = yield* Schema.decodeEffect(
+    Schema.fromJsonString(Schema.Struct({ version: ExactVersion })),
+  )(yield* fs.readFileString(yield* path.fromFileUrl(new URL(packageUrl))));
+  if (installed.version !== expected)
+    return yield* new RefError({
+      message: `Vite+ installation is stale (have ${installed.version}, want ${expected}); run vp install`,
+    });
+  const { versions } = yield* Effect.tryPromise({
+    try: () => import("vite-plus/versions"),
+    catch: () => new RefError({ message: "Cannot load vite-plus/versions; run vp install" }),
+  });
+  return yield* Schema.decodeUnknownEffect(ExactVersion)(versions[tool]).pipe(
+    Effect.mapError((error) => new RefError({ message: `${tool}: ${error.message}` })),
+  );
+});
+
 const resolve = Effect.fn("resolveRef")(function* (ref: Ref) {
   return yield* Match.valueTags(ref, {
     Branch: ({ branch }) => Effect.succeed({ target: branch, version: undefined }),
     Dependency: ({ dep, tag }) =>
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const manifest = yield* Schema.decodeEffect(Manifest)(
-          yield* fs.readFileString(path.join(yield* root, "package.json")),
-        );
-        const pin = manifest.dependencies?.[dep] ?? manifest.devDependencies?.[dep];
-        const version = yield* Schema.decodeUnknownEffect(ExactVersion)(pin).pipe(
-          Effect.mapError((error) => new RefError({ message: `${dep}: ${error.message}` })),
-        );
+        const version = yield* dependencyVersion(dep);
+        return { target: tag.replace("{v}", version), version };
+      }),
+    Toolchain: ({ tool, tag }) =>
+      Effect.gen(function* () {
+        const version = yield* toolchainVersion(tool);
         return { target: tag.replace("{v}", version), version };
       }),
   });
@@ -171,6 +231,10 @@ const download = Effect.fn("downloadRef")(function* (ref: Ref, target: string, s
             args: ["-fsSL", `https://github.com/${repo}/archive/refs/heads/${target}.tar.gz`],
           },
     Dependency: ({ repo }) => ({
+      bin: "curl",
+      args: ["-fsSL", `https://github.com/${repo}/archive/refs/tags/${target}.tar.gz`],
+    }),
+    Toolchain: ({ repo }) => ({
       bin: "curl",
       args: ["-fsSL", `https://github.com/${repo}/archive/refs/tags/${target}.tar.gz`],
     }),
@@ -252,6 +316,7 @@ const checkRef = Effect.fn("checkRef")(function* (ref: Ref) {
   const freshness = Match.valueTags(ref, {
     Branch: () => ` (snapshot fetched ${stamp.fetchedAt}; upstream freshness not checked)`,
     Dependency: () => "",
+    Toolchain: () => "",
   });
   return `ok ${target}${freshness}`;
 });
