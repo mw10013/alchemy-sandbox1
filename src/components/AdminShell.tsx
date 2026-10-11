@@ -8,7 +8,7 @@ const ITEMS = [
 
 export default function AdminShell({ children }: { children: ReactNode }) {
   return (
-    <SideNavShell heading="Alchemy-sandbox1 Admin" home="/admin" items={ITEMS}>
+    <SideNavShell heading="Alchemy-sandbox1 Admin" items={ITEMS}>
       {children}
     </SideNavShell>
   );

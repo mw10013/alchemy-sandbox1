@@ -1,149 +1,89 @@
-import { useAtom, useAtomValue } from "@effect/atom-react";
+import { RegistryContext } from "@effect/atom-react";
+import { useContext } from "react";
+import { useRouter } from "@tanstack/react-router";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { Button } from "@astryxdesign/core/Button";
-import { Heading } from "@astryxdesign/core/Heading";
-import { Text } from "@astryxdesign/core/Text";
+import { HStack, Layout, LayoutContent, VStack } from "@astryxdesign/core/Layout";
+import { Heading, Text } from "@astryxdesign/core/Text";
 import { TopNav, TopNavHeading, TopNavItem } from "@astryxdesign/core/TopNav";
-import { VStack } from "@astryxdesign/core/VStack";
-import { TextInput } from "@astryxdesign/core/TextInput";
-import { useForm } from "@tanstack/react-form";
-import * as Cause from "effect/Cause";
-import * as Match from "effect/Match";
-import * as Option from "effect/Option";
-import * as AsyncResult from "effect/reactivity/AsyncResult";
-import * as Schema from "effect/Schema";
-import type { RpcClientError } from "effect/rpc";
-import { ShoutTextFromInput } from "../api/backend.ts";
-import { helloAtom, shoutAtom } from "../backend-client.ts";
-import { fieldStatus, schemaForm } from "../form.ts";
-
-/** A typed failure's `_tag`, or `"Defect"` for anything else. */
-const failureTag = (cause: Cause.Cause<{ readonly _tag: string }>) =>
-  Option.match(Cause.findErrorOption(cause), {
-    onNone: () => "Defect",
-    onSome: (error) => error._tag,
-  });
-
-/** Shout's only typed failure is the transport; a payload the server rejects is a defect. */
-const describeShoutFailure = (cause: Cause.Cause<RpcClientError.RpcClientError>) =>
-  Option.match(Cause.findErrorOption(cause), {
-    onNone: () => `Defect: ${String(Cause.squash(cause))}`,
-    onSome: (error) =>
-      Match.valueTags(error, {
-        RpcClientError: () => "Transport error: the request failed. Try again.",
-      }),
-  });
-
-const ShoutForm = schemaForm(Schema.Struct({ text: ShoutTextFromInput }));
+import type { Me } from "../api/backend.ts";
+import { homeFor } from "../routes/-guards.ts";
+import { signOut } from "../session.ts";
+import Playground from "./Playground";
 
 /**
- * The public home page: the reference page query ({@link helloAtom}) and mutation
- * ({@link shoutAtom}).
+ * The public landing page. The top nav and hero follow the session: a signed-out visitor is
+ * offered sign-in, a member their {@link homeFor} dashboard and sign-out.
  *
- * Adapted from Astryx's `shell-top-nav` page template.
+ * Adapted from Astryx's `shell-top-nav` and `centered-hero` page templates.
  *
  * @see refs/astryx/packages/cli/assets/templates/pages/shell-top-nav/page.tsx
+ * @see refs/astryx/packages/cli/assets/templates/pages/centered-hero/page.tsx
  */
-export default function HomePage() {
-  const hello = useAtomValue(helloAtom);
-  const [shoutResult, shout] = useAtom(shoutAtom);
+export default function HomePage({ me }: { me: Me | undefined }) {
+  const router = useRouter();
+  const registry = useContext(RegistryContext);
 
-  const form = useForm({
-    defaultValues: { text: "" },
-    ...ShoutForm.options,
-    onSubmit: ({ value }) => {
-      shout({ payload: { input: ShoutForm.decode(value).text }, reactivityKeys: ["hello"] });
-    },
-  });
+  const onSignOut = async () => {
+    await signOut(registry);
+    // Reruns the loader, which reads the dropped session as signed out.
+    await router.invalidate();
+  };
+
+  const dashboard = me && homeFor(me.role);
 
   return (
     <AppShell
       variant="surface"
-      contentPadding={6}
+      contentPadding={0}
       topNav={
         <TopNav
-          label="Alchemy sandbox navigation"
+          label="Site navigation"
           heading={<TopNavHeading heading="Alchemy-sandbox1" headingHref="/" />}
-          endContent={<TopNavItem label="Sign in" href="/sign-in" />}
+          endContent={
+            dashboard ? (
+              <HStack gap={2} vAlign="center">
+                <TopNavItem label="Dashboard" href={dashboard} />
+                <Button
+                  label="Sign out"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void onSignOut()}
+                />
+              </HStack>
+            ) : (
+              <TopNavItem label="Sign in" href="/sign-in" />
+            )
+          }
         />
       }
     >
-      <VStack gap={10}>
-        <VStack gap={4}>
-          <Heading level={1}>Hello, Alchemy.</Heading>
-          <Text as="p">TanStack Start + Effect + Astryx on Cloudflare Workers.</Text>
-          <Text as="p" type="supporting">
-            Start renders this page in the Website Worker. Data comes from a private Effect Worker
-            over a service binding.
-          </Text>
-        </VStack>
-        <VStack gap={4} hAlign="start">
-          <Heading level={2}>Loader data</Heading>
-          {AsyncResult.match(hello, {
-            onInitial: () => (
-              <Text as="p" role="status">
-                Loading…
-              </Text>
-            ),
-            onSuccess: ({ value, waiting }) => (
-              <Text as="p" role="status">
-                {value.message} — {value.servedAt}
-                {waiting ? " (refreshing…)" : ""}
-              </Text>
-            ),
-            onFailure: ({ cause }) => (
-              <Text as="p" role="alert">
-                {failureTag(cause)}
-              </Text>
-            ),
-          })}
-        </VStack>
-        <VStack gap={4} hAlign="start">
-          <Heading level={2}>Mutation</Heading>
-          <form
-            noValidate
-            onSubmit={(event) => {
-              event.preventDefault();
-              void form.handleSubmit();
-            }}
-          >
-            <VStack gap={4} hAlign="start">
-              <form.Field name="text">
-                {(field) => (
-                  <TextInput
-                    label="Text to shout"
-                    htmlName={field.name}
-                    value={field.state.value}
-                    onChange={field.handleChange}
-                    onBlur={field.handleBlur}
-                    description="1–80 characters after trimming. Submit blank text to see the validation message."
-                    status={fieldStatus(field.state.meta.errors)}
-                  />
+      <Layout
+        height="auto"
+        contentWidth={960}
+        content={
+          <LayoutContent padding={6}>
+            <VStack gap={10}>
+              <VStack gap={6} hAlign="center">
+                <VStack gap={3} hAlign="center">
+                  <Heading level={1} type="display-2" justify="center" textWrap="balance">
+                    Build on the edge with Effect
+                  </Heading>
+                  <Text type="body" color="secondary" justify="center" textWrap="balance">
+                    TanStack Start, Effect and Astryx on Cloudflare Workers.
+                  </Text>
+                </VStack>
+                {dashboard ? (
+                  <Button label="Open dashboard" variant="primary" href={dashboard} />
+                ) : (
+                  <Button label="Get started" variant="primary" href="/sign-in" />
                 )}
-              </form.Field>
-              <Button
-                label="Shout"
-                type="submit"
-                variant="primary"
-                isLoading={shoutResult.waiting}
-              />
+              </VStack>
+              <Playground />
             </VStack>
-          </form>
-          {AsyncResult.match(shoutResult, {
-            onInitial: () => null,
-            onSuccess: ({ value }) => (
-              <Text as="p" role="status" aria-live="polite">
-                {value.input} → {value.output}
-              </Text>
-            ),
-            onFailure: ({ cause }) => (
-              <Text as="p" role="alert">
-                {describeShoutFailure(cause)}
-              </Text>
-            ),
-          })}
-        </VStack>
-      </VStack>
+          </LayoutContent>
+        }
+      />
     </AppShell>
   );
 }

@@ -77,7 +77,7 @@ export default function MembersPage() {
             ),
             onFailure: () => (
               <Text as="p" role="alert">
-                The members could not be loaded.
+                Couldn't load members.
               </Text>
             ),
           })}

@@ -9,7 +9,8 @@ import { signOut } from "../session.ts";
 export type NavItem = { readonly label: string; readonly href: string };
 
 /**
- * The frame the admin and member sides share; each passes its own home and items.
+ * The frame the admin and member sides share; each passes its own items. The heading links back
+ * to the public home page.
  *
  * Adapted from Astryx's `shell-side-nav` page template.
  *
@@ -17,12 +18,10 @@ export type NavItem = { readonly label: string; readonly href: string };
  */
 export default function SideNavShell({
   heading,
-  home,
   items,
   children,
 }: {
   heading: string;
-  home: string;
   items: ReadonlyArray<NavItem>;
   children: ReactNode;
 }) {
@@ -41,7 +40,7 @@ export default function SideNavShell({
       sideNav={
         <SideNav
           collapsible
-          header={<SideNavHeading heading={heading} headingHref={home} />}
+          header={<SideNavHeading heading={heading} headingHref="/" />}
           footer={
             <SideNavSection title="Account" isHeaderHidden>
               <SideNavItem label="Sign out" onClick={() => void onSignOut()} />

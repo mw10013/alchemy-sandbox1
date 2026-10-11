@@ -5,7 +5,7 @@ const ITEMS = [{ label: "Home", href: "/app" }];
 
 export default function MemberShell({ children }: { children: ReactNode }) {
   return (
-    <SideNavShell heading="Alchemy-sandbox1" home="/app" items={ITEMS}>
+    <SideNavShell heading="Alchemy-sandbox1" items={ITEMS}>
       {children}
     </SideNavShell>
   );

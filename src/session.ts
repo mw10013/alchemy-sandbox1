@@ -18,7 +18,11 @@ export const currentMember = (registry: AtomRegistry.AtomRegistry): Promise<Opti
     ),
   );
 
-/** Ends the Better Auth session through the Website's auth proxy, then drops {@link meAtom}. */
+/**
+ * Ends the Better Auth session through the Website's auth proxy, then refetches {@link meAtom}
+ * and waits for it. Without the wait, a guard or loader that runs next reads the cached member
+ * while the refetch is in flight.
+ */
 export const signOut = async (registry: AtomRegistry.AtomRegistry): Promise<void> => {
   const response = await fetch("/api/auth/sign-out", {
     method: "POST",
@@ -28,4 +32,8 @@ export const signOut = async (registry: AtomRegistry.AtomRegistry): Promise<void
   });
   if (!response.ok) throw new Error(`Sign-out failed with status ${response.status}`);
   registry.refresh(meAtom);
+  // The refetch is expected to fail with Unauthorized; only its settling matters.
+  await Effect.runPromise(
+    Effect.ignore(AtomRegistry.getResult(registry, meAtom, { suspendOnWaiting: true })),
+  );
 };

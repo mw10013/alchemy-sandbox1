@@ -34,6 +34,7 @@ const contentStyle: CSSProperties = {
 
 const SignInForm = schemaForm(Schema.Struct({ email: EmailFromInput }));
 
+/** User-facing text for a failed request; it follows the copy rules on `RootDocument`. */
 const describeFailure = (cause: Cause.Cause<TooManyRequests | RpcClientError.RpcClientError>) =>
   Option.match(Cause.findErrorOption(cause), {
     onNone: () => "Something went wrong. Try again.",
@@ -100,20 +101,12 @@ export default function SignInPage({
               value={field.state.value}
               onChange={field.handleChange}
               onBlur={field.handleBlur}
-              placeholder="you@example.com"
               type="email"
-              size="lg"
               status={fieldStatus(field.state.meta.errors)}
             />
           )}
         </form.Field>
-        <Button
-          label="Email me a sign-in link"
-          type="submit"
-          variant="primary"
-          size="lg"
-          isLoading={result.waiting}
-        />
+        <Button label="Send link" type="submit" variant="primary" isLoading={result.waiting} />
       </VStack>
     </form>
   );
@@ -133,20 +126,14 @@ export default function SignInPage({
                 <VStack gap={1} hAlign="center">
                   <Heading level={2}>Check your email</Heading>
                   <Text type="body" color="secondary" size="sm" role="status">
-                    If that address can sign in, a link is on its way. It expires in 5 minutes.
+                    The link expires in 5 minutes.
                   </Text>
                 </VStack>
                 {Option.match(value.link, {
                   onNone: () => null,
                   // A plain anchor, not a router link: the verify route is a server route.
                   onSome: (link) => (
-                    <Button
-                      label="Open your sign-in link"
-                      variant="primary"
-                      size="lg"
-                      href={link}
-                      as="a"
-                    />
+                    <Button label="Open link" variant="primary" href={link} as="a" />
                   ),
                 })}
               </VStack>
