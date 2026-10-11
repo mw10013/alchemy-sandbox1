@@ -1,7 +1,7 @@
 # Research: Better Auth vs Yielded Auth for the Backend
 
 Date: 2026-10-10  
-Status: round 1 decided ([§10](#10-decisions-round-1-2026-10-10)). Next: spike (§9).  
+Status: round 1 decided ([§10](#10-decisions-round-1-2026-10-10)); **reversed to Better Auth on 2026-10-10** after the integration research found Yielded Auth cannot create accounts for an invite flow ([better-auth-integration-research.md](./better-auth-integration-research.md) §0). The Yielded findings are in [yielded-auth-integration-research.md](./yielded-auth-integration-research.md).  
 Versions: Alchemy `2.0.0-beta.81`, Effect `4.0.1`, `better-auth` `1.7.7`, `@yielded/auth` `0.1.0-beta.32`, `@tanstack/react-start` `1.168.60`.  
 Vocabulary: [glossary](./glossary.md). Background: [IPC research](./start-to-effect-worker-ipc-research.md) (D8, D14, §8), [loaded-data research](./loaded-data-path-and-direct-backend-research.md).
 

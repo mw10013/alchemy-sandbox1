@@ -25,9 +25,17 @@ export type WebsiteEnv = Cloudflare.InferEnv<typeof Website>;
 
 export default Alchemy.Stack(
   "Alchemy-sandbox1",
-  { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  {
+    providers: Cloudflare.providers(),
+    state: Cloudflare.state(),
+  },
   Effect.gen(function* () {
     const website = yield* Website;
+    // Better Auth in the Backend builds magic links on the Website's origin. The Website
+    // already binds the Backend, so its URL is attached as a binding, which may form a
+    // cycle, rather than as a Backend prop. Under alchemy dev it is the local dev URL.
+    const backend = yield* Backend;
+    yield* backend.bind("AuthOrigin", { env: { AUTH_ORIGIN: website.url } });
     return { websiteUrl: website.url.as<string>() };
   }),
 );

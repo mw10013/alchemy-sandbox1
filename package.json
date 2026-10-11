@@ -9,6 +9,7 @@
     "dev:stop": "node --env-file-if-exists=.env scripts/dev.ts stop",
     "dev:status": "node --env-file-if-exists=.env scripts/dev.ts status",
     "dev:logs": "node scripts/dev.ts logs",
+    "db:reset": "node --env-file-if-exists=.env scripts/dev.ts db:reset",
     "worktree:init": "node scripts/worktree.ts init",
     "port": "node --env-file-if-exists=.env -p \"process.env.WEBSITE_PORT ?? (console.error('WEBSITE_PORT is not set'), process.exit(1))\"",
     "build": "vp build",
@@ -24,6 +25,7 @@
     "refs:check": "node scripts/refs.ts check"
   },
   "dependencies": {
+    "@alchemy.run/better-auth": "2.0.0-beta.81",
     "@astryxdesign/core": "0.6.5",
     "@astryxdesign/theme-neutral": "0.6.5",
     "@effect/atom-react": "4.0.1",
@@ -33,7 +35,6 @@
     "@tanstack/react-query": "5.104.1",
     "@tanstack/react-router": "1.170.41",
     "@tanstack/react-start": "1.168.60",
-    "@yielded/auth": "0.1.0-beta.32",
     "alchemy": "2.0.0-beta.81",
     "better-auth": "1.7.7",
     "effect": "4.0.1",

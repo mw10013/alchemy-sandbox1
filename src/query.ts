@@ -33,8 +33,9 @@
  * - Must never show stale data, even briefly (balances, stock at checkout, permissions):
  *   `registry.refresh(query)`, then `AtomRegistry.getResult(registry, query, { suspendOnWaiting: true })`.
  *   No long `timeToLive`.
- * - Session data only this user changes (current user, preferences): `timeToLive: Infinity`
- *   (keepAlive), invalidated by `reactivityKeys` on sign-in and sign-out.
+ * - Session data only this user changes (preferences): `timeToLive: Infinity` (keepAlive),
+ *   invalidated by `reactivityKeys`. The current user is the exception: route guards read it
+ *   without rendering it, so a short idle TTL is what notices a session that expired server-side.
  * - Live data (presence, chat): push it over a WebSocket. A TTL is the wrong tool.
  */
 import { createIsomorphicFn } from "@tanstack/react-start";

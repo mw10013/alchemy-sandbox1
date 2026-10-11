@@ -19,6 +19,18 @@ Cloudflare state backend requires cloud access. Development logs are captured by
 fallback without Alchemy reconciliation. No official `@cloudflare/vite-plugin`
 or Wrangler config is needed.
 
+Copy `.env.example` to `.env` first; it holds this checkout's port.
+
+```sh
+vp run dev:start   # start or adopt this checkout's dev server
+vp run dev:stop
+vp run db:reset    # wipe and reseed the local auth database, then restart
+```
+
+Sign in at `/sign-in` with a seeded dev account (`seed/dev.sql`): `a@a.com` (admin),
+`m1@m.com` or `m2@m.com` (members). Under `alchemy dev` the magic link is shown on the
+page and in `logs/dev/current` instead of being emailed.
+
 ## Validate
 
 ```sh

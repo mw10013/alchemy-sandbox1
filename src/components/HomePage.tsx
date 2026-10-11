@@ -5,7 +5,7 @@ import { AppShell } from "@astryxdesign/core/AppShell";
 import { Button } from "@astryxdesign/core/Button";
 import { Heading } from "@astryxdesign/core/Heading";
 import { Text } from "@astryxdesign/core/Text";
-import { TopNav, TopNavHeading } from "@astryxdesign/core/TopNav";
+import { TopNav, TopNavHeading, TopNavItem } from "@astryxdesign/core/TopNav";
 import { VStack } from "@astryxdesign/core/VStack";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import * as Cause from "effect/Cause";
@@ -61,6 +61,7 @@ export default function HomePage() {
         <TopNav
           label="Alchemy sandbox navigation"
           heading={<TopNavHeading heading="Alchemy-sandbox1" headingHref="/" />}
+          endContent={<TopNavItem label="Sign in" href="/sign-in" />}
         />
       }
     >

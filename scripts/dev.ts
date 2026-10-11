@@ -32,6 +32,12 @@
  *
  * `start` and `stop` hold `logs/dev.lock` so parallel agents in one checkout
  * cannot start two servers.
+ *
+ * `db:reset` stops the server, forgets the dev AuthDb and its Better Auth
+ * migration in Alchemy's state, removes the local data under `.alchemy/local`
+ * (D1 and simulated email), and starts the server, which recreates, migrates
+ * and seeds the database. Dev resources are all local, so nothing in the
+ * cloud is touched.
  */
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as Array from "effect/Array";
@@ -60,6 +66,11 @@ const LOCK = "logs/dev.lock";
 const DEV_TAB = "dev";
 const SERVER_PROCESS = "alchemy dev";
 const START_TIMEOUT_MS = 180_000;
+const LOCAL_DATA = ".alchemy/local";
+// The dev stack's records for the auth database and the Better Auth migration Action that
+// runs against it (`alchemy state list Alchemy-sandbox1/dev -r`). Both must go: a recreated
+// database needs the migration to run again.
+const AUTH_DB_STATE = ["Alchemy-sandbox1/dev/AuthDb", "Alchemy-sandbox1/dev/BetterAuthMigrate"];
 const STOP_TIMEOUT_MS = 20_000;
 
 class DevError extends Schema.TaggedError<DevError>()("DevError", {
@@ -409,47 +420,50 @@ const summarize = (port: number, where: string) =>
 const toUserError = <E extends { readonly message: string }>(error: E) =>
   new CliError.UserError({ cause: error, userMessage: error.message });
 
-const startCommand = Command.make("start", {}, () =>
-  Effect.gen(function* () {
-    const port = yield* loadPort;
-    const foreground = yield* withLock(
-      Effect.gen(function* () {
-        const server = yield* findServer;
-        if (server.pids.length > 0) {
-          yield* Console.log(`ok    adopted the running server: ${describeServer(server)}`);
-          yield* waitAnswering(port);
-          yield* summarize(port, describeServer(server));
-          return Option.none();
-        }
-        if ((yield* portListeners(port)).length > 0)
-          return yield* fail(
-            `port ${String(port)} is held by another process: lsof -nP -iTCP:${String(port)} -sTCP:LISTEN`,
-          );
-        const placement = yield* placeServer;
-        const handle = yield* launchServer(placement);
-        if (Option.isSome(handle)) return handle;
+/** Starts the server, or adopts the one running; see the module JSDoc. */
+const startServer = Effect.gen(function* () {
+  const port = yield* loadPort;
+  const foreground = yield* withLock(
+    Effect.gen(function* () {
+      const server = yield* findServer;
+      if (server.pids.length > 0) {
+        yield* Console.log(`ok    adopted the running server: ${describeServer(server)}`);
         yield* waitAnswering(port);
-        yield* summarize(
-          port,
-          Match.valueTags(placement, {
-            Pane: ({ paneId }) => `herdr tab "${DEV_TAB}" (pane ${paneId})`,
-            Background: () => "background",
-            Foreground: () => "this terminal",
-          }),
-        );
+        yield* summarize(port, describeServer(server));
         return Option.none();
-      }),
-    );
-    // The lock is released before waiting on a foreground server, so an agent can adopt it.
-    if (Option.isSome(foreground)) {
-      yield* waitAnswering(port).pipe(
-        Effect.flatMap(() => summarize(port, "this terminal")),
-        Effect.catch((error) => Console.error(`dev: ${error.message}`)),
-        Effect.forkChild,
+      }
+      if ((yield* portListeners(port)).length > 0)
+        return yield* fail(
+          `port ${String(port)} is held by another process: lsof -nP -iTCP:${String(port)} -sTCP:LISTEN`,
+        );
+      const placement = yield* placeServer;
+      const handle = yield* launchServer(placement);
+      if (Option.isSome(handle)) return handle;
+      yield* waitAnswering(port);
+      yield* summarize(
+        port,
+        Match.valueTags(placement, {
+          Pane: ({ paneId }) => `herdr tab "${DEV_TAB}" (pane ${paneId})`,
+          Background: () => "background",
+          Foreground: () => "this terminal",
+        }),
       );
-      yield* foreground.value.exitCode;
-    }
-  }).pipe(Effect.scoped, Effect.mapError(toUserError)),
+      return Option.none();
+    }),
+  );
+  // The lock is released before waiting on a foreground server, so an agent can adopt it.
+  if (Option.isSome(foreground)) {
+    yield* waitAnswering(port).pipe(
+      Effect.flatMap(() => summarize(port, "this terminal")),
+      Effect.catch((error) => Console.error(`dev: ${error.message}`)),
+      Effect.forkChild,
+    );
+    yield* foreground.value.exitCode;
+  }
+}).pipe(Effect.scoped);
+
+const startCommand = Command.make("start", {}, () =>
+  startServer.pipe(Effect.mapError(toUserError)),
 ).pipe(Command.withDescription("Start the dev server, or adopt the one already running."));
 
 const stopCommand = Command.make("stop", {}, () =>
@@ -458,6 +472,28 @@ const stopCommand = Command.make("stop", {}, () =>
     yield* withLock(step("stop", stopServer(port)));
   }).pipe(Effect.mapError(toUserError)),
 ).pipe(Command.withDescription("Stop the dev server wherever it runs."));
+
+const dbResetCommand = Command.make("db:reset", {}, () =>
+  Effect.gen(function* () {
+    const port = yield* loadPort;
+    yield* withLock(step("stop", stopServer(port)));
+    for (const record of AUTH_DB_STATE)
+      yield* step(
+        `forget ${record}`,
+        runCommand("pnpm", ["exec", "alchemy", "state", "delete", record, "--no-input"]),
+      );
+    const fs = yield* FileSystem.FileSystem;
+    yield* step(
+      `remove ${LOCAL_DATA}`,
+      fs.remove(path.join(ROOT, LOCAL_DATA), { recursive: true, force: true }),
+    );
+    yield* startServer;
+  }).pipe(Effect.mapError(toUserError)),
+).pipe(
+  Command.withDescription(
+    "Reset the dev database: stop, forget AuthDb in Alchemy's state, remove local data, start.",
+  ),
+);
 
 const statusCommand = Command.make(
   "status",
@@ -538,7 +574,7 @@ Command.make("dev").pipe(
       `Output always goes to ${LOG}.`,
     ].join("\n"),
   ),
-  Command.withSubcommands([startCommand, stopCommand, statusCommand, logsCommand]),
+  Command.withSubcommands([startCommand, stopCommand, dbResetCommand, statusCommand, logsCommand]),
   Command.run({ version: "1.0.0" }),
   Effect.provide(NodeServices.layer),
   NodeRuntime.runMain,

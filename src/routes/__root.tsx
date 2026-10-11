@@ -3,6 +3,8 @@ import type * as AtomRegistry from "effect/reactivity/AtomRegistry";
 import stylesheet from "../styles.css?url";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { Heading } from "@astryxdesign/core/Heading";
+import { LinkProvider } from "@astryxdesign/core/Link";
+import RouterLink from "../components/RouterLink";
 
 export const Route = createRootRouteWithContext<{ registry: AtomRegistry.AtomRegistry }>()({
   head: () => ({
@@ -25,7 +27,7 @@ export const Route = createRootRouteWithContext<{ registry: AtomRegistry.AtomReg
         <HeadContent />
       </head>
       <body>
-        {children}
+        <LinkProvider component={RouterLink}>{children}</LinkProvider>
         <Scripts />
       </body>
     </html>
