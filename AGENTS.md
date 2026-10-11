@@ -4,6 +4,9 @@
 - Do not git commit unless you are explicitly instructed.
 - Commit only to the branch checked out where you work: `main` in the main checkout, `wt-NN` in a worktree. Create no other branches, except a new `wt-NN` when setting up a worktree.
 
+## Toolchain
+Vite+: package scripts are `vp run <script>`, local binaries `vp exec <bin>`. Never npm or npx.
+
 ## Effect
 - Validation, parsing, encoding: Effect Schema. Never trim, length-check or regex-test input by hand.
 - Tag dispatch: `Match`. Errors: `Schema.TaggedError`. Reusable effects: `Effect.fn("name")`.
@@ -27,7 +30,7 @@ Staging logs: use `cf o11y telemetry query` on `cloudflare-workers`, filtering `
 
 <!-- ASTRYX:START -->
 Astryx v0.6.5 · 166 components
-CLI: run every command as `pnpm exec astryx <cmd>` (shown below as `astryx ...`).
+CLI: run every command as `vp exec astryx <cmd>` (shown below as `astryx ...`).
 
 SETUP (once, in your app entry e.g. main.tsx) — without these, components render unstyled:
   import "@astryxdesign/core/reset.css";

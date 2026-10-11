@@ -482,7 +482,7 @@ const dbResetCommand = Command.make("db:reset", {}, () =>
     for (const record of AUTH_DB_STATE)
       yield* step(
         `forget ${record}`,
-        runCommand("pnpm", ["exec", "alchemy", "state", "delete", record, "--no-input"]),
+        runCommand("vp", ["exec", "alchemy", "state", "delete", record, "--no-input"]),
       );
     const fs = yield* FileSystem.FileSystem;
     yield* step(
