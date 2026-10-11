@@ -44,6 +44,9 @@ const refs: readonly Ref[] = [
     repo: "cloudflare/cloudflare-docs",
     branch: "production",
   },
+  { _tag: "Branch", name: "agents", repo: "cloudflare/agents", branch: "main" },
+  // Hosts partysocket and partyserver, the source the agents lifecycle code was vendored from.
+  { _tag: "Branch", name: "partykit", repo: "cloudflare/partykit", branch: "main" },
   { _tag: "Dependency", name: "alchemy", repo: "alchemy-run/alchemy", dep: "alchemy", tag: "v{v}" },
   {
     _tag: "Dependency",
@@ -333,6 +336,24 @@ const report = Effect.partition(refs, (ref) =>
 const userError = (message: string) =>
   new CliError.UserError({ cause: message, userMessage: message });
 
+/** Fails unless this checkout's refs resolves to the main checkout's refs, so every snapshot lands in one place. */
+const requireSharedRefs = Effect.fn("requireSharedRefs")(function* (mainCheckout: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const realPath = (directory: string, hint: string) =>
+    fs.realPath(directory).pipe(Effect.mapError(() => userError(hint)));
+  const local = yield* realPath(
+    path.join(yield* root, "refs"),
+    "refs is missing in this worktree; link it with `ln -s <main>/refs refs`",
+  );
+  const shared = yield* realPath(
+    path.join(mainCheckout, "refs"),
+    `refs is missing in ${mainCheckout}; run refs fetch there first`,
+  );
+  if (local !== shared)
+    return yield* userError(`refs must link to ${shared}; run refs fetch in ${mainCheckout}`);
+});
+
 const fetchCommand = Command.make(
   "fetch",
   {
@@ -344,11 +365,10 @@ const fetchCommand = Command.make(
   },
   Effect.fn("fetchRefs")(function* ({ all, names }) {
     if (!all && names.length === 0) return yield* userError("Name refs to fetch, or pass --all");
-    // A linked worktree's refs is a symlink to the main checkout's; fetch there.
     const { linked, mainCheckout } = yield* checkoutKind.pipe(
       Effect.mapError((error) => userError(error.message)),
     );
-    if (linked) return yield* userError(`refs are shared: run refs fetch in ${mainCheckout}`);
+    if (linked) yield* requireSharedRefs(mainCheckout);
     const [, failed] = yield* Effect.partition(
       refs.filter((ref) => all || names.includes(ref.name)),
       (ref) =>
