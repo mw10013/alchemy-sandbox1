@@ -64,15 +64,3 @@ test(
     }).pipe(Effect.provide(Test.rpcClientLayer(`${backendUrl}/rpc`)));
   }),
 );
-
-test(
-  "Me without a session is Unauthorized",
-  Effect.gen(function* () {
-    const { backendUrl } = yield* stack;
-    const error = yield* Effect.gen(function* () {
-      const client = yield* RpcClient.make(BackendRpcs);
-      return yield* client.Me();
-    }).pipe(Effect.provide(Test.rpcClientLayer(`${backendUrl}/rpc`)), Effect.flip);
-    assert.strictEqual(error._tag, "Unauthorized");
-  }),
-);

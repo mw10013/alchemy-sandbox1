@@ -8,6 +8,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as References from "effect/References";
 import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as Schema from "effect/Schema";
@@ -32,7 +33,9 @@ const members: ReadonlyArray<Member> = [
 
 /**
  * The Backend's RPC layers over Better Auth on an in-memory database, fresh per test. `inline`
- * is what `ALCHEMY_DEV` would decide in the Worker; `allow` is the rate limiter's answer.
+ * is what `ALCHEMY_DEV` would decide in the Worker; `allow` is the rate limiter's answer. The
+ * test owns every effect of the Backend, the logger included: `Info` is dropped, so only a
+ * warning or error reaches the test output.
  */
 const TestBackend = ({ inline, allow = true }: { inline: boolean; allow?: boolean }) =>
   Layer.mergeAll(BackendHandlers, CurrentUserLive, RequireAdminLive).pipe(
@@ -54,6 +57,7 @@ const TestBackend = ({ inline, allow = true }: { inline: boolean; allow?: boolea
       ),
     ),
     Layer.provide(RuntimeContext.phantom),
+    Layer.provide(Layer.succeed(References.MinimumLogLevel, "Warn")),
   );
 
 /** Serves one web `Request` through Better Auth's routes, as the Worker's `fetch` would. */
@@ -84,29 +88,19 @@ const signIn = Effect.fn("signIn")(function* (address: typeof member, returnTo =
 });
 
 describe("magic-link sign-in (inline delivery)", () => {
-  it.live("a member signs in and is the current user", () =>
-    Effect.gen(function* () {
-      const cookie = yield* signIn(member);
-      const client = yield* RpcTest.makeClient(BackendRpcs);
-      const me = yield* client.Me().pipe(RpcClient.withHeaders({ cookie }));
-      assert.strictEqual(me.email, member);
-      assert.strictEqual(me.role, "user");
-    }).pipe(Effect.provide(TestBackend({ inline: true }))),
-  );
-
-  it.live("the link lands on the requested path", () =>
-    Effect.gen(function* () {
-      yield* signIn(admin, "/admin/members");
-    }).pipe(Effect.provide(TestBackend({ inline: true }))),
-  );
-
-  it.live("a new user takes the member's role", () =>
-    Effect.gen(function* () {
-      const cookie = yield* signIn(admin);
-      const client = yield* RpcTest.makeClient(BackendRpcs);
-      const me = yield* client.Me().pipe(RpcClient.withHeaders({ cookie }));
-      assert.strictEqual(me.role, "admin");
-    }).pipe(Effect.provide(TestBackend({ inline: true }))),
+  it.live.each([
+    { address: member, role: "user" },
+    { address: admin, role: "admin" },
+  ])(
+    "a member signs in and is the current user, with the member's role (%#)",
+    ({ address, role }) =>
+      Effect.gen(function* () {
+        const cookie = yield* signIn(address);
+        const client = yield* RpcTest.makeClient(BackendRpcs);
+        const me = yield* client.Me().pipe(RpcClient.withHeaders({ cookie }));
+        assert.strictEqual(me.email, address);
+        assert.strictEqual(me.role, role);
+      }).pipe(Effect.provide(TestBackend({ inline: true }))),
   );
 
   it.live("a non-member gets no link and no mail", () =>

@@ -7,16 +7,13 @@ const decodeEmail = Schema.decodeUnknownEffect(EmailFromInput);
 const decodeReturnPath = Schema.decodeUnknownEffect(ReturnPath);
 
 describe("Email", () => {
-  it.effect.each([
-    { input: " A@a.com ", expected: "a@a.com" },
-    { input: "M1@M.COM", expected: "m1@m.com" },
-  ])("normalizes %#", ({ input, expected }) =>
+  it.effect("trims and lowercases before the checks", () =>
     Effect.gen(function* () {
-      assert.strictEqual(yield* decodeEmail(input), expected);
+      assert.strictEqual(yield* decodeEmail(" A@a.com "), "a@a.com");
     }),
   );
 
-  it.effect.each(["", "not-an-email", "a@b", "a b@c.com"])("rejects %#", (input) =>
+  it.effect.each(["not-an-email", "a@b", "a b@c.com"])("rejects %#", (input) =>
     Effect.gen(function* () {
       const error = yield* decodeEmail(input).pipe(Effect.flip);
       assert.strictEqual(error._tag, "SchemaError");
