@@ -11,8 +11,14 @@ import { Members } from "./members.ts";
 import { CurrentUserLive, RequireAdminLive } from "./middleware.ts";
 import { AuthDb } from "./resources.ts";
 
-// Private Effect Worker. The Website reaches it only through the `BACKEND` service binding:
-// Better Auth's routes under /api/auth, and Effect RPC over HTTP (ndjson) for everything else.
+/**
+ * The private Effect Worker. It has no public URL: the browser reaches it only through the
+ * Website, which forwards over the `BACKEND` service binding (browser → Website → Backend).
+ * The binding ignores the request's host, so a caller may use any absolute URL.
+ *
+ * It serves Better Auth's routes under `/api/auth` and Effect RPC over HTTP (ndjson) for
+ * everything else; `RpcServer` ignores the path.
+ */
 export default class Backend extends Cloudflare.Worker<Backend>()(
   "Backend",
   {

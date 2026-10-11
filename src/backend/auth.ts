@@ -14,29 +14,30 @@ import { MemberRow } from "./members.ts";
 import { AuthEmail, AuthDb } from "./resources.ts";
 
 const MAGIC_LINK_TTL_SECONDS = 300;
-// Transactional sender on the Email Service sending domain; no mailbox behind it.
+/** A transactional sender on the Email Service sending domain; no mailbox is behind it. */
 const MAGIC_LINK_FROM = "noreply@mail.mw10013.com";
 
 const decodeEmail = Schema.decodeUnknownOption(Email);
 const decodeRow = Schema.decodeUnknownEffect(Schema.NullOr(MemberRow));
 
-// Better Auth with magic links, invite-only: only an address in `member` can create a user.
-// This module is the only Promise seam with Better Auth. Its callbacks run inside Better
-// Auth's promise machinery, so they run Effects with a snapshot of the construction context;
-// the D1 and email clients read the Worker env captured at construction.
+/**
+ * Builds {@link Auth}. This is the only Promise seam with Better Auth: its callbacks run
+ * inside Better Auth's promise machinery, so they run Effects with a snapshot of the
+ * construction context, and the D1 and email clients read the Worker env captured at
+ * construction.
+ */
 export const makeAuth = Effect.gen(function* () {
   const dev = yield* Alchemy.ALCHEMY_DEV;
-  // The Website's URL, bound onto this Worker by the stack (alchemy.run.ts). It is absent
-  // while the stack is planned, which needs no origin; a running Worker without it is broken.
+  // The Website's URL, bound onto this Worker by the stack. It is absent while the stack is
+  // planned, which needs no origin; a running Worker without it is broken.
   const authOrigin = yield* Config.option(Config.String("AUTH_ORIGIN"));
   if (globalThis.__ALCHEMY_RUNTIME__ && Option.isNone(authOrigin))
     return yield* Effect.die(new Error("AUTH_ORIGIN is not bound to the Backend"));
-  // Under alchemy dev the link is shown on the page and logged instead of emailed.
   const inline = dev;
   const email = yield* Cloudflare.Email.Send(AuthEmail);
   const d1 = yield* Cloudflare.D1.QueryDatabase(AuthDb);
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
-  // Inline delivery only: sendMagicLink writes and RequestMagicLink reads within one request.
+  // sendMagicLink writes and RequestMagicLink reads within one request.
   const pendingLinks = new Map<string, string>();
 
   // The raw D1 client, not SQL.D1: that one is memoized on the per-request scope, which the
@@ -124,6 +125,14 @@ export const makeAuth = Effect.gen(function* () {
   return { auth, inline, takeInlineLink };
 });
 
+/**
+ * Better Auth with magic links, invite-only: only an address in the `member` table can create
+ * a user, and the new user takes the member's role.
+ *
+ * Under `alchemy dev` delivery is inline (`inline` is true): a magic link is logged instead of
+ * emailed, and RequestMagicLink returns it through `takeInlineLink` so the sign-in page can
+ * show it. A site that behaves differently under inline delivery reads `inline`.
+ */
 export class Auth extends Context.Service<Auth, Effect.Success<typeof makeAuth>>()("app/Auth") {
   static readonly layer = Layer.effect(Auth, makeAuth);
 }

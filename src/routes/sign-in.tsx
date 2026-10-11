@@ -6,8 +6,10 @@ import SignInPage from "../components/SignInPage";
 import { currentMember } from "../session.ts";
 import { homeFor } from "./-guards.ts";
 
-// `redirect`: where a guard sent the visitor from. `error`: set by Better Auth when a magic
-// link fails (expired, used, not invited). A malformed value is dropped, not an error page.
+/**
+ * `redirect`: where a guard sent the visitor from. `error`: set by Better Auth when a magic
+ * link fails (expired, used, not invited). A malformed value is dropped, not an error page.
+ */
 const SignInSearch = Schema.Struct({
   redirect: Schema.optional(ReturnPath),
   error: Schema.optional(Schema.String),

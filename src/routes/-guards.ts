@@ -7,11 +7,14 @@ import { currentMember } from "../session.ts";
 
 const decodeReturnPath = Schema.decodeUnknownOption(ReturnPath);
 
-// Each role has its own side of the site.
+/** Each role has its own side of the site. */
 export const homeFor = (role: Role) => (role === "admin" ? "/admin" : "/app");
 
-// beforeLoad guard: signed out → /sign-in and back afterwards; the other role → its own home.
-// The Backend checks every procedure again; this only decides what the Website renders.
+/**
+ * A `beforeLoad` guard: signed out goes to `/sign-in` and back afterwards; the other role goes
+ * to its own {@link homeFor}. The Backend checks every procedure again; this only decides what
+ * the Website renders.
+ */
 export const requireRole =
   (role: Role) =>
   async ({

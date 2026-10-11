@@ -1,4 +1,3 @@
-// Adapted from Astryx's shell-top-nav page template.
 import { useAtom, useAtomValue } from "@effect/atom-react";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { Button } from "@astryxdesign/core/Button";
@@ -7,7 +6,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { TopNav, TopNavHeading, TopNavItem } from "@astryxdesign/core/TopNav";
 import { VStack } from "@astryxdesign/core/VStack";
 import { TextInput } from "@astryxdesign/core/TextInput";
-import { revalidateLogic, useForm } from "@tanstack/react-form";
+import { useForm } from "@tanstack/react-form";
 import * as Cause from "effect/Cause";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
@@ -16,15 +15,16 @@ import * as Schema from "effect/Schema";
 import type { RpcClientError } from "effect/rpc";
 import { ShoutTextFromInput } from "../api/backend.ts";
 import { helloAtom, shoutAtom } from "../backend-client.ts";
+import { fieldStatus, schemaForm } from "../form.ts";
 
-// Typed failure → its `_tag`; anything else (a defect) → "Defect".
+/** A typed failure's `_tag`, or `"Defect"` for anything else. */
 const failureTag = (cause: Cause.Cause<{ readonly _tag: string }>) =>
   Option.match(Cause.findErrorOption(cause), {
     onNone: () => "Defect",
     onSome: (error) => error._tag,
   });
 
-// Shout's only typed failure is the transport; a payload the server rejects is a defect.
+/** Shout's only typed failure is the transport; a payload the server rejects is a defect. */
 const describeShoutFailure = (cause: Cause.Cause<RpcClientError.RpcClientError>) =>
   Option.match(Cause.findErrorOption(cause), {
     onNone: () => `Defect: ${String(Cause.squash(cause))}`,
@@ -34,23 +34,25 @@ const describeShoutFailure = (cause: Cause.Cause<RpcClientError.RpcClientError>)
       }),
   });
 
-// The shared codec decides what Shout accepts; its issue messages become the field's error.
-const ShoutForm = Schema.Struct({ text: ShoutTextFromInput });
-const shoutFormValidator = Schema.toStandardSchemaV1(ShoutForm);
-// Validation passes only values that decode, and it keeps the raw text, so submit decodes again.
-const decodeShoutForm = Schema.decodeSync(ShoutForm);
+const ShoutForm = schemaForm(Schema.Struct({ text: ShoutTextFromInput }));
 
+/**
+ * The public home page: the reference page query ({@link helloAtom}) and mutation
+ * ({@link shoutAtom}).
+ *
+ * Adapted from Astryx's `shell-top-nav` page template.
+ *
+ * @see refs/astryx/packages/cli/assets/templates/pages/shell-top-nav/page.tsx
+ */
 export default function HomePage() {
   const hello = useAtomValue(helloAtom);
   const [shoutResult, shout] = useAtom(shoutAtom);
 
-  // Validate on submit, then on every change until the text is fixed.
   const form = useForm({
     defaultValues: { text: "" },
-    validationLogic: revalidateLogic(),
-    validators: { onDynamic: shoutFormValidator },
+    ...ShoutForm.options,
     onSubmit: ({ value }) => {
-      shout({ payload: { input: decodeShoutForm(value).text }, reactivityKeys: ["hello"] });
+      shout({ payload: { input: ShoutForm.decode(value).text }, reactivityKeys: ["hello"] });
     },
   });
 
@@ -115,10 +117,7 @@ export default function HomePage() {
                     onChange={field.handleChange}
                     onBlur={field.handleBlur}
                     description="1–80 characters after trimming. Submit blank text to see the validation message."
-                    status={Option.match(Option.fromNullishOr(field.state.meta.errors[0]), {
-                      onNone: () => undefined,
-                      onSome: (issue) => ({ type: "error", message: issue.message }),
-                    })}
+                    status={fieldStatus(field.state.meta.errors)}
                   />
                 )}
               </form.Field>

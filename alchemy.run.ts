@@ -4,9 +4,11 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import Backend from "./src/backend/worker.ts";
 
-// `alchemy dev` serves on WEBSITE_PORT from the checkout's .env (Alchemy loads
-// .env itself); deploys never read it. strictPort makes a collision fail
-// instead of silently moving ports.
+/**
+ * The TanStack Start app. `alchemy dev` serves it on `WEBSITE_PORT` from the checkout's `.env`
+ * (Alchemy loads `.env` itself); deploys never read it. `strictPort` makes a collision fail
+ * instead of silently moving ports.
+ */
 export class Website extends Cloudflare.Website.Vite<Website>()(
   "Website",
   Effect.gen(function* () {

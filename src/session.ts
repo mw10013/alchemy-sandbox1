@@ -6,9 +6,9 @@ import { meAtom } from "./backend-client.ts";
 
 /**
  * The signed-in member for a route guard: Some(me), or None when signed out. Unlike
- * `loadQuery` it does not refetch a cached value on every navigation; `meAtom` refetches
- * once its idle TTL has passed and is invalidated on sign-out. Any other failure rejects,
- * and the route error boundary shows it.
+ * `loadQuery` it does not refetch a cached value on every navigation; {@link meAtom} says
+ * when the value is refetched. Any other failure rejects, and the route error boundary
+ * shows it.
  */
 export const currentMember = (registry: AtomRegistry.AtomRegistry): Promise<Option.Option<Me>> =>
   Effect.runPromise(
@@ -18,7 +18,7 @@ export const currentMember = (registry: AtomRegistry.AtomRegistry): Promise<Opti
     ),
   );
 
-/** Ends the Better Auth session through the Website's auth proxy, then drops the cached member. */
+/** Ends the Better Auth session through the Website's auth proxy, then drops {@link meAtom}. */
 export const signOut = async (registry: AtomRegistry.AtomRegistry): Promise<void> => {
   const response = await fetch("/api/auth/sign-out", {
     method: "POST",

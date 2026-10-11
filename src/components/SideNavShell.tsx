@@ -1,4 +1,3 @@
-// Adapted from Astryx's shell-side-nav page template.
 import type { ReactNode } from "react";
 import { RegistryContext } from "@effect/atom-react";
 import { useContext } from "react";
@@ -9,7 +8,13 @@ import { signOut } from "../session.ts";
 
 export type NavItem = { readonly label: string; readonly href: string };
 
-// The admin and member sides share this frame; each passes its own home and items.
+/**
+ * The frame the admin and member sides share; each passes its own home and items.
+ *
+ * Adapted from Astryx's `shell-side-nav` page template.
+ *
+ * @see refs/astryx/packages/cli/assets/templates/pages/shell-side-nav/page.tsx
+ */
 export default function SideNavShell({
   heading,
   home,

@@ -10,7 +10,13 @@
 - Effect's own idiom guide is in `refs/effect/ai-docs/src` and `refs/effect/LLMS.md`.
 
 ## Comments
-- Comments and JSDoc never reference plans or research docs, or their labels (Q4, D14). Those docs go stale and get deleted; state the reason in the comment itself.
+- Document a declaration with JSDoc on the symbol, never a `//` above it: JSDoc shows on hover and at every use, and its `{@link}`s follow renames.
+- JSDoc says what the code cannot: a rule, a non-obvious why, a platform or library constraint. Never what the name and type already say.
+- State a rule once, on the symbol that enforces it or is the concept. Other sites `{@link}` it instead of restating it; a site that deviates says so and why.
+- Reference code with `{@link Symbol}`, never a file name. A link resolves only to a symbol in scope (declared or imported, `{@link Module.member}` included); never import just for a link, name the symbol in backticks instead. `@see` for an external URL or a `refs/` path (file plus heading or symbol, never a line number).
+- Tags: `{@link}`, `@see`, `@example` for a pattern to copy, `@deprecated`. `@param`/`@returns` only when a parameter means something its type does not. No `@throws`: Effect errors are in the type.
+- `//` only for a why that belongs to one line or branch inside a body.
+- Never reference plans or research docs; they go stale and get deleted. State the reason in the comment itself.
 
 ## Dev server
 Start with `vp run dev:start`, not `vp run dev`. Then `http://localhost:$(pnpm port)`.

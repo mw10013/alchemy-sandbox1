@@ -10,8 +10,10 @@ import { Auth } from "./auth.ts";
 import { Members } from "./members.ts";
 import { SignInLimit } from "./resources.ts";
 
-// The SignInLimit client. Yielding the binding attaches it to the Worker, so the layer is
-// built in the Worker's init.
+/**
+ * The {@link SignInLimit} client. Yielding the binding attaches it to the Worker, so the layer
+ * is built in the Worker's init.
+ */
 export class SignInLimiter extends Context.Service<SignInLimiter, Cloudflare.RateLimitClient>()(
   "app/SignInLimiter",
 ) {
@@ -36,7 +38,6 @@ export const BackendHandlers = BackendRpcs.toLayer(
           const now = yield* DateTime.now;
           return { message: "Hello from the backend Worker.", servedAt: DateTime.formatIso(now) };
         }),
-      // `input` is a ShoutText: the payload schema validated it, so there is nothing to check here.
       Shout: ({ input }) =>
         Effect.gen(function* () {
           yield* Effect.log("Backend.Shout");
@@ -46,8 +47,8 @@ export const BackendHandlers = BackendRpcs.toLayer(
       // who is invited. A Better Auth failure stays a defect for the same reason.
       RequestMagicLink: ({ email, returnTo }, { headers }) =>
         Effect.gen(function* () {
-          // Under alchemy dev no client IP arrives, so every request would share one key
-          // and a few sign-ins would lock everyone out; inline delivery sends no mail anyway.
+          // Inline delivery runs under alchemy dev, where no client IP arrives: every request
+          // would share one key and a few sign-ins would lock everyone out. It sends no mail.
           if (!inline) {
             const ip = headers["cf-connecting-ip"] ?? "unknown";
             const { success } = yield* limiter.limit({ key: ip }).pipe(Effect.orDie);

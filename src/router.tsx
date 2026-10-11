@@ -4,15 +4,19 @@ import * as AtomRegistry from "effect/reactivity/AtomRegistry";
 import * as Hydration from "effect/reactivity/Hydration";
 import { routeTree } from "./routeTree.gen";
 
+/**
+ * Builds the router and its atom registry. It runs once per request on the server and once in
+ * the browser, so each gets its own registry. The server registry is not disposed explicitly:
+ * workerd tears down the request context, and its timers, when the response finishes.
+ */
 export function getRouter() {
-  // One registry per router. getRouter() runs once per request on the server and once in the browser.
   const registry = AtomRegistry.make({ scheduleTask, defaultIdleTTL: 400 });
 
   const router = createRouter({
     routeTree,
     scrollRestoration: true,
     // The registry is the stale-while-revalidate layer. A background router reload would
-    // render a TTL-expired query as Initial ("Loading…") before loadQuery finishes.
+    // render a TTL-expired query as Initial ("Loading…") before `loadQuery` finishes.
     defaultStaleReloadMode: "blocking",
     context: { registry },
     Wrap: ({ children }) => (
@@ -24,8 +28,6 @@ export function getRouter() {
     },
   });
 
-  // The server registry is not disposed explicitly: workerd tears down the request
-  // context, and its timers, when the response finishes.
   return router;
 }
 

@@ -1,4 +1,3 @@
-// Adapted from Astryx's table page template.
 import { useAtomValue } from "@effect/atom-react";
 import { HStack } from "@astryxdesign/core/Stack";
 import { Layout, LayoutContent, LayoutHeader } from "@astryxdesign/core/Layout";
@@ -38,6 +37,13 @@ const columns: TableColumn<Row>[] = [
   },
 ];
 
+/**
+ * The invite list: every member who may sign in, and as what.
+ *
+ * Adapted from Astryx's `table-page` page template.
+ *
+ * @see refs/astryx/packages/cli/assets/templates/pages/table-page/page.tsx
+ */
 export default function MembersPage() {
   const members = useAtomValue(membersAtom);
 

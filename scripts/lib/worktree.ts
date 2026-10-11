@@ -1,12 +1,3 @@
-import * as Config from "effect/Config";
-import * as ConfigProvider from "effect/ConfigProvider";
-import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
-import * as SchemaTransformation from "effect/SchemaTransformation";
-import path from "node:path";
-
-import { runCommand } from "./command.ts";
-
 /**
  * A checkout of this repository is either the main checkout, whose `.git` is
  * the repository, or a long-lived linked worktree on branch `wt-NN`, which T3
@@ -17,7 +8,17 @@ import { runCommand } from "./command.ts";
  * `refs/` exists once, in the main checkout; a linked worktree has a symlink
  * named `refs` pointing at it. `.gitignore` lists `/refs` without a trailing
  * slash so the one rule ignores both the directory and the symlink.
+ *
+ * @module
  */
+import * as Config from "effect/Config";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
+import path from "node:path";
+
+import { runCommand } from "./command.ts";
 
 export class WorktreeError extends Schema.TaggedError<WorktreeError>()("WorktreeError", {
   message: Schema.String,

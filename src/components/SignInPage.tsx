@@ -1,4 +1,3 @@
-// Adapted from Astryx's login page template.
 import type { CSSProperties } from "react";
 import { useAtom } from "@effect/atom-react";
 import { Banner } from "@astryxdesign/core/Banner";
@@ -8,7 +7,7 @@ import { Center } from "@astryxdesign/core/Center";
 import { VStack } from "@astryxdesign/core/Layout";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
-import { revalidateLogic, useForm } from "@tanstack/react-form";
+import { useForm } from "@tanstack/react-form";
 import * as Cause from "effect/Cause";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
@@ -17,25 +16,23 @@ import * as Schema from "effect/Schema";
 import type { RpcClientError } from "effect/rpc";
 import { EmailFromInput, type ReturnPath, type TooManyRequests } from "../api/backend.ts";
 import { requestMagicLinkAtom } from "../backend-client.ts";
+import { fieldStatus, schemaForm } from "../form.ts";
 
-// Standalone auth page paints its own body background (no host shell). The viewport height,
-// not the template's 100%: html and body here do not stretch to the viewport.
+/**
+ * The page paints its own body background: no shell hosts it. The height is the viewport's,
+ * not the template's `100%`, because html and body here do not stretch to the viewport.
+ */
 const pageStyle: CSSProperties = {
   minHeight: "100dvh",
   backgroundColor: "var(--color-background-body)",
 };
-// Cap the column at 400px but let it shrink to fit narrow screens (Stack
-// has no maxWidth prop, so it's set here).
+/** Caps the column at 400px and lets it shrink on narrow screens; Stack has no `maxWidth` prop. */
 const contentStyle: CSSProperties = {
   width: "100%",
   maxWidth: 400,
 };
 
-// The shared codec decides what an email address is; its issue messages become the field's error.
-const SignInForm = Schema.Struct({ email: EmailFromInput });
-const signInFormValidator = Schema.toStandardSchemaV1(SignInForm);
-// Validation passes only values that decode, and it keeps the raw text, so submit decodes again.
-const decodeSignInForm = Schema.decodeSync(SignInForm);
+const SignInForm = schemaForm(Schema.Struct({ email: EmailFromInput }));
 
 const describeFailure = (cause: Cause.Cause<TooManyRequests | RpcClientError.RpcClientError>) =>
   Option.match(Cause.findErrorOption(cause), {
@@ -47,6 +44,14 @@ const describeFailure = (cause: Cause.Cause<TooManyRequests | RpcClientError.Rpc
       }),
   });
 
+/**
+ * Requests a magic link for an address. The reply is the same whether or not the address is a
+ * member, so the page never says which.
+ *
+ * Adapted from Astryx's `login` page template.
+ *
+ * @see refs/astryx/packages/cli/assets/templates/pages/login/page.tsx
+ */
 export default function SignInPage({
   returnTo,
   error,
@@ -56,13 +61,11 @@ export default function SignInPage({
 }) {
   const [result, requestMagicLink] = useAtom(requestMagicLinkAtom);
 
-  // Validate on submit, then on every change until the address is fixed.
   const form = useForm({
     defaultValues: { email: "" },
-    validationLogic: revalidateLogic(),
-    validators: { onDynamic: signInFormValidator },
+    ...SignInForm.options,
     onSubmit: ({ value }) => {
-      requestMagicLink({ payload: { email: decodeSignInForm(value).email, returnTo } });
+      requestMagicLink({ payload: { email: SignInForm.decode(value).email, returnTo } });
     },
   });
 
@@ -100,10 +103,7 @@ export default function SignInPage({
               placeholder="you@example.com"
               type="email"
               size="lg"
-              status={Option.match(Option.fromNullishOr(field.state.meta.errors[0]), {
-                onNone: () => undefined,
-                onSome: (issue) => ({ type: "error", message: issue.message }),
-              })}
+              status={fieldStatus(field.state.meta.errors)}
             />
           )}
         </form.Field>
@@ -138,7 +138,7 @@ export default function SignInPage({
                 </VStack>
                 {Option.match(value.link, {
                   onNone: () => null,
-                  // Dev inline delivery only. A plain anchor: the verify route is a server route.
+                  // A plain anchor, not a router link: the verify route is a server route.
                   onSome: (link) => (
                     <Button
                       label="Open your sign-in link"

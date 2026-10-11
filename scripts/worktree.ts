@@ -147,7 +147,7 @@ const init = Effect.gen(function* () {
   yield* Console.log(`\n${branch} ready on port ${String(port)}. Next: vp run dev:start`);
 });
 
-// Every failure of `init` is a message for the person at the terminal.
+/** Every failure of `init` is a message for the person at the terminal. */
 const toUserError = <E extends { readonly message: string }>(error: E) =>
   new CliError.UserError({ cause: error, userMessage: error.message });
 

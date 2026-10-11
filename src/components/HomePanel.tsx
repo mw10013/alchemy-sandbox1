@@ -2,7 +2,7 @@ import { Layout, LayoutContent } from "@astryxdesign/core/Layout";
 import { VStack } from "@astryxdesign/core/Stack";
 import { Heading, Text } from "@astryxdesign/core/Text";
 
-// The landing panel of the admin and member sides, inside their SideNavShell.
+/** The landing panel of the admin and member sides, inside their `SideNavShell`. */
 export default function HomePanel({ heading, email }: { heading: string; email: string }) {
   return (
     <Layout

@@ -9,12 +9,12 @@ import { BackendRpcs } from "./api/backend.ts";
 import { env } from "./env.server.ts";
 import { refreshOnFocus } from "./query.ts";
 
-// Browser: same-origin proxy route. SSR: any absolute URL; the service binding ignores the host.
+/** Browser: the same-origin proxy route. SSR: any absolute URL; see `Backend`. */
 const rpcUrl = createIsomorphicFn()
   .client(() => `${window.location.origin}/api/rpc`)
   .server(() => "https://backend/rpc");
 
-// SSR goes through the service binding in-process and forwards the visitor's cookie.
+/** SSR goes through the service binding in-process and forwards the visitor's cookie. */
 const serverFetch: typeof fetch = (input, init) => {
   const headers = new Headers(init?.headers);
   const cookie = getRequestHeader("cookie");
@@ -36,7 +36,7 @@ export class BackendClient extends AtomRpc.Service<BackendClient>()("BackendClie
   ),
 }) {}
 
-// The reference page query. The pattern is documented in ./query.ts.
+/** The reference page query; see `loadQuery`. */
 export const helloAtom = BackendClient.query("Hello", undefined, {
   serializationKey: "hello",
   timeToLive: "5 minutes",
@@ -44,9 +44,11 @@ export const helloAtom = BackendClient.query("Hello", undefined, {
 
 export const shoutAtom = BackendClient.mutation("Shout");
 
-// The signed-in member. Read by route guards, never rendered, so the idle TTL is what makes
-// an expired session noticed: after 5 idle minutes the next guard refetches. Invalidated
-// through the "me" reactivity key on sign-out. Sign-in is a full page load.
+/**
+ * The signed-in member. Route guards read it and nothing renders it, so its idle TTL is what
+ * notices a session that expired server-side: after 5 idle minutes the next guard refetches.
+ * Sign-out invalidates it through the `"me"` reactivity key; sign-in is a full page load.
+ */
 export const meAtom = BackendClient.query("Me", undefined, {
   serializationKey: "me",
   timeToLive: "5 minutes",

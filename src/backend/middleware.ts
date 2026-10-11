@@ -15,8 +15,11 @@ import { Auth } from "./auth.ts";
 
 const decodeMe = Schema.decodeUnknownEffect(Me);
 
-// Resolves the Better Auth session from the request cookie. RPC headers are lowercased and
-// carry the cookie for browser calls (through the proxy) and SSR calls (serverFetch).
+/**
+ * Resolves the Better Auth session from the request cookie into {@link CurrentUser}. RPC
+ * headers are lowercased and carry the cookie for browser calls, through the Website's proxy,
+ * and for SSR calls, which forward the visitor's cookie.
+ */
 export const CurrentUserLive = Layer.effect(
   CurrentUserMiddleware,
   Effect.gen(function* () {

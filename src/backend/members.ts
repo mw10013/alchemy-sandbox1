@@ -8,7 +8,7 @@ import * as Schema from "effect/Schema";
 import { Email, Role, type Member } from "../api/backend.ts";
 import { AuthDb } from "./resources.ts";
 
-// A row of the `member` table. A row that does not decode is a broken invariant, so it dies.
+/** A row of the `member` table. A row that does not decode is a broken invariant, so it dies. */
 export const MemberRow = Schema.Struct({
   email: Email,
   role: Role,
@@ -42,8 +42,10 @@ const make = Effect.gen(function* () {
   return { findByEmail, list };
 });
 
-// Member queries for RPC handlers. The layer is built once at Worker init; SQL.D1 defers the
-// actual client to the first query of each request and tears it down with the request.
+/**
+ * Member queries for RPC handlers. The layer is built once at Worker init; `SQL.D1` defers the
+ * actual client to the first query of each request and tears it down with the request.
+ */
 export class Members extends Context.Service<Members, Effect.Success<typeof make>>()(
   "app/Members",
 ) {

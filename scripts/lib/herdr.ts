@@ -1,9 +1,3 @@
-import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
-
-import { runCommand } from "./command.ts";
-
 /**
  * A thin layer over the `herdr` CLI (herdr 0.9.3), which talks to the herdr
  * server over its socket from any shell, inside herdr or not. T3 Code agents
@@ -11,7 +5,14 @@ import { runCommand } from "./command.ts";
  * asked of the server ({@link running}), never read from the environment.
  * Control commands answer JSON shaped `{ id, result }`; each schema decodes
  * only the fields the dev command reads. `pane read` answers plain text.
+ *
+ * @module
  */
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+
+import { runCommand } from "./command.ts";
 
 const Envelope = Schema.fromJsonString(Schema.Struct({ result: Schema.Unknown }));
 

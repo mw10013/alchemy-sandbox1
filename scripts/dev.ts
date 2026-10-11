@@ -67,9 +67,11 @@ const DEV_TAB = "dev";
 const SERVER_PROCESS = "alchemy dev";
 const START_TIMEOUT_MS = 180_000;
 const LOCAL_DATA = ".alchemy/local";
-// The dev stack's records for the auth database and the Better Auth migration Action that
-// runs against it (`alchemy state list Alchemy-sandbox1/dev -r`). Both must go: a recreated
-// database needs the migration to run again.
+/**
+ * The dev stack's records for the auth database and the Better Auth migration Action that
+ * runs against it (`alchemy state list Alchemy-sandbox1/dev -r`). Both must go: a recreated
+ * database needs the migration to run again.
+ */
 const AUTH_DB_STATE = ["Alchemy-sandbox1/dev/AuthDb", "Alchemy-sandbox1/dev/BetterAuthMigrate"];
 const STOP_TIMEOUT_MS = 20_000;
 
@@ -416,7 +418,7 @@ const summarize = (port: number, where: string) =>
     ),
   );
 
-// Every failure a command can raise carries a message for the person at the terminal.
+/** Every failure a command can raise carries a message for the person at the terminal. */
 const toUserError = <E extends { readonly message: string }>(error: E) =>
   new CliError.UserError({ cause: error, userMessage: error.message });
 
