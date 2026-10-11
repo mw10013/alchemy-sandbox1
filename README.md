@@ -71,17 +71,17 @@ The compatibility date is pinned to `2026-07-01`, supported by the bundled worke
 ## Reference sources
 
 `scripts/refs.ts` is an Effect CLI executed directly by Node's TypeScript stripping
-(Node 22.18+). It downloads source archives, not installed packages or Git checkouts.
+(Node 22.18+). It downloads source archives and first-party Shopify Markdown, rather than installing packages.
 
 ```sh
-pnpm refs list
-pnpm refs fetch tan-query tan-form
-pnpm refs:all
-pnpm refs:check
+vp run refs list
+vp run refs fetch tan-query tan-form
+vp run refs:all
+vp run refs:check
 ```
 
 References include Alchemy, Vite+, TanStack Start/Router/Query/Form, Astryx, Effect,
-Cloudflare docs, and the private Baton repository. Library tags follow exact `package.json` pins;
+Cloudflare docs, Shopify docs, and the private Baton repository. Library tags follow exact `package.json` pins;
 Baton snapshots `main` using your existing `gh` authentication (`gh auth login`).
 Fetching requires `curl` and `tar`, plus `gh` for Baton.
 
@@ -89,14 +89,25 @@ Downloaded sources and `.ref.json` stamps live under `refs/`, which is excluded
 from Git, TypeScript, linting, formatting, and the app's test discovery. Do not
 import application code from refs. `check` exits nonzero for missing, stale, or
 invalid copies; branch snapshots report their fetch date, not upstream freshness.
-Refresh Baton explicitly with `pnpm refs fetch baton`. Downloads are staged before
+Refresh Baton explicitly with `vp run refs fetch baton`. Downloads are staged before
 replacement, and a failed download leaves the existing reference intact.
 
 Cloudflare docs snapshot the upstream `production` branch; refresh them with
-`pnpm refs fetch cloudflare-docs`.
+`vp run refs fetch cloudflare-docs`.
 
-These package scripts also work through `vp run`; do not enable task caching for
-reference fetches.
+Shopify docs are opt-in: `vp run refs fetch shopify-docs` downloads app build/design/launch
+pages, API guides and selected Admin GraphQL resources into `refs/shopify-docs/docs/`,
+with local images under `_assets/`. This ports Baton's sitemap-driven Markdown fetcher,
+including webhook topics decoded from Shopify's data endpoint. `refs:all` skips this
+multi-minute mirror. No Shopify dependencies are installed.
+
+Webhook topics follow the `API_VERSION` in `scripts/refs-shopify-docs.ts` (currently
+`2026-10`); other API sections follow the site's `latest` pages. The stamp checks that
+webhook version and reports the snapshot date; it does not verify live site freshness.
+Refresh explicitly when newer docs are needed. Fetching uses the existing Effect HTTP
+client and requires network access to Shopify.
+
+Do not enable task caching for reference fetches.
 
 ## Deployment
 

@@ -10,9 +10,10 @@ import { Argument, CliError, Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { checkoutKind } from "./lib/worktree.ts";
+import * as ShopifyDocs from "./refs-shopify-docs.ts";
 
 /** Toolchain refs follow Vite+'s bundled versions rather than a separately maintained pin. */
-type Ref =
+type GitRef =
   | {
       readonly _tag: "Branch";
       readonly name: string;
@@ -36,7 +37,18 @@ type Ref =
       readonly tag: string;
     };
 
+type Ref =
+  | GitRef
+  | {
+      readonly _tag: "ShopifyDocs";
+      readonly name: string;
+      readonly repo: string;
+      /** A multi-minute site fetch must be requested explicitly rather than through `--all`. */
+      readonly optIn: true;
+    };
+
 const refs: readonly Ref[] = [
+  { _tag: "ShopifyDocs", name: "shopify-docs", repo: ShopifyDocs.ORIGIN, optIn: true },
   { _tag: "Branch", name: "baton", repo: "mw10013/baton", branch: "main", private: true },
   {
     _tag: "Branch",
@@ -208,6 +220,7 @@ const toolchainVersion = Effect.fn("toolchainVersion")(function* (
 
 const resolve = Effect.fn("resolveRef")(function* (ref: Ref) {
   return yield* Match.valueTags(ref, {
+    ShopifyDocs: () => Effect.succeed({ target: ShopifyDocs.API_VERSION, version: undefined }),
     Branch: ({ branch }) => Effect.succeed({ target: branch, version: undefined }),
     Dependency: ({ dep, tag }) =>
       Effect.gen(function* () {
@@ -222,7 +235,11 @@ const resolve = Effect.fn("resolveRef")(function* (ref: Ref) {
   });
 });
 
-const download = Effect.fn("downloadRef")(function* (ref: Ref, target: string, staging: string) {
+const downloadArchive = Effect.fn("downloadRefArchive")(function* (
+  ref: GitRef,
+  target: string,
+  staging: string,
+) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   // The tarball comes from `gh` for a private repo (authenticated), from GitHub's archive URL otherwise.
   const { bin, args } = Match.valueTags(ref, {
@@ -261,6 +278,15 @@ const download = Effect.fn("downloadRef")(function* (ref: Ref, target: string, s
     }),
   );
 });
+
+const download = Effect.fn("downloadRef")((ref: Ref, target: string, staging: string) =>
+  Match.valueTags(ref, {
+    ShopifyDocs: () => ShopifyDocs.downloadInto(staging),
+    Branch: (source) => downloadArchive(source, target, staging),
+    Dependency: (source) => downloadArchive(source, target, staging),
+    Toolchain: (source) => downloadArchive(source, target, staging),
+  }),
+);
 
 const fetchRef = Effect.fn("fetchRef")(function* (ref: Ref) {
   const fs = yield* FileSystem.FileSystem;
@@ -317,6 +343,7 @@ const checkRef = Effect.fn("checkRef")(function* (ref: Ref) {
   if (stamp.repo !== ref.repo || stamp.resolved !== target)
     return yield* new RefError({ message: `STALE (have ${stamp.resolved}, want ${target})` });
   const freshness = Match.valueTags(ref, {
+    ShopifyDocs: () => ` (snapshot fetched ${stamp.fetchedAt}; live docs freshness not checked)`,
     Branch: () => ` (snapshot fetched ${stamp.fetchedAt}; upstream freshness not checked)`,
     Dependency: () => "",
     Toolchain: () => "",
@@ -370,7 +397,7 @@ const fetchCommand = Command.make(
     );
     if (linked) yield* requireSharedRefs(mainCheckout);
     const [, failed] = yield* Effect.partition(
-      refs.filter((ref) => all || names.includes(ref.name)),
+      refs.filter((ref) => names.includes(ref.name) || (all && !("optIn" in ref && ref.optIn))),
       (ref) =>
         fetchRef(ref).pipe(
           Effect.tapError((error) => Console.error(`${ref.name}: ${error.message}`)),
@@ -379,7 +406,11 @@ const fetchCommand = Command.make(
     );
     if (failed.length > 0) return yield* userError(`Failed to fetch: ${failed.join(", ")}`);
   }),
-).pipe(Command.withDescription("Download pinned sources; private repos use gh authentication"));
+).pipe(
+  Command.withDescription(
+    "Download refs; --all skips opt-in site mirrors; private repos use gh authentication",
+  ),
+);
 
 const checkCommand = Command.make("check", {}, () =>
   Effect.gen(function* () {
