@@ -1,5 +1,5 @@
 // Adapted from Astryx's login page template.
-import { useState, type CSSProperties } from "react";
+import type { CSSProperties } from "react";
 import { useAtom } from "@effect/atom-react";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
@@ -8,11 +8,11 @@ import { Center } from "@astryxdesign/core/Center";
 import { VStack } from "@astryxdesign/core/Layout";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
+import { revalidateLogic, useForm } from "@tanstack/react-form";
 import * as Cause from "effect/Cause";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type { RpcClientError } from "effect/rpc";
 import { EmailFromInput, type ReturnPath, type TooManyRequests } from "../api/backend.ts";
@@ -31,7 +31,11 @@ const contentStyle: CSSProperties = {
   maxWidth: 400,
 };
 
-const decodeEmail = Schema.decodeUnknownResult(EmailFromInput);
+// The shared codec decides what an email address is; its issue messages become the field's error.
+const SignInForm = Schema.Struct({ email: EmailFromInput });
+const signInFormValidator = Schema.toStandardSchemaV1(SignInForm);
+// Validation passes only values that decode, and it keeps the raw text, so submit decodes again.
+const decodeSignInForm = Schema.decodeSync(SignInForm);
 
 const describeFailure = (cause: Cause.Cause<TooManyRequests | RpcClientError.RpcClientError>) =>
   Option.match(Cause.findErrorOption(cause), {
@@ -50,49 +54,68 @@ export default function SignInPage({
   returnTo: ReturnPath | undefined;
   error: string | undefined;
 }) {
-  const [email, setEmail] = useState("");
-  const [validation, setValidation] = useState<string | undefined>(undefined);
   const [result, requestMagicLink] = useAtom(requestMagicLinkAtom);
 
-  // The shared codec decides what an email address is; a failure is shown as the field's error.
-  const submit = () =>
-    Result.match(decodeEmail(email), {
-      onFailure: () => setValidation("Enter an email address."),
-      onSuccess: (address) => {
-        setValidation(undefined);
-        requestMagicLink({ payload: { email: address, returnTo } });
-      },
-    });
+  // Validate on submit, then on every change until the address is fixed.
+  const form = useForm({
+    defaultValues: { email: "" },
+    validationLogic: revalidateLogic(),
+    validators: { onDynamic: signInFormValidator },
+    onSubmit: ({ value }) => {
+      requestMagicLink({ payload: { email: decodeSignInForm(value).email, returnTo } });
+    },
+  });
 
-  const form = (failure: string | undefined) => (
-    <VStack gap={4} hAlign="stretch">
-      <VStack gap={1} hAlign="center">
-        <Heading level={2}>Sign in</Heading>
-        <Text type="body" color="secondary" size="sm">
-          We'll email you a sign-in link.
-        </Text>
+  const signInForm = (failure: string | undefined) => (
+    <form
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        void form.handleSubmit();
+      }}
+    >
+      <VStack gap={4} hAlign="stretch">
+        <VStack gap={1} hAlign="center">
+          <Heading level={2}>Sign in</Heading>
+          <Text type="body" color="secondary" size="sm">
+            We'll email you a sign-in link.
+          </Text>
+        </VStack>
+        {error !== undefined && (
+          <Banner
+            status="error"
+            title="That link didn't work. Request a new one."
+            container="card"
+          />
+        )}
+        {failure !== undefined && <Banner status="error" title={failure} container="card" />}
+        <form.Field name="email">
+          {(field) => (
+            <TextInput
+              label="Email"
+              htmlName={field.name}
+              value={field.state.value}
+              onChange={field.handleChange}
+              onBlur={field.handleBlur}
+              placeholder="you@example.com"
+              type="email"
+              size="lg"
+              status={Option.match(Option.fromNullishOr(field.state.meta.errors[0]), {
+                onNone: () => undefined,
+                onSome: (issue) => ({ type: "error", message: issue.message }),
+              })}
+            />
+          )}
+        </form.Field>
+        <Button
+          label="Email me a sign-in link"
+          type="submit"
+          variant="primary"
+          size="lg"
+          isLoading={result.waiting}
+        />
       </VStack>
-      {error !== undefined && (
-        <Banner status="error" title="That link didn't work. Request a new one." container="card" />
-      )}
-      {failure !== undefined && <Banner status="error" title={failure} container="card" />}
-      <TextInput
-        label="Email"
-        value={email}
-        onChange={setEmail}
-        placeholder="you@example.com"
-        type="email"
-        size="lg"
-        status={validation === undefined ? undefined : { type: "error", message: validation }}
-      />
-      <Button
-        label="Email me a sign-in link"
-        variant="primary"
-        size="lg"
-        isLoading={result.waiting}
-        onClick={submit}
-      />
-    </VStack>
+    </form>
   );
 
   return (
@@ -103,8 +126,8 @@ export default function SignInPage({
         </Text>
         <Card padding={8} width="100%">
           {AsyncResult.match(result, {
-            onInitial: () => form(undefined),
-            onFailure: ({ cause }) => form(describeFailure(cause)),
+            onInitial: () => signInForm(undefined),
+            onFailure: ({ cause }) => signInForm(describeFailure(cause)),
             onSuccess: ({ value }) => (
               <VStack gap={4} hAlign="stretch">
                 <VStack gap={1} hAlign="center">

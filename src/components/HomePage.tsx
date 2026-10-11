@@ -1,5 +1,4 @@
 // Adapted from Astryx's shell-top-nav page template.
-import { useState } from "react";
 import { useAtom, useAtomValue } from "@effect/atom-react";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { Button } from "@astryxdesign/core/Button";
@@ -8,11 +7,11 @@ import { Text } from "@astryxdesign/core/Text";
 import { TopNav, TopNavHeading, TopNavItem } from "@astryxdesign/core/TopNav";
 import { VStack } from "@astryxdesign/core/VStack";
 import { TextInput } from "@astryxdesign/core/TextInput";
+import { revalidateLogic, useForm } from "@tanstack/react-form";
 import * as Cause from "effect/Cause";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type { RpcClientError } from "effect/rpc";
 import { ShoutTextFromInput } from "../api/backend.ts";
@@ -35,23 +34,25 @@ const describeShoutFailure = (cause: Cause.Cause<RpcClientError.RpcClientError>)
       }),
   });
 
-const decodeShoutText = Schema.decodeUnknownResult(ShoutTextFromInput);
+// The shared codec decides what Shout accepts; its issue messages become the field's error.
+const ShoutForm = Schema.Struct({ text: ShoutTextFromInput });
+const shoutFormValidator = Schema.toStandardSchemaV1(ShoutForm);
+// Validation passes only values that decode, and it keeps the raw text, so submit decodes again.
+const decodeShoutForm = Schema.decodeSync(ShoutForm);
 
 export default function HomePage() {
-  const [input, setInput] = useState("");
-  const [validation, setValidation] = useState<string | undefined>(undefined);
   const hello = useAtomValue(helloAtom);
   const [shoutResult, shout] = useAtom(shoutAtom);
 
-  // The shared codec decides what Shout accepts; a failure is shown as the field's error.
-  const submit = () =>
-    Result.match(decodeShoutText(input), {
-      onFailure: (error) => setValidation(error.message),
-      onSuccess: (text) => {
-        setValidation(undefined);
-        shout({ payload: { input: text }, reactivityKeys: ["hello"] });
-      },
-    });
+  // Validate on submit, then on every change until the text is fixed.
+  const form = useForm({
+    defaultValues: { text: "" },
+    validationLogic: revalidateLogic(),
+    validators: { onDynamic: shoutFormValidator },
+    onSubmit: ({ value }) => {
+      shout({ payload: { input: decodeShoutForm(value).text }, reactivityKeys: ["hello"] });
+    },
+  });
 
   return (
     <AppShell
@@ -97,19 +98,38 @@ export default function HomePage() {
         </VStack>
         <VStack gap={4} hAlign="start">
           <Heading level={2}>Mutation</Heading>
-          <TextInput
-            label="Text to shout"
-            value={input}
-            onChange={setInput}
-            description="1–80 characters after trimming. Submit blank text to see the validation message."
-            status={validation === undefined ? undefined : { type: "error", message: validation }}
-          />
-          <Button
-            label="Shout"
-            variant="primary"
-            isLoading={shoutResult.waiting}
-            onClick={submit}
-          />
+          <form
+            noValidate
+            onSubmit={(event) => {
+              event.preventDefault();
+              void form.handleSubmit();
+            }}
+          >
+            <VStack gap={4} hAlign="start">
+              <form.Field name="text">
+                {(field) => (
+                  <TextInput
+                    label="Text to shout"
+                    htmlName={field.name}
+                    value={field.state.value}
+                    onChange={field.handleChange}
+                    onBlur={field.handleBlur}
+                    description="1–80 characters after trimming. Submit blank text to see the validation message."
+                    status={Option.match(Option.fromNullishOr(field.state.meta.errors[0]), {
+                      onNone: () => undefined,
+                      onSome: (issue) => ({ type: "error", message: issue.message }),
+                    })}
+                  />
+                )}
+              </form.Field>
+              <Button
+                label="Shout"
+                type="submit"
+                variant="primary"
+                isLoading={shoutResult.waiting}
+              />
+            </VStack>
+          </form>
           {AsyncResult.match(shoutResult, {
             onInitial: () => null,
             onSuccess: ({ value }) => (
