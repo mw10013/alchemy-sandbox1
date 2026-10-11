@@ -101,7 +101,7 @@ vp run dev:stop
 Every checkout shares one git repository, so every branch is visible everywhere at once, with no fetch.
 
 - **Read anything from anywhere:** `git show main:src/x.ts`, `git diff main...wt-02`, `git log wt-02`.
-- **Commands can run in another checkout,** because it is just another folder: `git -C <path> status`, or `(cd <path> && vp run test)`.
+- **Commands can run in another checkout,** because it is just another folder: `git -C <path> status`, or `(cd <path> && vp test)`.
 - **Write and commit only in your own checkout,** to its own branch. Landing on `main` (below) is the one exception.
 - **A worktree never checks out `main`.** `main` is always checked out in the main checkout, and git allows a branch in only one checkout at a time.
 - **For a scratch copy of another commit,** run `git worktree add --detach /tmp/<name> <ref>`, and `git worktree remove` it afterwards. It has no `.env`, so no dev server; it is for reading and tests only.
@@ -114,7 +114,7 @@ History stays linear: worktree branches are rebased, and `main` only moves by fa
 - **During a task:** commit to `wt-NN` as needed, and rebase onto `main` again whenever other work has landed.
 - **Getting the work onto `main`:** this happens only when the user asks.
 
-  1. In `wt-NN`, run `git rebase main`, then `vp check` and `vp run test`.
+  1. In `wt-NN`, run `git rebase main`, then `vp check` and `vp test`.
   2. Fast-forward `main`, from either checkout:
      - from `wt-NN`: `git -C <main checkout> merge --ff-only wt-NN`;
      - from main: `git merge --ff-only wt-NN`.

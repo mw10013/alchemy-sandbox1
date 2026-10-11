@@ -5,7 +5,10 @@
 - Commit only to the branch checked out where you work: `main` in the main checkout, `wt-NN` in a worktree. Create no other branches, except a new `wt-NN` when setting up a worktree.
 
 ## Toolchain
-Vite+: package scripts are `vp run <script>`, local binaries `vp exec <bin>`. Never npm or npx.
+Vite+. Never npm or npx.
+- Prefer built-ins: `vp check` (format, lint, type check; `--fix` to auto-fix), `vp test` (unit, browser, integ), `vp fmt`, `vp lint`, `vp build`.
+- `vp test` does not include e2e. Run it as `vp run test:e2e` (a package script, since it has no built-in).
+- `vp run <script>` is for package scripts with no built-in (`dev:start`, `test:e2e`); `vp exec <bin>` is for binaries in `node_modules/.bin` (`playwright`, `astryx`, `alchemy`).
 
 ## Effect
 - Validation, parsing, encoding: Effect Schema. Never trim, length-check or regex-test input by hand.

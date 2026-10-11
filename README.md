@@ -35,12 +35,11 @@ page and in `logs/dev/current` instead of being emailed.
 
 ```sh
 vp check
-vp run typecheck
-vp run test          # unit and integ projects
-vp run test:unit     # in-process tests under src/, Better Auth on an in-memory database
-vp run test:integ    # deploys the Backend into workerd (test/integ) and drives it over HTTP
-vp run test:e2e      # Playwright, Chromium, against the e2e_<user> stage
-vp run build
+vp test                    # unit, browser and integ projects
+vp test --project unit     # in-process tests under src/, Better Auth on an in-memory database
+vp test --project integ    # deploys the Backend into workerd (test/integ) and drives it over HTTP
+vp run test:e2e            # Playwright, Chromium, against the e2e_<user> stage (not part of vp test)
+vp build
 pnpm exec astryx doctor
 ```
 
@@ -58,7 +57,7 @@ the Backend serves only on a stage given an `E2E_TOKEN`. `vp run test:e2e:ui` op
 UI mode; arguments pass straight through, as in `vp run test:e2e --grep-invert @dev-only` (no
 `--`). Reports, traces and saved sign-ins go to `playwright/`, which is ignored.
 
-`vp run build` builds client assets and the Cloudflare-compatible server bundle.
+`vp build` builds client assets and the Cloudflare-compatible server bundle.
 Alchemy loads the same Vite configuration and injects its own runtime plugin on
 deployment. The config's injection guard prevents duplicate plugin instances.
 The compatibility date is pinned to `2026-07-01`, supported by the bundled workerd.
