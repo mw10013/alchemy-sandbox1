@@ -7,7 +7,8 @@ import Backend from "../../src/backend/worker.ts";
  * The Backend alone, for the test harness. The Website is left out: under dev it would start
  * the TanStack Start dev server and want `WEBSITE_PORT`. Better Auth builds links on
  * `AUTH_ORIGIN`, which the real stack binds to the Website's URL; here the Backend is its own
- * origin, so a link can be followed against it directly.
+ * origin, so a link can be followed against it directly. Links are delivered inline, so the
+ * test gets them back from `RequestMagicLink`.
  */
 export default Alchemy.Stack(
   "Alchemy-sandbox1-test",
@@ -15,6 +16,7 @@ export default Alchemy.Stack(
   Effect.gen(function* () {
     const backend = yield* Backend;
     yield* backend.bind("AuthOrigin", { env: { AUTH_ORIGIN: backend.url } });
+    yield* backend.bind("MagicLinkDelivery", { env: { MAGIC_LINK_DELIVERY: "inline" } });
     return { backendUrl: backend.url.as<string>() };
   }),
 );

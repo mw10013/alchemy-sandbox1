@@ -39,6 +39,7 @@ vp run typecheck
 vp run test          # unit and integ projects
 vp run test:unit     # in-process tests under src/, Better Auth on an in-memory database
 vp run test:integ    # deploys the Backend into workerd (test/integ) and drives it over HTTP
+vp run test:e2e      # Playwright, Chromium, against the e2e_<user> stage
 vp run build
 pnpm exec astryx doctor
 ```
@@ -47,6 +48,15 @@ Tests are Effect tests on `@effect/vitest`; the `integ` project uses `alchemy/Te
 dev mode, needs no running dev server and keeps its stack under `.alchemy/` on the `test_<user>`
 stage. The stack is never destroyed: a re-run redeploys it as a no-op, and `vp run db:reset`
 wipes its local D1 along with dev's.
+
+`vp run test:e2e` runs the Playwright specs under `e2e/` in Chromium. It starts `alchemy dev`
+on its own stage (`e2e_<user>`), with local state under `.alchemy/`, on `WEBSITE_PORT + 100`, so
+the dev server on `WEBSITE_PORT` keeps running; a server already on that port is reused, and one
+it started is stopped at the end. Before the specs it resets the stage's data (Better Auth rows
+and `@e2e.test` members) and signs in once per role through the test-control procedures, which
+the Backend serves only on a stage given an `E2E_TOKEN`. `vp run test:e2e:ui` opens Playwright's
+UI mode; arguments pass straight through, as in `vp run test:e2e --grep-invert @dev-only` (no
+`--`). Reports, traces and saved sign-ins go to `playwright/`, which is ignored.
 
 `vp run build` builds client assets and the Cloudflare-compatible server bundle.
 Alchemy loads the same Vite configuration and injects its own runtime plugin on

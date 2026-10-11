@@ -14,8 +14,7 @@ import Stack from "./stack.ts";
 /**
  * Deploys the Backend into workerd with the local D1 (migrations and the test seed) and drives
  * the magic-link flow over HTTP. `dev` is not set here: the `integ` Vitest project sets
- * `ALCHEMY_DEV=1`, which the harness reads, and which the Worker's init reads at plan to choose
- * inline link delivery.
+ * `ALCHEMY_DEV=1`, which the harness reads; the stack binds inline link delivery itself.
  */
 const { test, beforeAll, deploy } = Test.make({
   providers: Cloudflare.providers(),

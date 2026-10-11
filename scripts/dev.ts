@@ -64,7 +64,11 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/u, "");
 const LOG = "logs/dev/current";
 const LOCK = "logs/dev.lock";
 const DEV_TAB = "dev";
-const SERVER_PROCESS = "alchemy dev";
+/**
+ * Matched against command lines: the `dev` script's `--stage dev` keeps an e2e stage's
+ * `alchemy dev` in the same checkout (Playwright's web server, on another port) out of reach.
+ */
+const SERVER_PROCESS = "alchemy dev --stage dev";
 const START_TIMEOUT_MS = 180_000;
 const LOCAL_DATA = ".alchemy/local";
 /**

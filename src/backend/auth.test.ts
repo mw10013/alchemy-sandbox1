@@ -15,6 +15,7 @@ import * as Schema from "effect/Schema";
 import { BackendRpcs, EmailFromInput, ReturnPath, type Member } from "../api/backend.ts";
 import { Auth } from "./auth.ts";
 import { BackendHandlers, SignInLimiter } from "./handlers.ts";
+import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { Mailer, SentMail } from "./mailer.ts";
 import { Members } from "./members.ts";
 import { CurrentUserLive, RequireAdminLive } from "./middleware.ts";
@@ -32,28 +33,33 @@ const members: ReadonlyArray<Member> = [
 ];
 
 /**
- * The Backend's RPC layers over Better Auth on an in-memory database, fresh per test. `inline`
- * is what `ALCHEMY_DEV` would decide in the Worker; `allow` is the rate limiter's answer. The
- * test owns every effect of the Backend, the logger included: `Info` is dropped, so only a
- * warning or error reaches the test output.
+ * The Backend's RPC layers over Better Auth on an in-memory database, fresh per test.
+ * `delivery` is the stage's {@link MagicLinkDelivery} choice; `allow` is the rate limiter's
+ * answer. The test owns every effect of the Backend, the logger included: `Info` is dropped,
+ * so only a warning or error reaches the test output.
  */
-const TestBackend = ({ inline, allow = true }: { inline: boolean; allow?: boolean }) =>
+const TestBackend = ({
+  delivery,
+  allow = true,
+}: {
+  delivery: "inline" | "mailed";
+  allow?: boolean;
+}) =>
   Layer.mergeAll(BackendHandlers, CurrentUserLive, RequireAdminLive).pipe(
     Layer.provideMerge(
       Auth.layerWith({ secret: "test-secret-test-secret-test-secret" }).pipe(
         Layer.provideMerge(
           Layer.mergeAll(
             Members.layerTest(members),
-            Mailer.layerTest,
             SignInLimiter.layerTest(allow),
+            (delivery === "inline"
+              ? MagicLinkDelivery.layerInline
+              : MagicLinkDelivery.layerMailed
+            ).pipe(Layer.provideMerge(Mailer.layerTest)),
           ),
         ),
         Layer.provide(Memory()),
-        Layer.provide(
-          ConfigProvider.layer(
-            ConfigProvider.fromUnknown({ ALCHEMY_DEV: String(inline), AUTH_ORIGIN: ORIGIN }),
-          ),
-        ),
+        Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ AUTH_ORIGIN: ORIGIN }))),
       ),
     ),
     Layer.provide(RuntimeContext.phantom),
@@ -100,7 +106,7 @@ describe("magic-link sign-in (inline delivery)", () => {
         const me = yield* client.Me().pipe(RpcClient.withHeaders({ cookie }));
         assert.strictEqual(me.email, address);
         assert.strictEqual(me.role, role);
-      }).pipe(Effect.provide(TestBackend({ inline: true }))),
+      }).pipe(Effect.provide(TestBackend({ delivery: "inline" }))),
   );
 
   it.live("a non-member gets no link and no mail", () =>
@@ -109,22 +115,23 @@ describe("magic-link sign-in (inline delivery)", () => {
       const { link } = yield* client.RequestMagicLink({ email: stranger });
       assert.isTrue(Option.isNone(link));
       assert.deepStrictEqual(yield* Ref.get(yield* SentMail), []);
-    }).pipe(Effect.provide(TestBackend({ inline: true }))),
+    }).pipe(Effect.provide(TestBackend({ delivery: "inline" }))),
   );
 
   it.live("a non-member's link, obtained directly, is refused at verify", () =>
     Effect.gen(function* () {
-      const { auth, takeInlineLink } = yield* Auth;
+      const { auth } = yield* Auth;
+      const { take } = yield* MagicLinkDelivery;
       yield* auth.api
         .signInMagicLink({ body: { email: stranger, callbackURL: "/app" }, headers: new Headers() })
         .pipe(Effect.provide(RuntimeContext.phantom));
-      const link = yield* takeInlineLink(stranger);
+      const link = yield* take(stranger);
       const response = yield* serve(new Request(Option.getOrThrow(link)));
       assert.strictEqual(response.status, 302);
       const location = new URL(response.headers.get("location") ?? "");
       assert.strictEqual(location.searchParams.get("error"), "not_invited");
       assert.deepStrictEqual(response.headers.getSetCookie(), [], "no session was created");
-    }).pipe(Effect.provide(TestBackend({ inline: true }))),
+    }).pipe(Effect.provide(TestBackend({ delivery: "inline" }))),
   );
 
   it.live("sign-out ends the session", () =>
@@ -141,7 +148,7 @@ describe("magic-link sign-in (inline delivery)", () => {
       assert.strictEqual(response.status, 200);
       const error = yield* client.Me().pipe(RpcClient.withHeaders({ cookie }), Effect.flip);
       assert.strictEqual(error._tag, "Unauthorized");
-    }).pipe(Effect.provide(TestBackend({ inline: true }))),
+    }).pipe(Effect.provide(TestBackend({ delivery: "inline" }))),
   );
 });
 
@@ -151,7 +158,7 @@ describe("guards", () => {
       const client = yield* RpcTest.makeClient(BackendRpcs);
       const error = yield* client.Me().pipe(Effect.flip);
       assert.strictEqual(error._tag, "Unauthorized");
-    }).pipe(Effect.provide(TestBackend({ inline: true }))),
+    }).pipe(Effect.provide(TestBackend({ delivery: "inline" }))),
   );
 
   it.live("ListMembers needs an admin", () =>
@@ -168,7 +175,7 @@ describe("guards", () => {
         list.map((row) => row.email),
         [admin, member],
       );
-    }).pipe(Effect.provide(TestBackend({ inline: true }))),
+    }).pipe(Effect.provide(TestBackend({ delivery: "inline" }))),
   );
 });
 
@@ -182,7 +189,7 @@ describe("magic-link sign-in (mail delivery)", () => {
       assert.deepStrictEqual(rest, []);
       assert.strictEqual(mail?.to, member);
       assert.include(mail?.text, `${ORIGIN}/api/auth/magic-link/verify?token=`);
-    }).pipe(Effect.provide(TestBackend({ inline: false }))),
+    }).pipe(Effect.provide(TestBackend({ delivery: "mailed" }))),
   );
 
   it.live("the rate limit refuses before anything is sent", () =>
@@ -191,6 +198,6 @@ describe("magic-link sign-in (mail delivery)", () => {
       const error = yield* client.RequestMagicLink({ email: member }).pipe(Effect.flip);
       assert.strictEqual(error._tag, "TooManyRequests");
       assert.deepStrictEqual(yield* Ref.get(yield* SentMail), []);
-    }).pipe(Effect.provide(TestBackend({ inline: false, allow: false }))),
+    }).pipe(Effect.provide(TestBackend({ delivery: "mailed", allow: false }))),
   );
 });

@@ -1,4 +1,9 @@
-import { createRootRouteWithContext, HeadContent, Scripts } from "@tanstack/react-router";
+import {
+  createRootRouteWithContext,
+  HeadContent,
+  Scripts,
+  useHydrated,
+} from "@tanstack/react-router";
 import type * as AtomRegistry from "effect/reactivity/AtomRegistry";
 import stylesheet from "../styles.css?url";
 import { AppShell } from "@astryxdesign/core/AppShell";
@@ -24,14 +29,20 @@ import RouterLink from "../components/RouterLink";
  *   architecture terms. Say what happened and what to do: "Couldn't reach the server. Try
  *   again."
  * - No placeholder that repeats its label.
+ *
+ * `data-hydrated` on `<body>` marks that React has attached its handlers. Browser tests wait for
+ * it after a full page load, because a click before then is lost. {@link useHydrated} is false
+ * on the server and on the first client render, so the server markup and the hydration render
+ * agree.
  */
 function RootDocument({ children }: { children: ReactNode }) {
+  const hydrated = useHydrated();
   return (
     <html lang="en">
       <head>
         <HeadContent />
       </head>
-      <body>
+      <body data-hydrated={hydrated ? "" : undefined}>
         <Theme theme={neutralTheme} mode="dark">
           <LinkProvider component={RouterLink}>{children}</LinkProvider>
         </Theme>

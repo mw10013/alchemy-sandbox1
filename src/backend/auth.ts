@@ -1,5 +1,4 @@
 import { BetterAuth } from "@alchemy.run/better-auth";
-import * as Alchemy from "alchemy";
 import { RuntimeContext } from "alchemy";
 import { admin, magicLink } from "better-auth/plugins";
 import * as Config from "effect/Config";
@@ -10,7 +9,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { Email, type Role } from "../api/backend.ts";
-import { Mailer } from "./mailer.ts";
+import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { Members } from "./members.ts";
 
 const MAGIC_LINK_TTL_SECONDS = 300;
@@ -28,23 +27,20 @@ export interface AuthOptions {
 /**
  * Builds {@link Auth}. This is the only Promise seam with Better Auth: its callbacks run
  * inside Better Auth's promise machinery, so they run Effects with a snapshot of the
- * construction context. The collaborators ({@link Members}, {@link Mailer}) are services, so
+ * construction context. The collaborators ({@link Members}, {@link MagicLinkDelivery}) are
+ * services, so
  * the same code runs in the Worker and in a test with no Cloudflare binding behind it.
  */
 export const makeAuth = (options: AuthOptions = {}) =>
   Effect.gen(function* () {
-    const dev = yield* Alchemy.ALCHEMY_DEV;
     // The Website's URL, bound onto this Worker by the stack. It is absent while the stack is
     // planned, which needs no origin; a running Worker without it is broken.
     const authOrigin = yield* Config.option(Config.String("AUTH_ORIGIN"));
     if (globalThis.__ALCHEMY_RUNTIME__ && Option.isNone(authOrigin))
       return yield* Effect.die(new Error("AUTH_ORIGIN is not bound to the Backend"));
-    const inline = dev;
     const members = yield* Members;
-    const mailer = yield* Mailer;
+    const delivery = yield* MagicLinkDelivery;
     const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
-    // sendMagicLink writes and RequestMagicLink reads within one request.
-    const pendingLinks = new Map<string, string>();
 
     // A callback runs outside any request, so `Effect.scoped` gives the query its own scope:
     // `SQL.D1` builds its client per scope and releases it with the scope.
@@ -56,19 +52,6 @@ export const makeAuth = (options: AuthOptions = {}) =>
             .findByEmail(address)
             .pipe(Effect.map(Option.map((member) => member.role)), Effect.scoped),
       }).pipe(Effect.provide(RuntimeContext.phantom));
-
-    const deliver = Effect.fn("Auth.deliverMagicLink")(function* (to: string, url: string) {
-      if (inline) {
-        pendingLinks.set(to, url);
-        return yield* Effect.logInfo("magic link (dev inline)", { to, url });
-      }
-      yield* mailer.send({
-        to,
-        subject: "Your sign-in link",
-        text: `Sign in: ${url}\n\nThis link expires in 5 minutes. If you did not ask for it, ignore this email.`,
-        html: `<p><a href="${url}">Sign in</a></p><p>This link expires in 5 minutes. If you did not ask for it, ignore this email.</p>`,
-      });
-    });
 
     const auth = yield* BetterAuth({
       ...(options.secret === undefined ? {} : { secret: options.secret }),
@@ -104,7 +87,7 @@ export const makeAuth = (options: AuthOptions = {}) =>
         magicLink({
           expiresIn: MAGIC_LINK_TTL_SECONDS,
           storeToken: "hashed",
-          sendMagicLink: ({ email: to, url }) => runPromise(deliver(to, url)),
+          sendMagicLink: ({ email: to, url }) => runPromise(delivery.deliver(to, url)),
         }),
         admin(),
       ],
@@ -113,23 +96,13 @@ export const makeAuth = (options: AuthOptions = {}) =>
       rateLimit: { enabled: false },
     });
 
-    const takeInlineLink = (to: string) =>
-      Effect.sync(() => {
-        const url = Option.fromUndefinedOr(pendingLinks.get(to));
-        pendingLinks.delete(to);
-        return url;
-      });
-
-    return { auth, inline, takeInlineLink };
+    return { auth };
   });
 
 /**
  * Better Auth with magic links, invite-only: only an address in the `member` table can create
- * a user, and the new user takes the member's role.
- *
- * Under `alchemy dev` delivery is inline (`inline` is true): a magic link is logged instead of
- * emailed, and RequestMagicLink returns it through `takeInlineLink` so the sign-in page can
- * show it. A site that behaves differently under inline delivery reads `inline`.
+ * a user, and the new user takes the member's role. Magic links go through
+ * {@link MagicLinkDelivery}, which decides whether a caller gets one back.
  */
 export class Auth extends Context.Service<Auth, Effect.Success<ReturnType<typeof makeAuth>>>()(
   "app/Auth",

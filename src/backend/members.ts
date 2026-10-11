@@ -39,7 +39,13 @@ const make = Effect.gen(function* () {
     return (yield* decodeRows(rows)).map(toMember);
   }, Effect.orDie);
 
-  return { findByEmail, list };
+  const create = Effect.fn("Members.create")(function* (email: Email, role: Role) {
+    yield* sql`INSERT INTO member (email, role) VALUES (${email}, ${role})`;
+    // The row was just inserted; a None here is a broken invariant, so it dies with the rest.
+    return yield* Effect.fromOption(yield* findByEmail(email));
+  }, Effect.orDie);
+
+  return { findByEmail, list, create };
 });
 
 /**
@@ -51,14 +57,26 @@ export class Members extends Context.Service<Members, Effect.Success<typeof make
 ) {
   static readonly layer = Layer.effect(Members, make);
 
-  /** A fixed invite list, for tests. */
-  static readonly layerTest = (members: ReadonlyArray<Member>) =>
-    Layer.succeed(Members, {
-      findByEmail: (email: Email) =>
-        Effect.succeed(Option.fromUndefinedOr(members.find((member) => member.email === email))),
-      list: () =>
-        Effect.succeed(
-          [...members].sort((a, b) => a.createdAt - b.createdAt || a.email.localeCompare(b.email)),
-        ),
+  /** An invite list in memory, for tests. `create` appends to the layer's own copy. */
+  static readonly layerTest = (seed: ReadonlyArray<Member>) =>
+    Layer.sync(Members, () => {
+      const members = [...seed];
+      const findByEmail = (email: Email) =>
+        Effect.succeed(Option.fromUndefinedOr(members.find((member) => member.email === email)));
+      return {
+        findByEmail,
+        list: () =>
+          Effect.succeed(
+            [...members].sort(
+              (a, b) => a.createdAt - b.createdAt || a.email.localeCompare(b.email),
+            ),
+          ),
+        create: (email: Email, role: Role) =>
+          Effect.sync(() => {
+            const member: Member = { email, role, createdAt: Math.floor(Date.now() / 1000) };
+            members.push(member);
+            return member;
+          }),
+      };
     });
 }

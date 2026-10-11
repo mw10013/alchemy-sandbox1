@@ -16,6 +16,7 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminMembersRouteImport } from './routes/admin.members'
 import { Route as ApiRpcRouteImport } from './routes/api.rpc'
+import { Route as ApiTestControlRouteImport } from './routes/api.test-control'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
 
@@ -54,6 +55,11 @@ const ApiRpcRoute = ApiRpcRouteImport.update({
   path: '/api/rpc',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiTestControlRoute = ApiTestControlRouteImport.update({
+  id: '/api/test-control',
+  path: '/api/test-control',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -72,6 +78,7 @@ export interface FileRoutesByFullPath {
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
   '/api/rpc': typeof ApiRpcRoute
+  '/api/test-control': typeof ApiTestControlRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -81,6 +88,7 @@ export interface FileRoutesByTo {
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
   '/api/rpc': typeof ApiRpcRoute
+  '/api/test-control': typeof ApiTestControlRoute
   '/admin': typeof AdminIndexRoute
   '/app': typeof AppIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -93,6 +101,7 @@ export interface FileRoutesById {
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
   '/api/rpc': typeof ApiRpcRoute
+  '/api/test-control': typeof ApiTestControlRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -106,6 +115,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/admin/members'
     | '/api/rpc'
+    | '/api/test-control'
     | '/admin/'
     | '/app/'
     | '/api/auth/$'
@@ -115,6 +125,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/admin/members'
     | '/api/rpc'
+    | '/api/test-control'
     | '/admin'
     | '/app'
     | '/api/auth/$'
@@ -126,6 +137,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/admin/members'
     | '/api/rpc'
+    | '/api/test-control'
     | '/admin/'
     | '/app/'
     | '/api/auth/$'
@@ -137,6 +149,7 @@ export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   SignInRoute: typeof SignInRoute
   ApiRpcRoute: typeof ApiRpcRoute
+  ApiTestControlRoute: typeof ApiTestControlRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
 }
 
@@ -191,6 +204,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiRpcRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/test-control': {
+      id: '/api/test-control'
+      path: '/api/test-control'
+      fullPath: '/api/test-control'
+      preLoaderRoute: typeof ApiTestControlRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/app/': {
       id: '/app/'
       path: '/'
@@ -236,6 +256,7 @@ const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   SignInRoute: SignInRoute,
   ApiRpcRoute: ApiRpcRoute,
+  ApiTestControlRoute: ApiTestControlRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
 }
 export const routeTree = rootRouteImport

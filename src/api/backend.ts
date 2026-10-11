@@ -62,7 +62,7 @@ export const Member = Schema.Struct({
 });
 export type Member = typeof Member.Type;
 
-/** `link` is Some only under inline delivery; see `Auth` in the Backend. */
+/** `link` is Some only under inline delivery; see `MagicLinkDelivery` in the Backend. */
 export const MagicLinkRequested = Schema.Struct({ link: Schema.Option(Schema.String) });
 
 export class Unauthorized extends Schema.TaggedError<Unauthorized>()("Unauthorized", {}) {}

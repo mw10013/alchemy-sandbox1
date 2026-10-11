@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { BackendRpcs, CurrentUser, TooManyRequests } from "../api/backend.ts";
 import { Auth } from "./auth.ts";
+import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { Members } from "./members.ts";
 import { SignInLimit } from "./resources.ts";
 
@@ -27,14 +28,21 @@ export class SignInLimiter extends Context.Service<SignInLimiter, Cloudflare.Rat
   /** A limiter that always answers `success`, for tests. */
   static readonly layerTest = (success: boolean) =>
     Layer.succeed(SignInLimiter, {
-      raw: Effect.die("SignInLimiter.layerTest has no raw binding"),
+      raw: Effect.die("SignInLimiter has no raw binding off the Worker"),
       limit: () => Effect.succeed({ success }),
     });
+
+  /**
+   * A limiter that admits everyone. Under `alchemy dev` no client IP arrives, so every request
+   * would share one key and a few sign-ins would lock everyone out.
+   */
+  static readonly layerOpen = SignInLimiter.layerTest(true);
 }
 
 export const BackendHandlers = BackendRpcs.toLayer(
   Effect.gen(function* () {
-    const { auth, inline, takeInlineLink } = yield* Auth;
+    const { auth } = yield* Auth;
+    const delivery = yield* MagicLinkDelivery;
     const members = yield* Members;
     const limiter = yield* SignInLimiter;
 
@@ -54,13 +62,9 @@ export const BackendHandlers = BackendRpcs.toLayer(
       // who is invited. A Better Auth failure stays a defect for the same reason.
       RequestMagicLink: ({ email, returnTo }, { headers }) =>
         Effect.gen(function* () {
-          // Inline delivery runs under alchemy dev, where no client IP arrives: every request
-          // would share one key and a few sign-ins would lock everyone out. It sends no mail.
-          if (!inline) {
-            const ip = headers["cf-connecting-ip"] ?? "unknown";
-            const { success } = yield* limiter.limit({ key: ip }).pipe(Effect.orDie);
-            if (!success) return yield* new TooManyRequests();
-          }
+          const ip = headers["cf-connecting-ip"] ?? "unknown";
+          const { success } = yield* limiter.limit({ key: ip }).pipe(Effect.orDie);
+          if (!success) return yield* new TooManyRequests();
           const member = yield* members.findByEmail(email);
           if (Option.isNone(member)) {
             yield* Effect.logInfo("sign-in requested for a non-member");
@@ -72,7 +76,7 @@ export const BackendHandlers = BackendRpcs.toLayer(
               headers: new Headers(headers),
             })
             .pipe(Effect.orDie);
-          return { link: inline ? yield* takeInlineLink(email) : Option.none() };
+          return { link: yield* delivery.take(email) };
         }).pipe(Effect.provide(RuntimeContext.phantom)),
       Me: () =>
         Effect.gen(function* () {
