@@ -2,12 +2,29 @@ import { defineConfig, loadEnv } from "vite-plus";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import react from "@vitejs/plugin-react";
 import cloudflare from "@alchemy.run/cloudflare-runtime/vite";
+import { playwright } from "vite-plus/test/browser-playwright";
+import { fileURLToPath } from "node:url";
 
 const websitePort = (mode: string) => {
   const port = loadEnv(mode, process.cwd(), "WEBSITE_").WEBSITE_PORT;
   if (!port) throw new Error("WEBSITE_PORT is not set");
   return Number(port);
 };
+
+const browserStub = (file: string) =>
+  fileURLToPath(new URL(`test/browser/stubs/${file}`, import.meta.url));
+
+/**
+ * Server-only modules that components reach through `backend-client.ts`, replaced for the
+ * browser project. The app gets the same effect from the TanStack Start compiler, whose plugin
+ * stops Vitest's browser runner from starting. Exact patterns, because a string key would also
+ * capture `@tanstack/react-start/server`.
+ */
+const browserStubs = [
+  { find: /^@tanstack\/react-start$/, replacement: browserStub("start.ts") },
+  { find: /^@tanstack\/react-start\/server$/, replacement: browserStub("start-server.ts") },
+  { find: /^cloudflare:workers$/, replacement: browserStub("cloudflare-workers.ts") },
+];
 
 export default defineConfig(({ command, mode }) => ({
   plugins:
@@ -30,6 +47,23 @@ export default defineConfig(({ command, mode }) => ({
     passWithNoTests: true,
     projects: [
       { test: { name: "unit", include: ["src/**/*.test.ts"] } },
+      {
+        // Components and hooks in Chromium: a `.test.tsx` is a browser test, a `.test.ts` a
+        // Node test, and the globs must not overlap because `vitest/browser` throws in Node.
+        plugins: [react()],
+        resolve: { alias: browserStubs },
+        optimizeDeps: { include: ["react/jsx-dev-runtime"] },
+        test: {
+          name: "browser",
+          include: ["src/**/*.test.tsx"],
+          browser: {
+            enabled: true,
+            provider: playwright(),
+            headless: true,
+            instances: [{ browser: "chromium" }],
+          },
+        },
+      },
       {
         // Deploys the Backend in workerd through alchemy/Test; one file at a time, and
         // ALCHEMY_DEV is read by the Worker's init at plan, so the test process must set it.

@@ -18,6 +18,7 @@
     "test": "vp test run",
     "test:unit": "vp test run --project unit",
     "test:integ": "vp test run --project integ",
+    "test:browser": "vp test run --project browser",
     "test:e2e": "vp exec playwright test",
     "test:e2e:ui": "vp exec playwright test --ui",
     "preview": "vp preview",
@@ -56,12 +57,12 @@
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.2",
     "@vitest/browser-playwright": "5.0.3",
-    "jsdom": "30.0.1",
     "playwright": "1.64.0",
     "typescript": "7.0.2",
     "vite": "npm:@voidzero-dev/vite-plus-core@1.1.0",
     "vite-plus": "1.1.0",
-    "vitest": "5.0.3"
+    "vitest": "5.0.3",
+    "vitest-browser-react": "2.3.0"
   },
   "devEngines": {
     "packageManager": {

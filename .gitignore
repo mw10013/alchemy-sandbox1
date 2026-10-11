@@ -19,6 +19,7 @@ dist-ssr
 !.env.example
 *.local
 playwright/
+.vitest/
 
 # Editor directories and files
 .vscode/*
