@@ -17,7 +17,7 @@ Copy `.env.example` to `.env` first; it holds this checkout's port.
 
 ```sh
 vp install
-vp run dev:start   # start or adopt this checkout's dev server
+vp run dev        # start or adopt this checkout's dev server
 vp run dev:status
 vp run dev:logs
 vp run dev:stop
@@ -30,8 +30,8 @@ Cloudflare state backend requires cloud access. Development logs are captured by
 `s6-log` (install with `brew install s6`) in `logs/dev`. No official
 `@cloudflare/vite-plugin` or Wrangler config is needed.
 
-`vp dev` is Vite+'s built-in and runs Vite without Alchemy: the Website runs in workerd
-with no bindings, so every route that calls the Backend, the home page included, fails.
+`vp dev` is Vite+'s built-in and runs Vite without Alchemy. The Vite config blocks it
+and points to `vp run dev`, which supplies the Backend and application bindings.
 
 Sign in at `/sign-in` with a seeded dev account (`seed/dev.sql`): `a@a.com` (admin),
 `m1@m.com` or `m2@m.com` (members). Under `alchemy dev` the magic link is shown on the

@@ -17,7 +17,7 @@
  *    no secrets) with `WEBSITE_PORT` set for this worktree.
  * 3. `refs`: a symlink to the main checkout's `refs/`.
  *
- * It does not start the server; `vp run dev:start` does.
+ * It does not start the server; `vp run dev` does.
  */
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as Console from "effect/Console";
@@ -144,7 +144,7 @@ const init = Effect.gen(function* () {
         .pipe(Effect.andThen(Console.log(`ok    refs -> ${refsTarget}`))),
   });
 
-  yield* Console.log(`\n${branch} ready on port ${String(port)}. Next: vp run dev:start`);
+  yield* Console.log(`\n${branch} ready on port ${String(port)}. Next: vp run dev`);
 });
 
 /** Every failure of `init` is a message for the person at the terminal. */

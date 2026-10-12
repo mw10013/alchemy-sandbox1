@@ -1,5 +1,7 @@
 # `vp dev` and the `dev` script
 
+Current decision (2026-10-11): `vp run dev` invokes `scripts/dev.ts start`; `dev:start` is removed. The raw `dev:alchemy` script stays separate so the launcher does not recurse. The Vite config blocks standalone application dev serving without Alchemy's injected runtime, while allowing tests, builds and previews. This supersedes the naming recommendation and decisions below, which record the earlier analysis.
+
 Updated 2026-10-11 · Vite+ `vp` 1.1.0 (Vite 8.3.3, Rolldown 1.2.12, via `@voidzero-dev/vite-plus-core` 1.1.0) · Alchemy `2.0.0-beta.81` · Implemented 2026-10-11.
 
 ## Summary

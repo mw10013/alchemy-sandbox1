@@ -26,7 +26,7 @@ Do this in T3 before creating worktrees. Open a thread in **alchemy-sandbox1**, 
    if [ "$T3CODE_WORKTREE_PATH" != "$T3CODE_PROJECT_ROOT" ]; then
      vp install --frozen-lockfile &&
      vp run worktree:init &&
-     vp run dev:start &&
+     vp run dev &&
      vp run dev:status
    fi
    ```
@@ -86,13 +86,13 @@ If T3 asks "Delete the worktree too?" when you delete a thread, answer **No**.
 Run these in the checkout whose server you mean:
 
 ```sh
-vp run dev:start    # start it, or adopt the one already running
+vp run dev         # start it, or adopt the one already running
 vp run dev:status   # healthy?, where it runs, port
 vp run dev:logs     # tail of logs/dev/current
 vp run dev:stop
 ```
 
-- `dev:start` puts the server in the checkout's herdr `dev` tab and opens the workspace if needed. The scripts' `--help` explains where it runs in each case.
+- `dev` puts the server in the checkout's herdr `dev` tab and opens the workspace if needed. The scripts' `--help` explains where it runs in each case.
 - Logs are always in `logs/dev/current`.
 - Don't start or stop another checkout's server unless asked.
 

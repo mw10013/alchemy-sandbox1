@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * `vp run dev:start | dev:stop | dev:status | dev:logs`: one command that an
+ * `vp run dev | dev:stop | dev:status | dev:logs`: one command that an
  * agent and a person both use to get this checkout's dev server (`vp run dev:alchemy`,
  * which runs `alchemy dev`) running, and to find it again. Every checkout,
  * the main one and each `wt-NN` worktree, runs its own server on its own
@@ -85,7 +85,7 @@ class DevError extends Schema.TaggedError<DevError>()("DevError", {
 
 const fail = (message: string) => new DevError({ message });
 
-/** The port from `.env`, which the package scripts load with `--env-file-if-exists`. */
+/** The port from `.env`, which the package scripts require with `--env-file`. */
 const loadPort = Config.Port("WEBSITE_PORT").pipe(
   Effect.mapError(() =>
     fail("WEBSITE_PORT is not set to a port: run through the package scripts, which load .env"),
@@ -362,9 +362,8 @@ const placeServer = Effect.gen(function* () {
 const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
 /**
- * The raw server, called only from here so adoption and the lock apply. Its name must not be
- * `dev`: Vite+'s built-in `vp dev` cannot be overridden, runs Vite without Alchemy, and
- * prints a note sending the caller to a `dev` script when one exists.
+ * The raw server stays separate from the public `dev` script, which calls this launcher,
+ * so starting it does not recurse and the public entry point applies adoption and the lock.
  */
 const runDev = (options: ChildProcess.CommandOptions) =>
   ChildProcess.make("vp", ["run", "dev:alchemy"], { cwd: ROOT, ...options });

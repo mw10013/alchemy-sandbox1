@@ -6,7 +6,7 @@ How the local dev server's port is chosen, found and kept unique per checkout.
 
 - Each checkout sets `WEBSITE_PORT` in its own untracked `.env`. `.env.example` is the tracked template. Main uses 3900.
 - `alchemy dev` serves the Website on `WEBSITE_PORT`. Alchemy loads `.env` itself (shell variables win), so no script sources it.
-- There is no default. `alchemy dev`, `vp dev` and `pnpm port` fail if `WEBSITE_PORT` is not set.
+- There is no default. `vp run dev`, `alchemy dev` and `pnpm port` fail if `WEBSITE_PORT` is not set. Plain `vp dev` is blocked because it bypasses Alchemy.
 - `strictPort: true`: if the port is taken, dev fails with "Could not bind to port … (already in use)". It never moves to another port, so a checkout can't end up talking to another checkout's server.
 - The Backend Worker uses `dev: { port: 0 }`, an ephemeral port. Only the Website reaches it, through the `BACKEND` service binding, so nothing needs to know its port.
 - Deploys ignore all of this. Workers on Cloudflare have no port; the dev settings are only set when `ALCHEMY_DEV` is true. Staging and production need no `WEBSITE_PORT`.
@@ -26,14 +26,14 @@ Each worktree needs its own `.env` with a port no other checkout uses, e.g. 3900
 
 ## Where it lives
 
-| File                    | Role                                            |
-| ----------------------- | ----------------------------------------------- |
-| `alchemy.run.ts`        | Reads `WEBSITE_PORT` in dev; sets `strictPort`  |
-| `src/backend/worker.ts` | Backend on an ephemeral dev port                |
-| `vite.config.ts`        | Same port for `vp dev` (Vite without Alchemy)   |
-| `package.json`          | `pnpm port`                                     |
-| `.env.example`          | Template                                        |
-| `AGENTS.md`             | Dev server URL: `http://localhost:$(pnpm port)` |
+| File                    | Role                                                           |
+| ----------------------- | -------------------------------------------------------------- |
+| `alchemy.run.ts`        | Reads `WEBSITE_PORT` in dev; sets `strictPort`                 |
+| `src/backend/worker.ts` | Backend on an ephemeral dev port                               |
+| `vite.config.ts`        | Blocks dev serving without Alchemy; Alchemy overrides its port |
+| `package.json`          | `pnpm port`                                                    |
+| `.env.example`          | Template                                                       |
+| `AGENTS.md`             | Dev server URL: `http://localhost:$(pnpm port)`                |
 
 ## Known gap
 

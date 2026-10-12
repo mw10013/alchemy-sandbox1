@@ -6,9 +6,8 @@
 
 ## Toolchain
 Vite+. Never npm or npx.
-- Prefer built-ins: `vp check` (format, lint, type check; `--fix` to auto-fix), `vp test` (unit, browser, integ), `vp fmt`, `vp lint`, `vp build`.
-- `vp test` does not include e2e. Run it as `vp run test:e2e` (a package script, since it has no built-in).
-- `vp run <script>` is for package scripts with no built-in (`dev:start`, `test:e2e`); `vp exec <bin>` is for binaries in `node_modules/.bin` (`playwright`, `astryx`, `alchemy`).
+- Run `vp check --fix` after code changes (format, lint, type check). Plain `vp check` is for CI or read-only verification.
+- Tests: `vp test` (unit, browser, integ); `vp run test:e2e` (e2e).
 
 ## Effect
 - Validation, parsing, encoding: Effect Schema. Never trim, length-check or regex-test input by hand.
@@ -25,7 +24,7 @@ Vite+. Never npm or npx.
 - Never reference plans or research docs; they go stale and get deleted. State the reason in the comment itself.
 
 ## Dev server
-Start with `vp run dev:start`, never `vp dev`: the built-in runs Vite without Alchemy or the Backend. Then `http://localhost:$(pnpm port)`.
+Start with `vp run dev`. Open `http://localhost:$(pnpm port)`. Plain `vp dev` is blocked because it bypasses Alchemy.
 
 ## Logs
 Dev logs: `logs/dev/current`. Rotated archives: `logs/dev/`.
