@@ -1,15 +1,26 @@
 import { RuntimeContext } from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Match from "effect/Match";
 import * as Option from "effect/Option";
-import { BackendRpcs, CurrentUser, TooManyRequests } from "../api/backend.ts";
+import {
+  BackendRpcs,
+  CurrentUser,
+  NotAShopMember,
+  TooManyRequests,
+  Unauthorized,
+} from "../api/backend.ts";
+import { TICKET_TTL_MILLIS } from "../api/shop-actor.ts";
 import { Auth } from "./auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { Members } from "./members.ts";
 import { SignInLimit } from "./resources.ts";
+import { ShopAccess } from "./shop-access.ts";
+import { Tickets } from "./ticket.ts";
 
 /**
  * The {@link SignInLimit} client. Yielding the binding attaches it to the Worker, so the layer
@@ -41,10 +52,12 @@ export class SignInLimiter extends Context.Service<SignInLimiter, Cloudflare.Rat
 
 export const BackendHandlers = BackendRpcs.toLayer(
   Effect.gen(function* () {
-    const { auth } = yield* Auth;
+    const { auth, maySignIn } = yield* Auth;
     const delivery = yield* MagicLinkDelivery;
     const members = yield* Members;
     const limiter = yield* SignInLimiter;
+    const shopAccess = yield* ShopAccess;
+    const tickets = yield* Tickets;
 
     return BackendRpcs.of({
       Hello: () =>
@@ -59,14 +72,13 @@ export const BackendHandlers = BackendRpcs.toLayer(
           return { input, output: input.toUpperCase() };
         }),
       // A non-member gets the same reply as a member, minus the link: the caller must not learn
-      // who is invited. A Better Auth failure stays a defect for the same reason.
+      // who may sign in. A Better Auth failure stays a defect for the same reason.
       RequestMagicLink: ({ email, returnTo }, { headers }) =>
         Effect.gen(function* () {
           const ip = headers["cf-connecting-ip"] ?? "unknown";
           const { success } = yield* limiter.limit({ key: ip }).pipe(Effect.orDie);
           if (!success) return yield* new TooManyRequests();
-          const member = yield* members.findByEmail(email);
-          if (Option.isNone(member)) {
+          if (!(yield* maySignIn(email))) {
             yield* Effect.logInfo("sign-in requested for a non-member");
             return { link: Option.none() };
           }
@@ -83,6 +95,25 @@ export const BackendHandlers = BackendRpcs.toLayer(
           return yield* CurrentUser;
         }),
       ListMembers: () => members.list(),
+      IssueActorTicket: ({ key, sessionToken }, { headers }) =>
+        Effect.gen(function* () {
+          const caller = yield* shopAccess.resolve({ key, cookie: headers.cookie, sessionToken });
+          const now = yield* Clock.currentTimeMillis;
+          const ticket = yield* tickets.mint({
+            shop: key,
+            caller,
+            expiresAt: now + TICKET_TTL_MILLIS,
+          });
+          return { ticket };
+        }).pipe(
+          Effect.catchTag("ShopAccessDenied", ({ status }) =>
+            Match.value(status).pipe(
+              Match.when(401, () => Effect.fail(new Unauthorized())),
+              Match.when(503, () => Effect.die(new Error("the actor gate is unavailable"))),
+              Match.orElse(() => Effect.fail(new NotAShopMember())),
+            ),
+          ),
+        ),
     });
   }),
 );

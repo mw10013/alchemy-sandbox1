@@ -6,17 +6,22 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as Schema from "effect/Schema";
 import { EmailFromInput, type Member } from "../api/backend.ts";
+import { SANDBOX_SHOP, type ShopKey } from "../api/shop.ts";
 import { E2eEmail, TestControlRpcs } from "../api/test-control.ts";
 import { Auth } from "./auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { Mailer, SentMail } from "./mailer.ts";
+import { SystemActors } from "./actor-client.ts";
 import { Members } from "./members.ts";
+import { Shopify } from "./shopify.ts";
+import { Tickets } from "./ticket.ts";
 import {
   TestControlAuthLive,
   TestControlHandlers,
@@ -30,7 +35,12 @@ const email = Schema.decodeUnknownSync(EmailFromInput);
 
 const member = email("m1@m.com");
 const stranger = email("nobody@example.com");
-const members: ReadonlyArray<Member> = [{ email: member, role: "user", createdAt: 1 }];
+const members: ReadonlyArray<Member> = [
+  { id: "mem-1", shop: SANDBOX_SHOP, email: member, createdAt: 1 },
+];
+
+/** What test control asked the actors to revoke; cleared by the tests that read it. */
+const revoked: Array<{ key: ShopKey; by: "member" | "session"; id: string }> = [];
 
 /**
  * The test-control handlers and token middleware over Better Auth on an in-memory database,
@@ -44,6 +54,9 @@ const TestBackend = (delivery: "inline" | "mailed" = "inline") =>
         Layer.provideMerge(
           Layer.mergeAll(
             Members.layerTest(members),
+            SystemActors.layerTest(revoked),
+            Shopify.layerWith({ apiKey: "fake-api-key", apiSecret: Redacted.make("secret") }),
+            Tickets.layerWith(Redacted.make("test-ticket-secret")),
             Layer.succeed(TestControlToken, TOKEN),
             Layer.succeed(TestData, { reset: () => Effect.die("TestData needs D1") }),
             (delivery === "inline"
@@ -106,17 +119,33 @@ describe("test control", () => {
     }).pipe(Effect.provide(TestBackend())),
   );
 
-  it.live("CreateMember returns the member with the given role", () =>
+  it.live("AddMember adds a member once; RemoveMember removes it once and revokes", () =>
     Effect.gen(function* () {
       const client = yield* RpcTest.makeClient(TestControlRpcs);
       const address = Schema.decodeUnknownSync(E2eEmail)("new@e2e.test");
-      const created = yield* client
-        .CreateMember({ email: address, role: "admin" })
+      const added = yield* client
+        .AddMember({ shop: SANDBOX_SHOP, email: address })
         .pipe(authorized);
-      assert.strictEqual(created.email, address);
-      assert.strictEqual(created.role, "admin");
+      assert.strictEqual(added.email, address);
+      assert.strictEqual(added.shop, SANDBOX_SHOP);
+      const again = yield* client
+        .AddMember({ shop: SANDBOX_SHOP, email: address })
+        .pipe(authorized, Effect.flip);
+      assert.strictEqual(again._tag, "MemberExists");
+      revoked.length = 0;
+      const removed = yield* client
+        .RemoveMember({ shop: SANDBOX_SHOP, email: address })
+        .pipe(authorized);
+      assert.isTrue(removed.removed);
+      assert.deepStrictEqual(revoked, [{ key: SANDBOX_SHOP, by: "member", id: added.id }]);
+      const gone = yield* client
+        .RemoveMember({ shop: SANDBOX_SHOP, email: address })
+        .pipe(authorized);
+      assert.isFalse(gone.removed);
     }).pipe(Effect.provide(TestBackend())),
   );
 
-  it.todo("ResetData clears Better Auth rows and @e2e.test members (needs D1: the e2e stage)");
+  it.todo(
+    "ResetData clears sessions and @e2e.test users and members, and restores the operator (needs D1: the e2e stage)",
+  );
 });

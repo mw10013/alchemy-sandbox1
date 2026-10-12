@@ -16,7 +16,13 @@ export const shell = (page: Page) => ({
 export const shop = (page: Page) => ({
   count: page.getByRole("status", { name: "Count" }),
   increment: page.getByRole("button", { name: "Increment" }),
+  reset: page.getByRole("button", { name: "Reset" }),
   activation: page.getByText(/^Activation /),
+  signedInAs: (email: string) => page.getByText(`Signed in as ${email} (member)`),
+  merchantOf: (shop: string) => page.getByText(`Merchant of ${shop}`),
+  signedInElsewhere: page.getByText("Signed in elsewhere"),
+  reconnect: page.getByRole("button", { name: "Reconnect" }),
+  notAMember: page.getByText("You're not a member of this shop."),
 });
 
 /** Submits the sign-in form on a hydrated `/sign-in` and waits for the confirmation. */

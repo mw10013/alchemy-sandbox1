@@ -5,11 +5,16 @@ backend Worker over a service binding, styled with Astryx's standard neutral
 theme. Both Workers are managed by Alchemy (`alchemy.run.ts`).
 Created with `vp create` in the existing project directory.
 
-The Backend also hosts Durable Objects. A browser reaches an actor (`ShopActor`, one per shop
-key) over one WebSocket at `/api/actor/<key>`, through the Website and the Backend's session
-check, with Effect RPC on it; after a write the actor sends a notice naming the stale reactivity
-keys, and every tab refetches. SSR reads the same actor over HTTP through the binding. The
-member page is `/app/shop/alchemy-sandbox1`, and `vp run test:e2e` covers two tabs on it.
+The Backend also hosts Durable Objects. A browser reaches an actor (`ShopActor`, one per shop,
+named by its myshopify domain) over one WebSocket at `/api/actor/<key>`, through the Website and
+the Backend's gate, with Effect RPC on it; after a write the actor sends a notice naming the
+stale reactivity keys, and every browser refetches. SSR reads the same actor over HTTP through
+the binding. A browser proves who it is to an actor with a short-lived ticket from the Backend,
+fetched before each connect and sent on the socket's first call; the actor binds it to the
+socket. Shops, members and teams are Baton's tables (`migrations/0002_baton_schema.sql`). The
+member page is `/app/shop/alchemy-sandbox1.myshopify.com`; the merchant page is
+`/merchant/<shop>?token=<Shopify session token>`. The Shopify pieces (the app's key and secret,
+the session tokens, the shops' access tokens) are fakes until the Shopify slice.
 
 ## Run locally
 
@@ -33,8 +38,12 @@ Cloudflare state backend requires cloud access. Development logs are captured by
 `vp dev` is Vite+'s built-in and runs Vite without Alchemy. The Vite config blocks it
 and points to `vp run dev`, which supplies the Backend and application bindings.
 
-Sign in at `/sign-in` with a seeded dev account (`seed/dev.sql`): `a@a.com` (admin),
-`m1@m.com` or `m2@m.com` (members). Under `alchemy dev` the magic link is shown on the
+Sign in at `/sign-in` with a seeded dev account (`seed/dev.sql`): `m1@m.com` or `m2@m.com`
+(members), or `a@a.com`, the operator. The operator is a Better Auth user row with
+`role = 'admin'`, which the seed cannot insert (it runs before Better Auth's tables exist on a
+fresh database); test stages get it from test control's `ResetData`, and a fresh dev database
+needs it inserted once, for example with `sqlite3` on the dev D1 file under
+`.alchemy/local/d1`. Under `alchemy dev` the magic link is shown on the
 page and in `logs/dev/current` instead of being emailed.
 
 ## Validate
@@ -57,8 +66,8 @@ wipes its local D1 along with dev's.
 `vp run test:e2e` runs the Playwright specs under `e2e/` in Chromium. It starts `alchemy dev`
 on its own stage (`e2e_<user>`), with local state under `.alchemy/`, on `WEBSITE_PORT + 100`, so
 the dev server on `WEBSITE_PORT` keeps running; a server already on that port is reused, and one
-it started is stopped at the end. Before the specs it resets the stage's data (Better Auth rows
-and `@e2e.test` members) and signs in once per role through the test-control procedures, which
+it started is stopped at the end. Before the specs it resets the stage's data (sessions,
+`@e2e.test` users and members, and the operator's row) and signs in once per role through the test-control procedures, which
 the Backend serves only on a stage given an `E2E_TOKEN`. `vp run test:e2e:ui` opens Playwright's
 UI mode; arguments pass straight through, as in `vp run test:e2e --grep-invert @dev-only` (no
 `--`). Reports, traces and saved sign-ins go to `playwright/`, which is ignored.

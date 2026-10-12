@@ -14,9 +14,11 @@ const seedFile = Match.type<string>().pipe(
 );
 
 /**
- * The `member` table and Better Auth's tables. `importFiles` runs after migrations, hashed,
- * and re-runs only when the file changes. The stage is known only while the stack is planned;
- * at runtime the props are not used, so no seed is listed there.
+ * Baton's shop tables (`ShopSession`, `Member`, `Team`, `TeamMember`) and Better Auth's tables.
+ * `importFiles` runs after migrations, hashed, and re-runs only when the file changes. It runs
+ * before `@alchemy.run/better-auth` creates its tables on a fresh stage, so a seed cannot touch
+ * them; the operator's user row comes from `TestData` instead. The stage is known only while
+ * the stack is planned; at runtime the props are not used, so no seed is listed there.
  */
 export const AuthDb = Cloudflare.D1.Database(
   "AuthDb",

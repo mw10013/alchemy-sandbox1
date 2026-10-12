@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { SANDBOX_SHOP } from "../api/shop-actor.ts";
+import { SANDBOX_SHOP } from "../api/shop.ts";
 import SideNavShell from "./SideNavShell";
 
 const ITEMS = [

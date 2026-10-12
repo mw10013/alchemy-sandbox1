@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type { DeliveryMode } from "./src/backend/magic-link-delivery.ts";
 import Backend from "./src/backend/worker.ts";
+import { SHOPIFY_API_KEY } from "./src/backend/shopify.ts";
 
 /**
  * The TanStack Start app. `alchemy dev` serves it on `WEBSITE_PORT` from the checkout's `.env`
@@ -36,6 +37,9 @@ export type WebsiteEnv = Cloudflare.InferEnv<typeof Website>;
  * test-control procedures. Whoever runs the tests supplies it; the stack never generates or
  * stores it. It is refused on the production stage.
  *
+ * `TICKET_SECRET` and the fake Shopify app's secret are random values held in state; the
+ * Shopify API key is a fixed fake. Both are fakes until the Shopify slice brings a real app.
+ *
  * Magic links are delivered inline under `alchemy dev` and on a stage with `E2E_TOKEN`, where
  * a sign-in page or a test runner takes them; every other stage mails them. Production never
  * delivers inline.
@@ -62,6 +66,15 @@ export default Alchemy.Stack(
     if (stage === "production" && delivery === "inline")
       return yield* Effect.die(new Error("the production stage would deliver magic links inline"));
     yield* backend.bind("MagicLinkDelivery", { env: { MAGIC_LINK_DELIVERY: delivery } });
+    yield* backend.bind("Tickets", {
+      env: { TICKET_SECRET: yield* Alchemy.makeRandom("TicketSecret") },
+    });
+    yield* backend.bind("Shopify", {
+      env: {
+        SHOPIFY_API_KEY: SHOPIFY_API_KEY,
+        SHOPIFY_API_SECRET: yield* Alchemy.makeRandom("ShopifyApiSecret"),
+      },
+    });
     if (Option.isSome(e2eToken))
       yield* backend.bind("TestControl", { env: { E2E_TOKEN: e2eToken.value } });
     return { websiteUrl: website.url.as<string>() };

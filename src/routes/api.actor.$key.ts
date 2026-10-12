@@ -1,20 +1,27 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { env } from "../env.server.ts";
-import { rejectRequest, text } from "../rpc-proxy.ts";
+import { text } from "../rpc-proxy.ts";
 
 /**
- * Forwards one shop's actor traffic to `Backend`, which checks the session and selects the
- * actor: a WebSocket upgrade on GET, Effect RPC on POST (after {@link rejectRequest}). The key
- * is decoded by the Backend; this route only carries it.
+ * Forwards a WebSocket upgrade for one shop's actor to `Backend`, whose gate decides who may
+ * open it; the key is decoded there. Only the upgrade: the actor's HTTP path is for the
+ * Backend's own calls and server rendering, never a browser.
+ *
+ * An upgrade whose `Origin` is present and is not this site is refused with 403. Browsers
+ * always send `Origin` on a WebSocket upgrade and a page cannot change it, so this stops
+ * another site from opening a socket with the visitor's cookie.
  */
 export const Route = createFileRoute("/api/actor/$key")({
   server: {
     handlers: {
-      GET: ({ request }) =>
-        request.headers.get("upgrade")?.toLowerCase() === "websocket"
-          ? env.BACKEND.fetch(request)
-          : text(426, "Upgrade Required", { upgrade: "websocket" }),
-      POST: ({ request }) => rejectRequest(request) ?? env.BACKEND.fetch(request),
+      GET: ({ request }) => {
+        if (request.headers.get("upgrade")?.toLowerCase() !== "websocket")
+          return text(426, "Upgrade Required", { upgrade: "websocket" });
+        const origin = request.headers.get("origin");
+        if (origin !== null && origin !== new URL(request.url).origin)
+          return text(403, "Forbidden");
+        return env.BACKEND.fetch(request);
+      },
     },
   },
 });

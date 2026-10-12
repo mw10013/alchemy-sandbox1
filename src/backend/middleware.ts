@@ -16,11 +16,12 @@ import { Auth } from "./auth.ts";
 const decodeMe = Schema.decodeUnknownEffect(Me);
 
 /**
- * Resolves the Better Auth session from a `cookie` header value into the signed-in member, or
- * fails {@link Unauthorized}. {@link CurrentUserLive} uses it for RPC; the Backend uses it to
- * gate actor traffic before forwarding.
+ * Resolves the Better Auth session from a `cookie` header value: the signed-in user as
+ * {@link Me}, the session's id, and its expiry in epoch ms. No session, or one that does not
+ * decode, is {@link Unauthorized}. The actor gate needs the session itself, to scope a revoke to
+ * it and to stop serving a socket past its expiry.
  */
-export const currentUserFromCookie = Effect.fn("currentUserFromCookie")(function* (
+export const sessionFromCookie = Effect.fn("sessionFromCookie")(function* (
   cookie: string | undefined,
 ) {
   const { auth } = yield* Auth;
@@ -29,12 +30,24 @@ export const currentUserFromCookie = Effect.fn("currentUserFromCookie")(function
     Effect.catchDefect(() => Effect.fail(new Unauthorized())),
   );
   if (session === null) return yield* new Unauthorized();
-  return yield* decodeMe({
+  const me = yield* decodeMe({
     id: session.user.id,
     email: session.user.email,
     role: session.user.role,
   }).pipe(Effect.mapError(() => new Unauthorized()));
+  return {
+    me,
+    sessionId: session.session.id,
+    sessionExpiresAt: session.session.expiresAt.getTime(),
+  };
 });
+
+/**
+ * The signed-in user from a `cookie` header value, through {@link sessionFromCookie}.
+ * {@link CurrentUserLive} uses it for RPC.
+ */
+export const currentUserFromCookie = (cookie: string | undefined) =>
+  sessionFromCookie(cookie).pipe(Effect.map(({ me }) => me));
 
 /**
  * Provides {@link CurrentUser} from the request cookie through {@link currentUserFromCookie}.

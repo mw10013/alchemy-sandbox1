@@ -3,7 +3,6 @@ import { HStack } from "@astryxdesign/core/Stack";
 import { Layout, LayoutContent, LayoutHeader } from "@astryxdesign/core/Layout";
 import { Table, type TableColumn } from "@astryxdesign/core/Table";
 import { Text } from "@astryxdesign/core/Text";
-import { Token } from "@astryxdesign/core/Token";
 import * as DateTime from "effect/DateTime";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import type { Member } from "../api/backend.ts";
@@ -12,6 +11,11 @@ import { membersAtom } from "../backend-client.ts";
 type Row = Member & Record<string, unknown>;
 
 const columns: TableColumn<Row>[] = [
+  {
+    key: "shop",
+    header: "Shop",
+    renderCell: (member) => <Text type="body">{member.shop}</Text>,
+  },
   {
     key: "email",
     header: "Email",
@@ -22,23 +26,18 @@ const columns: TableColumn<Row>[] = [
     ),
   },
   {
-    key: "role",
-    header: "Role",
-    renderCell: (member) => <Token label={member.role} />,
-  },
-  {
     key: "createdAt",
     header: "Added",
     renderCell: (member) => (
       <Text type="body" color="secondary">
-        {DateTime.formatIsoDateUtc(DateTime.makeUnsafe(member.createdAt * 1000))}
+        {DateTime.formatIsoDateUtc(DateTime.makeUnsafe(member.createdAt))}
       </Text>
     ),
   },
 ];
 
 /**
- * The invite list: every member who may sign in, and as what.
+ * Every shop's members: one row per `Member`, so an email in two shops is two rows.
  *
  * Adapted from Astryx's `table-page` page template.
  *
@@ -71,7 +70,7 @@ export default function MembersPage() {
               <Table<Row>
                 data={value.map((member) => ({ ...member }))}
                 columns={columns}
-                idKey="email"
+                idKey="id"
                 hasHover
               />
             ),

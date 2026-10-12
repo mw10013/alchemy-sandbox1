@@ -6,7 +6,14 @@ import * as Reactivity from "effect/reactivity/Reactivity";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcTest from "effect/rpc/RpcTest";
 import { onTestFinished } from "vite-plus/test";
-import { ShopActorRpcs } from "../../src/api/shop-actor.ts";
+import {
+  CallerMiddleware,
+  CurrentCaller,
+  RequireMember,
+  RequireMerchant,
+  RequireSystem,
+  ShopActorRpcs,
+} from "../../src/api/shop-actor.ts";
 import { ShopActorClient } from "../../src/shop-actor-client.ts";
 
 type Handlers = RpcGroup.HandlersFrom<RpcGroup.Rpcs<typeof ShopActorRpcs>>;
@@ -17,6 +24,23 @@ const unexpected = Object.fromEntries(
 ) as unknown as Handlers;
 
 /**
+ * The actor's middlewares with no socket and no ticket: every role check passes, so a test
+ * reaches every handler it names, and the caller is a placeholder no test handler reads (a
+ * who-am-I test gives its own answer). Roles are the actor's concern and are tested against
+ * it in integ.
+ */
+const roleMiddlewares = Layer.mergeAll(
+  Layer.succeed(CallerMiddleware)(
+    CallerMiddleware.of((effect) =>
+      Effect.provideService(effect, CurrentCaller, { role: "system" }),
+    ),
+  ),
+  Layer.succeed(RequireMember)(RequireMember.of((effect) => effect)),
+  Layer.succeed(RequireMerchant)(RequireMerchant.of((effect) => effect)),
+  Layer.succeed(RequireSystem)(RequireSystem.of((effect) => effect)),
+);
+
+/**
  * {@link ShopActorClient} over the given handlers, in memory: no socket, notice tap or actor.
  * `Reactivity.layer` is merged in because a seeded runtime layer replaces the factory's own,
  * and `noticesAtom` invalidates through the runtime's `Reactivity`; the registry's memo map
@@ -25,6 +49,7 @@ const unexpected = Object.fromEntries(
 export const shopActorClientLayer = (handlers: Partial<Handlers>) =>
   Layer.effect(ShopActorClient, RpcTest.makeClient(ShopActorRpcs, { flatten: true })).pipe(
     Layer.provide(ShopActorRpcs.toLayer({ ...unexpected, ...handlers })),
+    Layer.provide(roleMiddlewares),
     Layer.merge(Reactivity.layer),
     // The runtime's layer type names only the client, though the factory always adds Reactivity.
   ) as Layer.Layer<ShopActorClient>;

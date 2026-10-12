@@ -18,6 +18,7 @@ import { Route as AdminMembersRouteImport } from './routes/admin.members'
 import { Route as ApiRpcRouteImport } from './routes/api.rpc'
 import { Route as ApiTestControlRouteImport } from './routes/api.test-control'
 import { Route as AppIndexRouteImport } from './routes/app.index'
+import { Route as MerchantKeyRouteImport } from './routes/merchant.$key'
 import { Route as ApiActorKeyRouteImport } from './routes/api.actor.$key'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
 import { Route as AppShopKeyRouteImport } from './routes/app.shop.$key'
@@ -67,6 +68,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRoute,
 } as any)
+const MerchantKeyRoute = MerchantKeyRouteImport.update({
+  id: '/merchant/$key',
+  path: '/merchant/$key',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiActorKeyRoute = ApiActorKeyRouteImport.update({
   id: '/api/actor/$key',
   path: '/api/actor/$key',
@@ -91,6 +97,7 @@ export interface FileRoutesByFullPath {
   '/admin/members': typeof AdminMembersRoute
   '/api/rpc': typeof ApiRpcRoute
   '/api/test-control': typeof ApiTestControlRoute
+  '/merchant/$key': typeof MerchantKeyRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
@@ -103,6 +110,7 @@ export interface FileRoutesByTo {
   '/admin/members': typeof AdminMembersRoute
   '/api/rpc': typeof ApiRpcRoute
   '/api/test-control': typeof ApiTestControlRoute
+  '/merchant/$key': typeof MerchantKeyRoute
   '/admin': typeof AdminIndexRoute
   '/app': typeof AppIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
@@ -118,6 +126,7 @@ export interface FileRoutesById {
   '/admin/members': typeof AdminMembersRoute
   '/api/rpc': typeof ApiRpcRoute
   '/api/test-control': typeof ApiTestControlRoute
+  '/merchant/$key': typeof MerchantKeyRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
@@ -134,6 +143,7 @@ export interface FileRouteTypes {
     | '/admin/members'
     | '/api/rpc'
     | '/api/test-control'
+    | '/merchant/$key'
     | '/admin/'
     | '/app/'
     | '/api/actor/$key'
@@ -146,6 +156,7 @@ export interface FileRouteTypes {
     | '/admin/members'
     | '/api/rpc'
     | '/api/test-control'
+    | '/merchant/$key'
     | '/admin'
     | '/app'
     | '/api/actor/$key'
@@ -160,6 +171,7 @@ export interface FileRouteTypes {
     | '/admin/members'
     | '/api/rpc'
     | '/api/test-control'
+    | '/merchant/$key'
     | '/admin/'
     | '/app/'
     | '/api/actor/$key'
@@ -174,6 +186,7 @@ export interface RootRouteChildren {
   SignInRoute: typeof SignInRoute
   ApiRpcRoute: typeof ApiRpcRoute
   ApiTestControlRoute: typeof ApiTestControlRoute
+  MerchantKeyRoute: typeof MerchantKeyRoute
   ApiActorKeyRoute: typeof ApiActorKeyRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
 }
@@ -243,6 +256,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/merchant/$key': {
+      id: '/merchant/$key'
+      path: '/merchant/$key'
+      fullPath: '/merchant/$key'
+      preLoaderRoute: typeof MerchantKeyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/actor/$key': {
       id: '/api/actor/$key'
       path: '/api/actor/$key'
@@ -298,6 +318,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignInRoute: SignInRoute,
   ApiRpcRoute: ApiRpcRoute,
   ApiTestControlRoute: ApiTestControlRoute,
+  MerchantKeyRoute: MerchantKeyRoute,
   ApiActorKeyRoute: ApiActorKeyRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
 }

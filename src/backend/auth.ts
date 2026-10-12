@@ -8,8 +8,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { Email, type Role } from "../api/backend.ts";
+import { Email } from "../api/backend.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
+import { SystemActors } from "./actor-client.ts";
 import { Members } from "./members.ts";
 
 const MAGIC_LINK_TTL_SECONDS = 300;
@@ -27,9 +28,9 @@ export interface AuthOptions {
 /**
  * Builds {@link Auth}. This is the only Promise seam with Better Auth: its callbacks run
  * inside Better Auth's promise machinery, so they run Effects with a snapshot of the
- * construction context. The collaborators ({@link Members}, {@link MagicLinkDelivery}) are
- * services, so
- * the same code runs in the Worker and in a test with no Cloudflare binding behind it.
+ * construction context. The collaborators ({@link Members}, {@link MagicLinkDelivery},
+ * {@link SystemActors}) are services, so the same code runs in the Worker and in a test with no
+ * Cloudflare binding behind it.
  */
 export const makeAuth = (options: AuthOptions = {}) =>
   Effect.gen(function* () {
@@ -40,18 +41,55 @@ export const makeAuth = (options: AuthOptions = {}) =>
       return yield* Effect.die(new Error("AUTH_ORIGIN is not bound to the Backend"));
     const members = yield* Members;
     const delivery = yield* MagicLinkDelivery;
+    const actors = yield* SystemActors;
     const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
 
     // A callback runs outside any request, so `Effect.scoped` gives the query its own scope:
     // `SQL.D1` builds its client per scope and releases it with the scope.
-    const findRole = (address: unknown) =>
+    const isMember = (address: unknown) =>
       Option.match(decodeEmail(address), {
-        onNone: () => Effect.succeed(Option.none<Role>()),
+        onNone: () => Effect.succeed(false),
         onSome: (address) =>
-          members
-            .findByEmail(address)
-            .pipe(Effect.map(Option.map((member) => member.role)), Effect.scoped),
+          members.listShopsOf(address).pipe(
+            Effect.map((shops) => shops.length > 0),
+            Effect.scoped,
+          ),
       }).pipe(Effect.provide(RuntimeContext.phantom));
+
+    /** Closes one session's sockets on every shop the address is a member of. */
+    const revokeSession = Effect.fn("Auth.revokeSession")(function* (
+      address: unknown,
+      sessionId: string,
+    ) {
+      const email = decodeEmail(address);
+      if (Option.isNone(email)) return;
+      for (const shop of yield* members.listShopsOf(email.value))
+        yield* actors.revoke(shop, "session", sessionId);
+    });
+
+    /** Closes the member's sockets on every shop the address is a member of. */
+    const revokeUser = Effect.fn("Auth.revokeUser")(function* (address: unknown) {
+      const email = decodeEmail(address);
+      if (Option.isNone(email)) return;
+      for (const shop of yield* members.listShopsOf(email.value)) {
+        const member = yield* members.find(shop, email.value);
+        if (Option.isSome(member)) yield* actors.revoke(shop, "member", member.value.id);
+      }
+    });
+
+    /**
+     * Runs a revocation from a Better Auth hook: its own scope for D1, and every failure logged
+     * and swallowed, because Better Auth must never see a throw from a hook that runs after
+     * its write.
+     */
+    const revocation =
+      (hook: string) =>
+      <E, R>(effect: Effect.Effect<void, E, R>) =>
+        effect.pipe(
+          Effect.scoped,
+          Effect.catchCause((cause) => Effect.logError(`Auth ${hook}: revoke failed`, cause)),
+          Effect.provide(RuntimeContext.phantom),
+        );
 
     const auth = yield* BetterAuth({
       ...(options.secret === undefined ? {} : { secret: options.secret }),
@@ -61,24 +99,47 @@ export const makeAuth = (options: AuthOptions = {}) =>
         // Runs before a user is created: a non-member's verify lands on ?error=not_invited.
         validateUserInfo: ({ user }) =>
           runPromise(
-            findRole(user.email).pipe(
-              Effect.map(
-                Option.match({ onNone: () => ({ error: "not_invited" }), onSome: () => undefined }),
-              ),
+            isMember(user.email).pipe(
+              Effect.map((member) => (member ? undefined : { error: "not_invited" })),
             ),
           ),
       },
       databaseHooks: {
         user: {
           create: {
-            // Copies the member's role onto the new user; the admin plugin keeps an existing role.
+            // The backstop behind `validateUserInfo`: no user is created for a non-member.
             before: (user) =>
               runPromise(
-                findRole(user.email).pipe(
-                  Effect.map((role) => ({
-                    data: { ...user, role: Option.getOrElse(role, (): Role => "user") },
-                  })),
-                ),
+                isMember(user.email).pipe(Effect.map((member) => (member ? undefined : false))),
+              ),
+          },
+          update: {
+            after: (user) =>
+              runPromise(
+                Effect.gen(function* () {
+                  // Every update fires this (a first sign-in's `emailVerified` too); only a
+                  // user who can no longer open a shop as a member loses its sockets.
+                  if (user.banned !== true && user.role !== "admin") return;
+                  yield* revokeUser(user.email);
+                }).pipe(revocation("user.update.after")),
+              ),
+          },
+        },
+        session: {
+          delete: {
+            // Sign-out, revoke, ban, password change and account deletion all delete sessions.
+            after: (session, endpoint) =>
+              runPromise(
+                Effect.gen(function* () {
+                  // Every session delete Better Auth makes runs inside one of its endpoints.
+                  if (endpoint === null)
+                    return yield* Effect.logWarning("session deleted outside an endpoint");
+                  const user = yield* Effect.promise(() =>
+                    endpoint.context.internalAdapter.findUserById(session.userId),
+                  );
+                  if (user === null) return;
+                  yield* revokeSession(user.email, session.id);
+                }).pipe(revocation("session.delete.after")),
               ),
           },
         },
@@ -96,13 +157,39 @@ export const makeAuth = (options: AuthOptions = {}) =>
       rateLimit: { enabled: false },
     });
 
-    return { auth };
+    /**
+     * Whether Better Auth has a user for the address. An existing user signs in by magic link
+     * without the member check, which is how the operator (a user row with no `Member` row)
+     * gets in.
+     */
+    const userExists = Effect.fn("Auth.userExists")(function* (email: Email) {
+      const instance = yield* auth.auth;
+      const context = yield* Effect.promise(() => instance.$context);
+      const found = yield* Effect.promise(() => context.internalAdapter.findUserByEmail(email));
+      return found !== null;
+    });
+
+    /**
+     * Whether a magic link for the address could sign anyone in: a user exists, or a `Member`
+     * row would let one be created. Asked before a link is sent, so a link is never minted for
+     * an address the verify would refuse.
+     */
+    const maySignIn = Effect.fn("Auth.maySignIn")(function* (email: Email) {
+      return (yield* userExists(email)) || (yield* isMember(email));
+    });
+
+    return { auth, userExists, maySignIn };
   });
 
 /**
- * Better Auth with magic links, invite-only: only an address in the `member` table can create
- * a user, and the new user takes the member's role. Magic links go through
- * {@link MagicLinkDelivery}, which decides whether a caller gets one back.
+ * Better Auth with magic links, invite-only as Baton is: a new user is created only for an
+ * address with a `Member` row in some shop, and always with the role `user`. An operator is a
+ * user row whose role is `admin`, put there by seed or test data, never by sign-in. Magic links
+ * go through {@link MagicLinkDelivery}, which decides whether a caller gets one back.
+ *
+ * Its database hooks are the revocation triggers: a deleted session closes that session's
+ * sockets, and a user who becomes banned or an operator loses its member sockets, on every
+ * shop the user is a member of.
  */
 export class Auth extends Context.Service<Auth, Effect.Success<ReturnType<typeof makeAuth>>>()(
   "app/Auth",

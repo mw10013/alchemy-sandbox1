@@ -1,12 +1,14 @@
 import { test as base, expect } from "playwright/test";
-import type { Page } from "playwright/test";
+import type { Browser, Page, WebSocket } from "playwright/test";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { RpcClient, type RpcClientError, type RpcGroup, RpcSerialization } from "effect/rpc";
-import { TestControlRpcs } from "../src/api/test-control.ts";
+import * as Schema from "effect/Schema";
+import { SANDBOX_SHOP, type ShopKey } from "../src/api/shop.ts";
+import { E2eEmail, TestControlRpcs } from "../src/api/test-control.ts";
 import { e2eToken } from "../playwright.config.ts";
 
 type Run = <A, E>(effect: Effect.Effect<A, E, RpcClient.Protocol>) => Promise<A>;
@@ -73,3 +75,48 @@ export const control = <A, E>(
     const client = yield* RpcClient.make(TestControlRpcs);
     return yield* f(client).pipe(RpcClient.withHeaders({ "x-e2e-token": e2eToken }));
   }).pipe(Effect.scoped);
+
+/**
+ * A member of its own: an `@e2e.test` address added to the sandbox shop through test control
+ * and signed in, in a fresh browser context. A test that signs out, is removed or opens several
+ * windows uses one, so it never touches the shared member's session or sockets.
+ */
+export const ownMember = async (browser: Browser, backend: Run, name: string) => {
+  const email = Schema.decodeUnknownSync(E2eEmail)(`${name}@e2e.test`);
+  await backend(control((c) => c.AddMember({ shop: SANDBOX_SHOP, email }).pipe(Effect.ignore)));
+  const { link } = await backend(control((c) => c.IssueMagicLink({ email })));
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.goto(link);
+  await awaitHydration(page);
+  await page.waitForURL(/\/app$/);
+  return { email, context, page };
+};
+
+/** Opens a shop's merchant page with a Shopify session token minted through test control. */
+export const merchant = async (page: Page, backend: Run, shop: ShopKey) => {
+  const { token } = await backend(control((c) => c.IssueMerchantSessionToken({ shop })));
+  await page.goto(`/merchant/${shop}?token=${encodeURIComponent(token)}`);
+  await awaitHydration(page);
+};
+
+/**
+ * Resolves once the next actor socket the page opens has answered a call successfully. The
+ * browser binds every new socket on connect and the actor answers only after binding, so that
+ * answer means the socket is bound (revocable, displaceable, counted). Start it before the
+ * navigation or click that opens the socket, and await it after.
+ */
+export const nextBoundSocket = (page: Page) =>
+  new Promise<void>((resolve) => {
+    const onSocket = (socket: WebSocket) => {
+      if (!new URL(socket.url()).pathname.startsWith("/api/actor/")) return;
+      page.off("websocket", onSocket);
+      const onFrame = ({ payload }: { payload: string | Buffer }) => {
+        if (typeof payload !== "string" || !payload.includes('"_tag":"Success"')) return;
+        socket.off("framereceived", onFrame);
+        resolve();
+      };
+      socket.on("framereceived", onFrame);
+    };
+    page.on("websocket", onSocket);
+  });

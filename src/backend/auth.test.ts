@@ -7,17 +7,22 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as Schema from "effect/Schema";
 import { BackendRpcs, EmailFromInput, ReturnPath, type Member } from "../api/backend.ts";
+import { SANDBOX_SHOP, type ShopKey } from "../api/shop.ts";
 import { Auth } from "./auth.ts";
 import { BackendHandlers, SignInLimiter } from "./handlers.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { Mailer, SentMail } from "./mailer.ts";
+import { SystemActors } from "./actor-client.ts";
 import { Members } from "./members.ts";
+import { ShopAccess } from "./shop-access.ts";
+import { Tickets } from "./ticket.ts";
 import { CurrentUserLive, RequireAdminLive } from "./middleware.ts";
 
 const ORIGIN = "http://test.local";
@@ -27,10 +32,15 @@ const returnPath = Schema.decodeUnknownSync(ReturnPath);
 const admin = email("a@a.com");
 const member = email("m1@m.com");
 const stranger = email("nobody@example.com");
+const member2 = email("m2@m.com");
+/** Baton's `Member` rows. The operator has none: it is a user row with the role `admin`. */
 const members: ReadonlyArray<Member> = [
-  { email: admin, role: "admin", createdAt: 1 },
-  { email: member, role: "user", createdAt: 2 },
+  { id: "mem-1", shop: SANDBOX_SHOP, email: member, createdAt: 1 },
+  { id: "mem-2", shop: SANDBOX_SHOP, email: member2, createdAt: 2 },
 ];
+
+/** What the Better Auth hooks asked the actors to revoke; cleared by the tests that read it. */
+const revoked: Array<{ key: ShopKey; by: "member" | "session"; id: string }> = [];
 
 /**
  * The Backend's RPC layers over Better Auth on an in-memory database, fresh per test.
@@ -51,7 +61,10 @@ const TestBackend = ({
         Layer.provideMerge(
           Layer.mergeAll(
             Members.layerTest(members),
+            SystemActors.layerTest(revoked),
             SignInLimiter.layerTest(allow),
+            Layer.succeed(ShopAccess, { resolve: () => Effect.die("ShopAccess needs D1") }),
+            Tickets.layerWith(Redacted.make("test-ticket-secret")),
             (delivery === "inline"
               ? MagicLinkDelivery.layerInline
               : MagicLinkDelivery.layerMailed
@@ -93,14 +106,40 @@ const signIn = Effect.fn("signIn")(function* (address: typeof member, returnTo =
   return toCookieHeader(response.headers.getSetCookie());
 });
 
+/**
+ * Inserts the operator's user row, as the seed does on a deployed stage. Straight through the
+ * adapter, because Better Auth's create hooks refuse an address with no `Member` row.
+ */
+const seedOperator = Effect.gen(function* () {
+  const { auth } = yield* Auth;
+  const instance = yield* auth.auth.pipe(Effect.provide(RuntimeContext.phantom));
+  const context = yield* Effect.promise(() => instance.$context);
+  const now = new Date();
+  yield* Effect.promise(() =>
+    context.adapter.create({
+      model: "user",
+      data: {
+        name: "Admin",
+        email: admin,
+        emailVerified: true,
+        role: "admin",
+        banned: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    }),
+  );
+});
+
 describe("magic-link sign-in (inline delivery)", () => {
   it.live.each([
     { address: member, role: "user" },
     { address: admin, role: "admin" },
   ])(
-    "a member signs in and is the current user, with the member's role (%#)",
+    "a member signs in as a new user; the seeded operator keeps its role (%#)",
     ({ address, role }) =>
       Effect.gen(function* () {
+        yield* seedOperator;
         const cookie = yield* signIn(address);
         const client = yield* RpcTest.makeClient(BackendRpcs);
         const me = yield* client.Me().pipe(RpcClient.withHeaders({ cookie }));
@@ -134,9 +173,10 @@ describe("magic-link sign-in (inline delivery)", () => {
     }).pipe(Effect.provide(TestBackend({ delivery: "inline" }))),
   );
 
-  it.live("sign-out ends the session", () =>
+  it.live("sign-out ends the session and revokes its sockets on the member's shops", () =>
     Effect.gen(function* () {
       const cookie = yield* signIn(member);
+      revoked.length = 0;
       const client = yield* RpcTest.makeClient(BackendRpcs);
       const response = yield* serve(
         new Request(`${ORIGIN}/api/auth/sign-out`, {
@@ -148,6 +188,10 @@ describe("magic-link sign-in (inline delivery)", () => {
       assert.strictEqual(response.status, 200);
       const error = yield* client.Me().pipe(RpcClient.withHeaders({ cookie }), Effect.flip);
       assert.strictEqual(error._tag, "Unauthorized");
+      assert.deepStrictEqual(
+        revoked.map(({ key, by }) => ({ key, by })),
+        [{ key: SANDBOX_SHOP, by: "session" }],
+      );
     }).pipe(Effect.provide(TestBackend({ delivery: "inline" }))),
   );
 });
@@ -169,11 +213,12 @@ describe("guards", () => {
         .ListMembers()
         .pipe(RpcClient.withHeaders({ cookie: asMember }), Effect.flip);
       assert.strictEqual(error._tag, "Forbidden");
+      yield* seedOperator;
       const asAdmin = yield* signIn(admin);
       const list = yield* client.ListMembers().pipe(RpcClient.withHeaders({ cookie: asAdmin }));
       assert.deepStrictEqual(
         list.map((row) => row.email),
-        [admin, member],
+        [member, member2],
       );
     }).pipe(Effect.provide(TestBackend({ delivery: "inline" }))),
   );
