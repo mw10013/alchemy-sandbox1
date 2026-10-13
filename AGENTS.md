@@ -27,7 +27,7 @@ Vite+. Never npm or npx.
 Start with `vp run dev`. Open `http://localhost:$(pnpm port)`. Plain `vp dev` is blocked because it bypasses Alchemy.
 
 ## Logs
-Dev logs: `logs/dev/current`. Rotated archives: `logs/dev/`.
+Dev logs: `.logs/dev/current`. Rotated archives: `.logs/dev/`.
 Staging logs: use `cf o11y telemetry query` on `cloudflare-workers`, filtering `$metadata.service` to `alchemy-sandbox1-website-staging-a6uwn3bzazl3yzgy`.
 
 <!-- ASTRYX:START -->

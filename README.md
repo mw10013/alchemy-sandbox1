@@ -42,7 +42,7 @@ vp run db:reset    # wipe and reseed the local auth database, then restart
 Open `http://localhost:$(pnpm port)`. The server is `alchemy dev` under stage `dev`, using
 local implementations where available and cloud resources when needed. The shared
 Cloudflare state backend requires cloud access. Development logs are captured by
-`s6-log` (install with `brew install s6`) in `logs/dev`. No official
+`s6-log` (install with `brew install s6`) in `.logs/dev`. No official
 `@cloudflare/vite-plugin` or Wrangler config is needed.
 
 `vp dev` is Vite+'s built-in and runs Vite without Alchemy. The Vite config blocks it
@@ -54,7 +54,7 @@ Sign in at `/sign-in` with a seeded dev account (`seed/dev.sql`): `m1@m.com` or 
 fresh database); test stages get it from test control's `ResetData`, and a fresh dev database
 needs it inserted once, for example with `sqlite3` on the dev D1 file under
 `.alchemy/local/d1`. Under `alchemy dev` the magic link is shown on the
-page and in `logs/dev/current` instead of being emailed.
+page and in `.logs/dev/current` instead of being emailed.
 
 ## Validate
 

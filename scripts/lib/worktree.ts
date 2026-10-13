@@ -2,7 +2,7 @@
  * A checkout of this repository is either the main checkout, whose `.git` is
  * the repository, or a long-lived linked worktree on branch `wt-NN`, which T3
  * Code creates under `~/.t3/worktrees/<project>/wt-NN`. Each checkout has its
- * own `.env`, `.alchemy/` and `logs/`, so each runs its own dev server on its
+ * own `.env`, `.alchemy/` and `.logs/`, so each runs its own dev server on its
  * own `WEBSITE_PORT`: the main checkout's port plus `NN`.
  *
  * `refs/` exists once, in the main checkout; a linked worktree has a symlink

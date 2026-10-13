@@ -27,10 +27,10 @@
  * herdr is asked whether it runs (`herdr status`), never `HERDR_ENV`: T3 Code
  * agents run outside herdr but can still drive it over its socket.
  *
- * The server's output always goes to `logs/dev/current` (the `dev:alchemy` script pipes it
+ * The server's output always goes to `.logs/dev/current` (the `dev:alchemy` script pipes it
  * through `s6-log`), and to the pane or terminal it runs in.
  *
- * `start` and `stop` hold `logs/dev.lock` so parallel agents in one checkout
+ * `start` and `stop` hold `.logs/dev.lock` so parallel agents in one checkout
  * cannot start two servers.
  *
  * `db:reset` stops the server, forgets the dev AuthDb and its Better Auth
@@ -61,8 +61,8 @@ import * as Herdr from "./lib/herdr.ts";
 import { checkoutKind, currentBranch } from "./lib/worktree.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/u, "");
-const LOG = "logs/dev/current";
-const LOCK = "logs/dev.lock";
+const LOG = ".logs/dev/current";
+const LOCK = ".logs/dev.lock";
 const DEV_TAB = "dev";
 /**
  * Matched against command lines: the `dev:alchemy` script's `--stage dev` keeps an e2e stage's
@@ -234,7 +234,7 @@ const withLock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.acquireUseRelease(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      yield* fs.makeDirectory(path.join(ROOT, "logs"), { recursive: true });
+      yield* fs.makeDirectory(path.join(ROOT, ".logs"), { recursive: true });
       const lock = path.join(ROOT, LOCK);
       const holder = yield* fs.readFileString(lock).pipe(
         Effect.map((text) =>

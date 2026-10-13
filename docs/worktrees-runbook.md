@@ -12,7 +12,7 @@ There is a fixed set of worktrees, `wt-01`, `wt-02`, …, created once and reuse
 | `wt-NN`  | `wt-NN` | chosen by T3 Code      | main's port + NN     | `wt-NN`, under `alchemy-sandbox1` |
 
 - **Folders:** `git worktree list` shows every checkout's folder, with main first. Look them up there; don't assume a path.
-- **Per checkout:** `.env`, `node_modules/`, `.alchemy/` (local emulator state) and `logs/`.
+- **Per checkout:** `.env`, `node_modules/`, `.alchemy/` (local emulator state) and `.logs/`.
 - **Shared:** `refs/` exists once, in main. Each worktree has a `refs` symlink to it.
 - **herdr:** each checkout's dev server runs in a `dev` tab in that checkout's herdr workspace.
 
@@ -88,12 +88,12 @@ Run these in the checkout whose server you mean:
 ```sh
 vp run dev         # start it, or adopt the one already running
 vp run dev:status   # healthy?, where it runs, port
-vp run dev:logs     # tail of logs/dev/current
+vp run dev:logs     # tail of .logs/dev/current
 vp run dev:stop
 ```
 
 - `dev` puts the server in the checkout's herdr `dev` tab and opens the workspace if needed. The scripts' `--help` explains where it runs in each case.
-- Logs are always in `logs/dev/current`.
+- Logs are always in `.logs/dev/current`.
 - Don't start or stop another checkout's server unless asked.
 
 ## Working across checkouts
