@@ -8,6 +8,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Argument, CliError, Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as Yaml from "effect/encoding/Yaml";
 
 import { checkoutKind } from "./lib/worktree.ts";
 import * as ShopifyDocs from "./refs-shopify-docs.ts";
@@ -156,6 +157,13 @@ const ExactVersion = Schema.String.check(
     message: "the dependency must have an exact version pin, like 1.2.3",
   }),
 );
+const WorkspaceCatalogs = Schema.Struct({
+  catalog: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  catalogs: Schema.optional(
+    Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.String)),
+  ),
+});
+const CatalogReference = Schema.TemplateLiteral(["catalog:", Schema.String]);
 const Stamp = Schema.fromJsonString(
   Schema.Struct({
     repo: Schema.String,
@@ -181,9 +189,24 @@ const dependencyVersion = Effect.fn("dependencyVersion")(function* (dep: string)
   const manifest = yield* Schema.decodeEffect(Manifest)(
     yield* fs.readFileString(path.join(yield* root, "package.json")),
   );
-  return yield* Schema.decodeUnknownEffect(ExactVersion)(
-    manifest.dependencies?.[dep] ?? manifest.devDependencies?.[dep],
-  ).pipe(Effect.mapError((error) => new RefError({ message: `${dep}: ${error.message}` })));
+  let version = manifest.dependencies?.[dep] ?? manifest.devDependencies?.[dep];
+  if (Schema.is(CatalogReference)(version)) {
+    const source = yield* fs.readFileString(path.join(yield* root, "pnpm-workspace.yaml"));
+    const workspace = yield* Schema.decodeUnknownEffect(WorkspaceCatalogs)(
+      yield* Effect.try({
+        try: () => Yaml.parse(source),
+        catch: (error) =>
+          new RefError({ message: `Cannot read workspace catalogs: ${String(error)}` }),
+      }),
+    );
+    const name = version.slice("catalog:".length);
+    version = (
+      name === "" ? (workspace.catalog ?? workspace.catalogs?.default) : workspace.catalogs?.[name]
+    )?.[dep];
+  }
+  return yield* Schema.decodeUnknownEffect(ExactVersion)(version).pipe(
+    Effect.mapError((error) => new RefError({ message: `${dep}: ${error.message}` })),
+  );
 });
 
 /**
