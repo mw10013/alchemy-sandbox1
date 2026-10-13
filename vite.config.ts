@@ -31,9 +31,9 @@ export default defineConfig(({ command, mode, isPreview }) => {
     command === "serve" &&
     isPreview === false &&
     process.env.VITEST !== "true" &&
-    process.env.ALCHEMY_CLOUDFLARE_VITE_INJECTED !== "1"
+    process.env.VP_RUN !== "1"
   ) {
-    throw new Error("Use `vp run dev` to start the project dev server with Alchemy and logging.");
+    throw new Error("Use `vp run dev` to start the project dev server.");
   }
 
   return {
