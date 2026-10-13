@@ -5,14 +5,24 @@ backend Worker over a service binding, styled with Astryx's standard neutral
 theme. Both Workers are managed by Alchemy (`alchemy.run.ts`).
 Created with `vp create` in the existing project directory.
 
-The Backend also hosts Durable Objects. A browser reaches an actor (`ShopActor`, one per shop,
-named by its myshopify domain) over one WebSocket at `/api/actor/<key>`, through the Website and
-the Backend's gate, with Effect RPC on it; after a write the actor sends a notice naming the
-stale reactivity keys, and every browser refetches. SSR reads the same actor over HTTP through
-the binding. A browser proves who it is to an actor with a short-lived ticket from the Backend,
-fetched before each connect and sent on the socket's first call; the actor binds it to the
-socket. Shops, members and teams are Baton's tables (`migrations/0002_baton_schema.sql`). The
-member page is `/app/shop/alchemy-sandbox1.myshopify.com`; the merchant page is
+Two request paths:
+
+- **Pages and Backend-owned writes:** browser → Website → server function → Backend. Route
+  loaders, `beforeLoad` guards and writes the Backend owns (the sign-in link, members) call
+  TanStack server functions (`src/server/`), which call the Backend's methods schemaless over
+  the `BACKEND` binding and forward the visitor's cookie. The Backend checks the session in
+  every method.
+- **Live actor data:** browser → Website → the Backend's gate → actor socket. The Backend also
+  hosts Durable Objects. A browser reaches an actor (`ShopActor`, one per shop, named by its
+  myshopify domain) over one WebSocket at `/api/actor/<key>`, through the Website and the
+  Backend's gate, which resolves who the browser is and names it on the upgrade it forwards;
+  the actor keeps that identity on the socket. Effect RPC runs on the socket; after a write the
+  actor sends a notice naming the stale reactivity keys, and every browser refetches. A refused
+  upgrade is closed at once with a code the page reads. The shop page's first paint comes from
+  its loader, which asks the Backend, which asks the actor.
+
+Shops, members and teams are Baton's tables (`migrations/0002_baton_schema.sql`). The member
+page is `/app/shop/alchemy-sandbox1.myshopify.com`; the merchant page is
 `/merchant/<shop>?token=<Shopify session token>`. The Shopify pieces (the app's key and secret,
 the session tokens, the shops' access tokens) are fakes until the Shopify slice.
 

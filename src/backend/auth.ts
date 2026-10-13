@@ -10,7 +10,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { Email } from "../api/backend.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
-import { SystemActors } from "./actor-client.ts";
+import { ShopActors } from "./actor-client.ts";
 import { Members } from "./members.ts";
 
 const MAGIC_LINK_TTL_SECONDS = 300;
@@ -29,7 +29,7 @@ export interface AuthOptions {
  * Builds {@link Auth}. This is the only Promise seam with Better Auth: its callbacks run
  * inside Better Auth's promise machinery, so they run Effects with a snapshot of the
  * construction context. The collaborators ({@link Members}, {@link MagicLinkDelivery},
- * {@link SystemActors}) are services, so the same code runs in the Worker and in a test with no
+ * {@link ShopActors}) are services, so the same code runs in the Worker and in a test with no
  * Cloudflare binding behind it.
  */
 export const makeAuth = (options: AuthOptions = {}) =>
@@ -41,7 +41,7 @@ export const makeAuth = (options: AuthOptions = {}) =>
       return yield* Effect.die(new Error("AUTH_ORIGIN is not bound to the Backend"));
     const members = yield* Members;
     const delivery = yield* MagicLinkDelivery;
-    const actors = yield* SystemActors;
+    const actors = yield* ShopActors;
     const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
 
     // A callback runs outside any request, so `Effect.scoped` gives the query its own scope:

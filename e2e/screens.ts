@@ -23,6 +23,7 @@ export const shop = (page: Page) => ({
   signedInElsewhere: page.getByText("Signed in elsewhere"),
   reconnect: page.getByRole("button", { name: "Reconnect" }),
   notAMember: page.getByText("You're not a member of this shop."),
+  expired: page.getByText("Your Shopify session expired."),
 });
 
 /** Submits the sign-in form on a hydrated `/sign-in` and waits for the confirmation. */

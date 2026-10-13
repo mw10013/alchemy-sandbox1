@@ -18,10 +18,9 @@ import { E2eEmail, TestControlRpcs } from "../api/test-control.ts";
 import { Auth } from "./auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { Mailer, SentMail } from "./mailer.ts";
-import { SystemActors } from "./actor-client.ts";
+import { ShopActors } from "./actor-client.ts";
 import { Members } from "./members.ts";
 import { Shopify } from "./shopify.ts";
-import { Tickets } from "./ticket.ts";
 import {
   TestControlAuthLive,
   TestControlHandlers,
@@ -54,9 +53,8 @@ const TestBackend = (delivery: "inline" | "mailed" = "inline") =>
         Layer.provideMerge(
           Layer.mergeAll(
             Members.layerTest(members),
-            SystemActors.layerTest(revoked),
+            ShopActors.layerTest(revoked),
             Shopify.layerWith({ apiKey: "fake-api-key", apiSecret: Redacted.make("secret") }),
-            Tickets.layerWith(Redacted.make("test-ticket-secret")),
             Layer.succeed(TestControlToken, TOKEN),
             Layer.succeed(TestData, { reset: () => Effect.die("TestData needs D1") }),
             (delivery === "inline"

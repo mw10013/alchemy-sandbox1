@@ -4,8 +4,8 @@ import { text } from "../rpc-proxy.ts";
 
 /**
  * Forwards a WebSocket upgrade for one shop's actor to `Backend`, whose gate decides who may
- * open it; the key is decoded there. Only the upgrade: the actor's HTTP path is for the
- * Backend's own calls and server rendering, never a browser.
+ * open it; the key is decoded there. Only the upgrade: the actor has no HTTP surface a browser
+ * can reach.
  *
  * An upgrade whose `Origin` is present and is not this site is refused with 403. Browsers
  * always send `Origin` on a WebSocket upgrade and a page cannot change it, so this stops

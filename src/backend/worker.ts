@@ -3,33 +3,40 @@ import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as HttpBody from "effect/http/HttpBody";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
+import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 import * as Schema from "effect/Schema";
-import { BackendRpcs } from "../api/backend.ts";
 import { ShopKey } from "../api/shop.ts";
-import { CALLER_HEADER } from "../api/shop-actor.ts";
+import {
+  CONNECTION_CLOSE_FORBIDDEN,
+  CONNECTION_CLOSE_NOT_A_MEMBER,
+  CONNECTION_CLOSE_TRY_AGAIN,
+  CONNECTION_CLOSE_UNAUTHENTICATED,
+  CONNECTION_HEADER,
+  ConnectionCaller,
+} from "../api/shop-actor.ts";
 import { TestControlRpcs } from "../api/test-control.ts";
+import { ShopActors } from "./actor-client.ts";
+import { BackendApi, SignInLimiter } from "./api.ts";
 import { Auth } from "./auth.ts";
-import { SystemActors, encodeCallerHeader } from "./actor-client.ts";
-import { BackendHandlers, SignInLimiter } from "./handlers.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { Mailer } from "./mailer.ts";
 import { Members } from "./members.ts";
-import { CurrentUserLive, RequireAdminLive } from "./middleware.ts";
 import { AuthDb } from "./resources.ts";
-import { ShopAccess } from "./shop-access.ts";
+import { ShopAccess, type ShopAccessDenied } from "./shop-access.ts";
 import { Shopify } from "./shopify.ts";
-import { Tickets } from "./ticket.ts";
 import ShopActor from "./shop-actor.ts";
 import {
   TestControlAuthLive,
   TestControlHandlers,
   TestControlToken,
   TestData,
+  testControlCaller,
 } from "./test-control.ts";
 
 /** Under `alchemy dev` the limiter is open; see {@link SignInLimiter.layerOpen}. */
@@ -38,8 +45,7 @@ const signInLimiter = Layer.unwrap(
 );
 
 /**
- * An actor path split on `/`: exactly `/api/actor/<key>`, optionally with a trailing slash
- * (Effect's HTTP RPC client posts to its URL with one), where the key decodes as
+ * `/api/actor/<key>` split on `/`, optionally with a trailing slash, where the key decodes as
  * {@link ShopKey}. A tuple rejects extra segments.
  */
 const ActorPath = Schema.Union([
@@ -54,15 +60,25 @@ const ActorPath = Schema.Union([
 ]);
 const decodeActorPath = Schema.decodeUnknownOption(ActorPath);
 
+/** `/api/test-control/actor/<key>`, as {@link ActorPath}; see `testControlCaller`. */
+const TestActorPath = Schema.Tuple([
+  Schema.Literal(""),
+  Schema.Literal("api"),
+  Schema.Literal("test-control"),
+  Schema.Literal("actor"),
+  ShopKey,
+]);
+const decodeTestActorPath = Schema.decodeUnknownOption(TestActorPath);
+
 /** The shop key of an {@link ActorPath}; None for any other path. */
 const actorKeyFromPath = (pathname: string): Option.Option<ShopKey> =>
   Option.map(decodeActorPath(pathname.split("/")), (segments) => segments[3]);
 
-/**
- * Whether a path is addressed to an actor at all, so one under `/api/actor/` that names no
- * {@link ShopKey} is 404 rather than falling through to the RPC server. A GET upgrade that
- * reached that server would fail its body read and log a handler failure.
- */
+/** The shop key of a {@link TestActorPath}; None for any other path. */
+const testActorKeyFromPath = (pathname: string): Option.Option<ShopKey> =>
+  Option.map(decodeTestActorPath(pathname.split("/")), (segments) => segments[4]);
+
+/** Whether a path is addressed to an actor at all, so one that names no {@link ShopKey} is 404. */
 const isActorPath = (pathname: string) =>
   pathname === "/api/actor" || pathname.startsWith("/api/actor/");
 
@@ -79,28 +95,84 @@ const FORWARDED_HANDSHAKE_HEADERS = [
   "sec-websocket-extensions",
 ] as const;
 
-/** The token of an `authorization: Bearer <token>` header, Baton's second form for a merchant. */
-const BearerToken = Schema.TemplateLiteralParser(["Bearer ", Schema.NonEmptyString]);
-const decodeBearerOption = Schema.decodeUnknownOption(BearerToken);
-const decodeBearer = (header: string | undefined) =>
-  Option.map(decodeBearerOption(header), ([, token]) => token);
+const encodeConnectionHeader = Schema.encodeSync(Schema.fromJsonString(ConnectionCaller));
+
+/** The gate's refusal as the close code the browser reads, with a short reason. */
+const refusalClose = (status: ShopAccessDenied["status"]) =>
+  Match.value(status).pipe(
+    Match.when(401, () => ({ code: CONNECTION_CLOSE_UNAUTHENTICATED, reason: "unauthenticated" })),
+    Match.when(403, () => ({ code: CONNECTION_CLOSE_FORBIDDEN, reason: "forbidden" })),
+    Match.when(404, () => ({ code: CONNECTION_CLOSE_NOT_A_MEMBER, reason: "not a member" })),
+    Match.when(503, () => ({ code: CONNECTION_CLOSE_TRY_AGAIN, reason: "try again" })),
+    Match.exhaustive,
+  );
+
+/**
+ * Accepts an upgrade the gate refused and closes it at once with {@link refusalClose}'s code. A
+ * refused handshake reaches a browser's `WebSocket` only as a bare 1006 with no status, and the
+ * Website's dev server drops it altogether, so the answer travels as a close code instead.
+ */
+const refuseUpgrade = (status: ShopAccessDenied["status"]) =>
+  Effect.sync(() => {
+    const { code, reason } = refusalClose(status);
+    const pair = new WebSocketPair();
+    pair[1].accept();
+    pair[1].close(code, reason);
+    return HttpServerResponse.setBody(
+      HttpServerResponse.empty({ status: 101 }),
+      HttpBody.raw(new Response(null, { status: 101, webSocket: pair[0] })),
+    );
+  });
+
+/**
+ * The upgrade the actor sees: rebuilt from nothing but {@link FORWARDED_HANDSHAKE_HEADERS} and
+ * {@link CONNECTION_HEADER} naming `caller`. The cookie, `authorization`, the merchant's
+ * `?token=` and any incoming `x-actor-*` header never reach the actor, so a browser cannot name
+ * itself.
+ */
+const forwardedUpgrade = (
+  request: HttpServerRequest.HttpServerRequest,
+  pathname: string,
+  caller: ConnectionCaller,
+) => {
+  const headers = new Headers();
+  for (const name of FORWARDED_HANDSHAKE_HEADERS) {
+    const value = request.headers[name];
+    if (value !== undefined) headers.set(name, value);
+  }
+  headers.set(CONNECTION_HEADER, encodeConnectionHeader(caller));
+  return HttpServerRequest.fromWeb(
+    new Request(new URL(pathname, "http://backend"), { method: "GET", headers }),
+  );
+};
+
+const isUpgrade = (request: HttpServerRequest.HttpServerRequest) =>
+  request.method === "GET" && request.headers.upgrade?.toLowerCase() === "websocket";
+
+const upgradeRequired = HttpServerResponse.empty({
+  status: 426,
+  headers: { upgrade: "websocket" },
+});
 
 /**
  * The private Effect Worker. It has no public URL: the browser reaches it only through the
- * Website, which forwards over the `BACKEND` service binding (browser → Website → Backend).
+ * Website, which calls it over the `BACKEND` service binding (browser → Website → Backend).
  * The binding ignores the request's host, so a caller may use any absolute URL.
  *
- * It serves Better Auth's routes under `/api/auth`, `TestControlRpcs` on `/api/test-control`,
- * and Effect RPC over HTTP (ndjson) for everything else; `RpcServer` ignores the path.
+ * The Website's server functions call {@link BackendApi}'s methods, which this Worker returns
+ * beside `fetch` and which the binding carries schemaless. `fetch` serves Better Auth's routes
+ * under `/api/auth`, `TestControlRpcs` on `/api/test-control`, and the actor's sockets;
+ * anything else is 404.
  *
- * It also hosts {@link ShopActor} and forwards `/api/actor/:key` (see {@link actorKeyFromPath})
- * to the actor named by the key, after {@link ShopAccess}, the gate, has answered for the
- * caller: a refusal is its status, and a path under `/api/actor/` that names no key is 404 (see
- * {@link isActorPath}). The actor serves the RPC itself, over HTTP for the SSR call and over a
- * WebSocket for the browser.
+ * It hosts {@link ShopActor} and forwards a WebSocket upgrade on `/api/actor/<key>` (see
+ * {@link actorKeyFromPath}) to the actor named by the key, after {@link ShopAccess}, the gate,
+ * has resolved the browser: the forwarded request names the caller in {@link CONNECTION_HEADER}
+ * (see {@link forwardedUpgrade}), and a refusal is a socket closed at once with a close code
+ * (see {@link refuseUpgrade}). Anything but an upgrade there is 426: there is no HTTP RPC into
+ * the actor. A path under `/api/actor/` that names no key is 404.
  *
- * The test-control server exists only with the `E2E_TOKEN` binding, which the stack sets off
- * production; without it `/api/test-control` is 404.
+ * Test control exists only with the `E2E_TOKEN` binding, which the stack sets off production;
+ * without it `/api/test-control` and its upgrade route are 404.
  */
 export default class Backend extends Cloudflare.Worker<Backend>()(
   "Backend",
@@ -113,34 +185,17 @@ export default class Backend extends Cloudflare.Worker<Backend>()(
   },
   Effect.gen(function* () {
     // Built once per isolate. Yielding the bindings here attaches them to the Worker.
-    const authService = yield* Auth;
-    const { auth } = authService;
+    const { auth } = yield* Auth;
     const actors = yield* ShopActor;
     const shopAccess = yield* ShopAccess;
+    const api = yield* BackendApi;
     const services = yield* Effect.context<
-      | Auth
-      | MagicLinkDelivery
-      | Members
-      | ShopAccess
-      | Shopify
-      | SignInLimiter
-      | SystemActors
-      | TestData
-      | Tickets
+      Auth | MagicLinkDelivery | Members | Shopify | ShopActors | TestData
     >();
+    const e2eToken = yield* Config.option(Config.String("E2E_TOKEN"));
     // The RPC server is built per request, inside the request's scope (workerd pins I/O to
     // the request that created it).
-    const rpc = RpcServer.toHttpEffect(BackendRpcs).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          BackendHandlers,
-          CurrentUserLive,
-          RequireAdminLive,
-          RpcSerialization.layerNdjson,
-        ).pipe(Layer.provide(Layer.succeedContext(services))),
-      ),
-    );
-    const testControl = Option.map(yield* Config.option(Config.String("E2E_TOKEN")), (token) =>
+    const testControl = Option.map(e2eToken, (token) =>
       RpcServer.toHttpEffect(TestControlRpcs).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -154,52 +209,29 @@ export default class Backend extends Cloudflare.Worker<Backend>()(
         ),
       ),
     );
+
     /**
-     * The actor branch: the gate, then a request rebuilt from nothing but what the actor may
-     * see. A WebSocket upgrade keeps only {@link FORWARDED_HANDSHAKE_HEADERS}; the merchant's
-     * `?token=` is read here and dropped. Any other method is an SSR read over HTTP: it keeps its
-     * method, body and `content-type`, and gains {@link CALLER_HEADER} with the caller the gate
-     * resolved. The cookie, `authorization` and any incoming `x-actor-*` header never reach
-     * the actor, so a caller cannot name itself.
+     * The actor branch: the gate on the upgrade, then the upgrade forwarded as the caller it
+     * resolved. A merchant's Shopify session token arrives as `?token=`, Baton's form for a
+     * socket; a member is resolved from the cookie.
      */
     const forwardToActor = Effect.fn("Backend.forwardToActor")(function* (
       key: ShopKey,
       request: HttpServerRequest.HttpServerRequest,
     ) {
+      if (!isUpgrade(request)) return upgradeRequired;
       const url = new URL(request.url, "http://backend");
-      const upgrade = request.headers.upgrade?.toLowerCase() === "websocket";
-      const bearer = decodeBearer(request.headers.authorization);
       const caller = yield* shopAccess
         .resolve({
           key,
           cookie: request.headers.cookie,
-          sessionToken: upgrade
-            ? Option.getOrUndefined(Option.fromNullishOr(url.searchParams.get("token")))
-            : Option.getOrUndefined(bearer),
+          sessionToken: Option.getOrUndefined(Option.fromNullishOr(url.searchParams.get("token"))),
         })
         .pipe(Effect.result);
-      if (caller._tag === "Failure")
-        return HttpServerResponse.empty({ status: caller.failure.status });
-      const headers = new Headers();
-      if (upgrade) {
-        for (const name of FORWARDED_HANDSHAKE_HEADERS) {
-          const value = request.headers[name];
-          if (value !== undefined) headers.set(name, value);
-        }
-      } else {
-        const contentType = request.headers["content-type"];
-        if (contentType !== undefined) headers.set("content-type", contentType);
-        headers.set(CALLER_HEADER, encodeCallerHeader(caller.success));
-      }
-      const body = upgrade ? undefined : yield* request.arrayBuffer.pipe(Effect.orDie);
-      const forwarded = HttpServerRequest.fromWeb(
-        new Request(new URL(url.pathname, url.origin), {
-          method: request.method,
-          headers,
-          body,
-        }),
-      );
-      return yield* actors.fetch(key, forwarded);
+      if (caller._tag === "Failure") return yield* refuseUpgrade(caller.failure.status);
+      return yield* actors
+        .getByName(key)
+        .fetch(forwardedUpgrade(request, url.pathname, caller.success));
     });
 
     const fetch = Effect.gen(function* () {
@@ -211,28 +243,33 @@ export default class Backend extends Cloudflare.Worker<Backend>()(
           onNone: () => Effect.succeed(HttpServerResponse.empty({ status: 404 })),
           onSome: (key) => forwardToActor(key, request),
         });
+      const testKey = testActorKeyFromPath(pathname);
+      if (Option.isSome(testKey)) {
+        const caller = Option.flatMap(e2eToken, (token) =>
+          testControlCaller(token, request.headers),
+        );
+        if (Option.isNone(caller)) return HttpServerResponse.empty({ status: 404 });
+        if (!isUpgrade(request)) return upgradeRequired;
+        return yield* actors
+          .getByName(testKey.value)
+          .fetch(forwardedUpgrade(request, `/api/actor/${testKey.value}`, caller.value));
+      }
       // Effect's HTTP RPC client posts to its URL with a trailing slash.
       if (pathname === "/api/test-control" || pathname === "/api/test-control/")
         return Option.isSome(testControl)
           ? yield* yield* testControl.value
           : HttpServerResponse.empty({ status: 404 });
-      return yield* yield* rpc;
+      return HttpServerResponse.empty({ status: 404 });
     });
-    return { fetch };
+    return { fetch, ...api };
   }).pipe(
+    Effect.provide(BackendApi.layer),
     Effect.provide(ShopAccess.layer),
     Effect.provide(Auth.layer),
-    Effect.provide(SystemActors.layer),
+    Effect.provide(ShopActors.layer),
     Effect.provide(MagicLinkDelivery.layer),
     Effect.provide(
-      Layer.mergeAll(
-        Members.layer,
-        Mailer.layer,
-        signInLimiter,
-        TestData.layer,
-        Tickets.layer,
-        Shopify.layer,
-      ),
+      Layer.mergeAll(Members.layer, Mailer.layer, signInLimiter, TestData.layer, Shopify.layer),
     ),
     Effect.provide(CloudflareD1(AuthDb)),
     Effect.provide(Cloudflare.Email.SendBinding),

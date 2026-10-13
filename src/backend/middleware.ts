@@ -1,16 +1,6 @@
-import { RuntimeContext } from "alchemy";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Match from "effect/Match";
 import * as Schema from "effect/Schema";
-import {
-  CurrentUser,
-  CurrentUserMiddleware,
-  Forbidden,
-  Me,
-  RequireAdmin,
-  Unauthorized,
-} from "../api/backend.ts";
+import { Me, Unauthorized } from "../api/backend.ts";
 import { Auth } from "./auth.ts";
 
 const decodeMe = Schema.decodeUnknownEffect(Me);
@@ -41,42 +31,3 @@ export const sessionFromCookie = Effect.fn("sessionFromCookie")(function* (
     sessionExpiresAt: session.session.expiresAt.getTime(),
   };
 });
-
-/**
- * The signed-in user from a `cookie` header value, through {@link sessionFromCookie}.
- * {@link CurrentUserLive} uses it for RPC.
- */
-export const currentUserFromCookie = (cookie: string | undefined) =>
-  sessionFromCookie(cookie).pipe(Effect.map(({ me }) => me));
-
-/**
- * Provides {@link CurrentUser} from the request cookie through {@link currentUserFromCookie}.
- * RPC headers are lowercased and carry the cookie for browser calls, through the Website's
- * proxy, and for SSR calls, which forward the visitor's cookie.
- */
-export const CurrentUserLive = Layer.effect(
-  CurrentUserMiddleware,
-  Effect.gen(function* () {
-    const auth = yield* Auth;
-    return CurrentUserMiddleware.of((effect, { headers }) =>
-      currentUserFromCookie(headers.cookie).pipe(
-        Effect.flatMap((me) => Effect.provideService(effect, CurrentUser, me)),
-        Effect.provideService(Auth, auth),
-        // RPC does not carry Alchemy's runtime marker; the Worker owns the request scope.
-        Effect.provide(RuntimeContext.phantom),
-      ),
-    );
-  }),
-);
-
-export const RequireAdminLive = Layer.succeed(RequireAdmin)(
-  RequireAdmin.of((effect) =>
-    Effect.gen(function* () {
-      const user = yield* CurrentUser;
-      return yield* Match.value(user.role).pipe(
-        Match.when("admin", () => effect),
-        Match.orElse(() => Effect.fail(new Forbidden())),
-      );
-    }),
-  ),
-);

@@ -1,9 +1,7 @@
-import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
-import { testRegistry } from "../../test/browser/backend.ts";
 import { renderInApp } from "../../test/browser/render.tsx";
-import { TooManyRequests } from "../api/backend.ts";
+import { shopTestRegistry } from "../../test/browser/shop-actor.ts";
+import type { MagicLinkResult } from "../server/sign-in.ts";
 import SignInPage from "./SignInPage.tsx";
 
 const requestLink = async (screen: Awaited<ReturnType<typeof renderInApp>>, email: string) => {
@@ -11,20 +9,19 @@ const requestLink = async (screen: Awaited<ReturnType<typeof renderInApp>>, emai
   await screen.getByRole("button", { name: "Send link" }).click();
 };
 
+const render = (requestMagicLink: (input: { email: string }) => Promise<MagicLinkResult>) =>
+  renderInApp(
+    <SignInPage returnTo={undefined} error={undefined} requestMagicLink={requestMagicLink} />,
+    shopTestRegistry({}),
+  );
+
 describe("SignInPage", () => {
   it("shows the inline link after a request, with the email decoded", async () => {
     const requested: Array<string> = [];
-    const registry = testRegistry({
-      RequestMagicLink: ({ email }) =>
-        Effect.sync(() => {
-          requested.push(email);
-          return { link: Option.some("http://test.local/verify") };
-        }),
+    const screen = await render(async ({ email }) => {
+      requested.push(email);
+      return { _tag: "Sent", link: "http://test.local/verify" };
     });
-    const screen = await renderInApp(
-      <SignInPage returnTo={undefined} error={undefined} />,
-      registry,
-    );
 
     await requestLink(screen, " M1@m.com ");
 
@@ -36,11 +33,7 @@ describe("SignInPage", () => {
   });
 
   it("says when the rate limit is hit", async () => {
-    const registry = testRegistry({ RequestMagicLink: () => Effect.fail(new TooManyRequests()) });
-    const screen = await renderInApp(
-      <SignInPage returnTo={undefined} error={undefined} />,
-      registry,
-    );
+    const screen = await render(async () => ({ _tag: "TooManyRequests" }));
 
     await requestLink(screen, "m1@m.com");
 
@@ -48,5 +41,13 @@ describe("SignInPage", () => {
       .element(screen.getByText("Too many attempts. Try again in a minute."))
       .toBeVisible();
     await expect.element(screen.getByRole("button", { name: "Send link" })).toBeVisible();
+  });
+
+  it("says when the request fails", async () => {
+    const screen = await render(() => Promise.reject(new Error("unreachable")));
+
+    await requestLink(screen, "m1@m.com");
+
+    await expect.element(screen.getByText("Something went wrong. Try again.")).toBeVisible();
   });
 });

@@ -1,7 +1,5 @@
-import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { Rpc, RpcGroup, RpcMiddleware } from "effect/rpc";
 import { ShopKey } from "./shop.ts";
 
 /**
@@ -72,16 +70,11 @@ export type Member = typeof Member.Type;
 /** The email is already a member of the shop: Baton's unique (shop, email). */
 export class MemberExists extends Schema.TaggedError<MemberExists>()("MemberExists", {}) {}
 
-/** `link` is Some only under inline delivery; see `MagicLinkDelivery` in the Backend. */
-export const MagicLinkRequested = Schema.Struct({ link: Schema.Option(Schema.String) });
-
 /**
- * A short-lived signed claim that lets one socket bind to one shop's actor as one caller: the
- * claims as base64url JSON, a dot, and their HMAC-SHA256 as base64url. Only the Backend can
- * sign one; anyone can read the claims (`TicketClaims` in `api/shop-actor.ts`).
+ * `link` is Some only under inline delivery; see `MagicLinkDelivery` in the Backend. It crosses
+ * the binding encoded, as `string | null`.
  */
-export const Ticket = Schema.String.pipe(Schema.brand("Ticket"));
-export type Ticket = typeof Ticket.Type;
+export const MagicLinkRequested = Schema.Struct({ link: Schema.OptionFromNullOr(Schema.String) });
 
 /**
  * The caller is signed in, or holds a valid Shopify token, but may not open this shop: an
@@ -93,44 +86,13 @@ export class Unauthorized extends Schema.TaggedError<Unauthorized>()("Unauthoriz
 export class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
 export class TooManyRequests extends Schema.TaggedError<TooManyRequests>()("TooManyRequests", {}) {}
 
-/** The signed-in member, provided by {@link CurrentUserMiddleware}. */
-export class CurrentUser extends Context.Service<CurrentUser, Me>()("CurrentUser") {}
-export class CurrentUserMiddleware extends RpcMiddleware.Service<
-  CurrentUserMiddleware,
-  { provides: CurrentUser }
->()("CurrentUserMiddleware", { error: Unauthorized }) {}
-export class RequireAdmin extends RpcMiddleware.Service<RequireAdmin, { requires: CurrentUser }>()(
-  "RequireAdmin",
-  { error: Forbidden },
-) {}
-
 /**
- * Procedures with no session middleware. `IssueActorTicket` is here because a merchant has no
- * Better Auth session; the gate inside it decides who gets a ticket.
+ * What a server function forwards from the browser's request to the Backend; nothing else
+ * crosses. Each Backend method that needs the visitor resolves the session from `cookie`
+ * itself; `ip` keys the sign-in rate limit.
  */
-const PublicRpcs = RpcGroup.make(
-  Rpc.make("Hello", { success: Hello }),
-  Rpc.make("Shout", { payload: { input: ShoutText }, success: Shouted }),
-  Rpc.make("RequestMagicLink", {
-    payload: { email: Email, returnTo: Schema.optional(ReturnPath) },
-    success: MagicLinkRequested,
-    error: TooManyRequests,
-  }),
-  Rpc.make("IssueActorTicket", {
-    payload: { key: ShopKey, sessionToken: Schema.optional(Schema.String) },
-    success: Schema.Struct({ ticket: Ticket }),
-    error: Schema.Union([Unauthorized, NotAShopMember]),
-  }),
-);
-
-const MemberRpcs = RpcGroup.make(Rpc.make("Me", { success: Me })).middleware(CurrentUserMiddleware);
-
-/**
- * The first middleware added runs innermost: {@link RequireAdmin} reads the
- * {@link CurrentUser} that the outer {@link CurrentUserMiddleware} provides.
- */
-const AdminRpcs = RpcGroup.make(Rpc.make("ListMembers", { success: Schema.Array(Member) }))
-  .middleware(RequireAdmin)
-  .middleware(CurrentUserMiddleware);
-
-export const BackendRpcs = PublicRpcs.merge(MemberRpcs, AdminRpcs);
+export const RequestInfo = Schema.Struct({
+  cookie: Schema.UndefinedOr(Schema.String),
+  ip: Schema.UndefinedOr(Schema.String),
+});
+export type RequestInfo = typeof RequestInfo.Type;

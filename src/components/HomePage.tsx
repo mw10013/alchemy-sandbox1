@@ -1,12 +1,10 @@
-import { RegistryContext } from "@effect/atom-react";
-import { useContext } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { Button } from "@astryxdesign/core/Button";
 import { HStack, Layout, LayoutContent, VStack } from "@astryxdesign/core/Layout";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { TopNav, TopNavHeading, TopNavItem } from "@astryxdesign/core/TopNav";
-import type { Me } from "../api/backend.ts";
+import type { Hello, Me, Shouted, ShoutText } from "../api/backend.ts";
 import { homeFor } from "../routes/-guards.ts";
 import { signOut } from "../session.ts";
 import Playground from "./Playground";
@@ -20,15 +18,16 @@ import Playground from "./Playground";
  * @see refs/astryx/packages/cli/assets/templates/pages/shell-top-nav/page.tsx
  * @see refs/astryx/packages/cli/assets/templates/pages/centered-hero/page.tsx
  */
-export default function HomePage({ me }: { me: Me | undefined }) {
+export default function HomePage({
+  me,
+  hello,
+  shout,
+}: {
+  me: Me | undefined;
+  hello: typeof Hello.Type;
+  shout: (input: ShoutText) => Promise<typeof Shouted.Type>;
+}) {
   const router = useRouter();
-  const registry = useContext(RegistryContext);
-
-  const onSignOut = async () => {
-    await signOut(registry);
-    // Reruns the loader, which reads the dropped session as signed out.
-    await router.invalidate();
-  };
 
   const dashboard = me && homeFor(me.role);
 
@@ -48,7 +47,7 @@ export default function HomePage({ me }: { me: Me | undefined }) {
                   label="Sign out"
                   variant="secondary"
                   size="sm"
-                  onClick={() => void onSignOut()}
+                  onClick={() => void signOut(router)}
                 />
               </HStack>
             ) : (
@@ -79,7 +78,7 @@ export default function HomePage({ me }: { me: Me | undefined }) {
                   <Button label="Get started" variant="primary" href="/sign-in" />
                 )}
               </VStack>
-              <Playground />
+              <Playground hello={hello} shout={shout} />
             </VStack>
           </LayoutContent>
         }

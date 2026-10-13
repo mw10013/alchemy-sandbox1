@@ -1,15 +1,12 @@
 import { createIsomorphicFn } from "@tanstack/react-start";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
-import * as Atom from "effect/reactivity/Atom";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
-import * as AtomRegistry from "effect/reactivity/AtomRegistry";
+import * as Atom from "effect/reactivity/Atom";
+import type * as AtomRegistry from "effect/reactivity/AtomRegistry";
 import * as AtomRpc from "effect/reactivity/AtomRpc";
 import * as Reactivity from "effect/reactivity/Reactivity";
 import { RpcClient, RpcSerialization } from "effect/rpc";
@@ -17,35 +14,37 @@ import * as Schema from "effect/Schema";
 import * as Socket from "effect/socket/Socket";
 import * as Stream from "effect/Stream";
 import {
-  CONNECTION_CLOSE_DISPLACED,
-  COUNT_KEY,
-  type Notice,
-  NoticeFrame,
-  ShopActorRpcs,
-} from "./api/shop-actor.ts";
-import type { ShopKey } from "./api/shop.ts";
-import { BackendRpcs, NotAShopMember, Unauthorized } from "./api/backend.ts";
-import { BackendClient, backendProtocol } from "./backend-client.ts";
-import { backendTransport } from "./backend-transport.ts";
-import { refreshOnFocus } from "./query.ts";
-import {
-  bindOnConnect,
-  type ConnectionState,
+  applyCloseOutcome,
+  closeOutcome,
   connectionStateAtom,
-  isTerminal,
-  makeTicketStep,
   merchantExpiredAtom,
   merchantTokenAtom,
   notAMemberAtom,
   reconnectAtom,
   retryPolicy,
-  setClient,
   shopKeyAtom,
-  ticketMiddleware,
-} from "./ticket-client.ts";
+} from "./actor-connection.ts";
+import type { ShopKey } from "./api/shop.ts";
+import {
+  COUNT_KEY,
+  type ConnectionCaller,
+  type Notice,
+  NoticeFrame,
+  ShopActorRpcs,
+  type ShopSnapshot,
+} from "./api/shop-actor.ts";
+import { refreshOnFocus } from "./query.ts";
 
-/** Notices pulled off the socket by {@link layerSocketWithNotices}; one per browser, like the socket. */
-export const notices = Effect.runSync(PubSub.unbounded<Notice>());
+/**
+ * Notices pulled off the socket by {@link layerSocketWithNotices}; one per registry, like the
+ * socket, so a test registry never sees another's. The last one is replayed to a new
+ * subscriber: the first connect's refresh notice is published while {@link noticesAtom} may
+ * still be subscribing, and dropping it would leave the seeded count unchecked until the next
+ * write.
+ */
+export const noticeBus = Atom.make(() =>
+  Effect.runSync(PubSub.unbounded<Notice>({ replay: 1 })),
+).pipe(Atom.keepAlive);
 
 const decodeNotice = Schema.decodeUnknownOption(NoticeFrame);
 
@@ -54,16 +53,8 @@ const decodeNotice = Schema.decodeUnknownOption(NoticeFrame);
  * {@link Notice} is published to {@link notices} and never reaches the RPC protocol, so the
  * protocol sees only its own messages. Pull again when a chunk held nothing else, because a
  * reader's pull must return a non-empty array.
- *
- * `beforeConnect` runs each time the protocol opens the socket, before it opens: the reader is
- * acquired once per connect. It is where the connect's ticket is fetched, and its failure is
- * the socket's failure, which the retry policy sees. (`Socket.makeWebSocket` also takes the
- * URL as an Effect run per connect, but that Effect cannot fail.)
  */
-const layerSocketWithNotices = (
-  url: string,
-  beforeConnect: Effect.Effect<void, Socket.SocketError>,
-) =>
+const layerSocketWithNotices = (url: string, notices: PubSub.PubSub<Notice>) =>
   Layer.effect(
     Socket.Socket,
     Effect.gen(function* () {
@@ -82,62 +73,13 @@ const layerSocketWithNotices = (
         });
       return Socket.make({
         writer: inner.writer,
-        reader: beforeConnect.pipe(
-          Effect.andThen(inner.reader),
-          Effect.map((reader) => ({ ...reader, pull: pullFiltered(reader.pull) })),
-        ),
+        reader: Effect.map(inner.reader, (reader) => ({
+          ...reader,
+          pull: pullFiltered(reader.pull),
+        })),
       });
     }),
   );
-
-/** `IssueActorTicket`'s payload: the shop, and the merchant's token when there is one. */
-const ticketPayload = (key: ShopKey, merchantToken: Option.Option<string>) =>
-  Option.match(merchantToken, {
-    onNone: () => ({ key }),
-    onSome: (sessionToken) => ({ key, sessionToken }),
-  });
-
-const ticketQuery = (key: ShopKey, merchantToken: Option.Option<string>) =>
-  BackendClient.query("IssueActorTicket", ticketPayload(key, merchantToken), {
-    serializationKey: "actor-ticket",
-  });
-
-/**
- * A ticket for the next connect, for this shop and this browser's credential. The route
- * loader primes it with `loadQuery`, so the first ticket comes with the page and the first
- * connect makes no extra call.
- */
-export const ticketAtom = Atom.make((get) =>
-  get(ticketQuery(get(shopKeyAtom), get(merchantTokenAtom))),
-);
-
-const isNotAShopMember = Schema.is(NotAShopMember);
-const isUnauthorized = Schema.is(Unauthorized);
-
-/**
- * Primes {@link ticketAtom} in a route loader, as `loadQuery` does, and answers with the exit so
- * the loader can tell "not a member" (which the page shows) from a fault (which it throws).
- * Sets `notAMemberAtom` and `merchantExpiredAtom` from the answer.
- */
-export const loadTicket = (registry: AtomRegistry.AtomRegistry) => {
-  const query = ticketQuery(registry.get(shopKeyAtom), registry.get(merchantTokenAtom));
-  registry.refresh(query);
-  return Effect.runPromise(
-    AtomRegistry.getResult(registry, query).pipe(
-      Effect.exit,
-      Effect.tap((exit) =>
-        Effect.sync(() => {
-          const error = Exit.findErrorOption(exit);
-          registry.set(notAMemberAtom, Option.exists(error, isNotAShopMember));
-          registry.set(
-            merchantExpiredAtom,
-            Option.isSome(registry.get(merchantTokenAtom)) && Option.exists(error, isUnauthorized),
-          );
-        }),
-      ),
-    ),
-  );
-};
 
 /** This page's origin as a WebSocket origin: `ws:` under `http:`, `wss:` under `https:`. */
 const wsOrigin = () => {
@@ -146,64 +88,46 @@ const wsOrigin = () => {
   return url.origin;
 };
 
-/** The connection state a socket error leaves: terminal codes are shown, the rest is `lost`. */
-const stateAfter = (error: Socket.SocketError): ConnectionState =>
-  !isTerminal(error)
-    ? "lost"
-    : error.reason._tag === "SocketCloseError" && error.reason.code === CONNECTION_CLOSE_DISPLACED
-      ? "displaced"
-      : "forbidden";
-
-/**
- * One hibernating WebSocket per browser, opened with a fresh ticket each time (see
- * `makeTicketStep`), bound on connect by a call carrying that ticket (see `bindOnConnect` and
- * `ticketMiddleware`), and retried
- * on `retryPolicy`, which stops on a terminal close or a refused ticket. A merchant's token
- * also goes on the URL, where the Backend's gate reads it, as Baton's does.
- */
-const browserProtocol = (input: {
+type ProtocolInput = {
   readonly registry: AtomRegistry.AtomRegistry;
+  readonly notices: PubSub.PubSub<Notice>;
   readonly key: ShopKey;
   readonly merchantToken: Option.Option<string>;
-}) => {
+};
+
+/**
+ * One hibernating WebSocket per browser, retried on `retryPolicy`, which stops on a terminal
+ * close. The gate names the socket on its upgrade, from the cookie or, for a merchant, the
+ * Shopify token on the URL (Baton's form), so no call carries a credential. Every close goes
+ * through `closeOutcome` to the page's atoms.
+ */
+const browserProtocol = (input: ProtocolInput) => {
   const url = new URL(`/api/actor/${input.key}`, wsOrigin());
+  const merchant = Option.isSome(input.merchantToken);
   if (Option.isSome(input.merchantToken)) url.searchParams.set("token", input.merchantToken.value);
-  const setState = (state: ConnectionState) =>
+  const setState = (state: "connecting" | "open") =>
     Effect.sync(() => input.registry.set(connectionStateAtom, state));
   return Layer.effect(
     RpcClient.Protocol,
     RpcClient.makeProtocolSocket({
-      retryPolicy: retryPolicy((error) => setState(stateAfter(error))),
+      retryPolicy: retryPolicy((error) =>
+        applyCloseOutcome(input.registry, closeOutcome(error, merchant)),
+      ),
     }),
   ).pipe(
     Layer.provide(
       Layer.mergeAll(
-        layerSocketWithNotices(
-          url.toString(),
-          makeTicketStep({
-            registry: input.registry,
-            merchantToken: input.merchantToken,
-            primed: AsyncResult.value(input.registry.get(ticketAtom)).pipe(
-              Option.map(({ ticket }) => ticket),
-            ),
-            fetch: RpcClient.make(BackendRpcs).pipe(
-              Effect.flatMap((client) =>
-                client.IssueActorTicket(ticketPayload(input.key, input.merchantToken)),
-              ),
-              Effect.map(({ ticket }) => ticket),
-              Effect.scoped,
-              Effect.provide(backendProtocol),
-            ),
-          }),
-        ),
+        layerSocketWithNotices(url.toString(), input.notices),
         RpcSerialization.layerJson,
-        // Bind, then refetch after every (re)connect: a notice sent while this browser was
-        // disconnected is lost.
+        // Refetch after every (re)connect: a notice sent while this browser was disconnected
+        // is lost.
         Layer.succeed(RpcClient.ConnectionHooks)({
-          onConnect: bindOnConnect.pipe(
-            Effect.andThen(setState("open")),
+          onConnect: setState("open").pipe(
             Effect.andThen(
-              PubSub.publish(notices, { _tag: "ShopActorNotice", invalidated: [COUNT_KEY] }),
+              PubSub.publish(input.notices, {
+                _tag: "ShopActorNotice",
+                invalidated: [COUNT_KEY],
+              }),
             ),
           ),
           onDisconnect: Effect.sync(() => {
@@ -220,57 +144,17 @@ const browserProtocol = (input: {
 };
 
 /**
- * SSR reads the actor over HTTP through the binding; see {@link backendTransport}. A merchant
- * page sends its token as `authorization: Bearer`, Baton's second form, which the Backend's
- * gate reads instead of the cookie.
- */
-const serverProtocol = (input: {
-  readonly key: ShopKey;
-  readonly merchantToken: Option.Option<string>;
-}) =>
-  RpcClient.layerProtocolHttp({
-    url: `https://backend/api/actor/${input.key}`,
-    transformClient: Option.match(input.merchantToken, {
-      onNone: () => (client) => client,
-      onSome:
-        (token) =>
-        <E, R>(client: HttpClient.HttpClient.With<E, R>) =>
-          HttpClient.mapRequest(client, HttpClientRequest.bearerToken(token)),
-    }),
-  }).pipe(Layer.provide(RpcSerialization.layerNdjson), Layer.provide(backendTransport()));
-
-/**
- * Browser: {@link browserProtocol}. SSR: {@link serverProtocol}. The socket layer is never
- * built on the server.
+ * Browser: {@link browserProtocol}. The server never reads a socket atom: a shop page renders
+ * its loader's snapshot until it is hydrated, and `seedShop` fills the atoms in the browser.
  */
 const protocol = createIsomorphicFn()
-  .client(
-    (input: {
-      readonly registry: AtomRegistry.AtomRegistry;
-      readonly key: ShopKey;
-      readonly merchantToken: Option.Option<string>;
-    }) => browserProtocol(input),
-  )
-  .server(
-    (input: {
-      readonly registry: AtomRegistry.AtomRegistry;
-      readonly key: ShopKey;
-      readonly merchantToken: Option.Option<string>;
-    }) => serverProtocol(input),
-  );
-
-/**
- * The ticket middleware is the browser's alone; server rendering is named by the Backend. The
- * browser's client is also the one `bindOnConnect` binds each socket through.
- */
-const makeClient = createIsomorphicFn()
-  .client(() =>
-    RpcClient.make(ShopActorRpcs, { flatten: true }).pipe(
-      Effect.tap(setClient),
-      Effect.provide(ticketMiddleware),
+  .client((input: ProtocolInput) => browserProtocol(input))
+  .server((_input: ProtocolInput) =>
+    Layer.effect(
+      RpcClient.Protocol,
+      Effect.die(new Error("the actor socket's atoms are never read on the server")),
     ),
-  )
-  .server(() => RpcClient.make(ShopActorRpcs, { flatten: true }));
+  );
 
 /**
  * The actor's procedures as atoms. The protocol reads {@link shopKeyAtom}, `merchantTokenAtom`
@@ -283,24 +167,35 @@ export class ShopActorClient extends AtomRpc.Service<ShopActorClient>()("ShopAct
     get(reconnectAtom);
     return protocol({
       registry: get.registry,
+      notices: get(noticeBus),
       key: get(shopKeyAtom),
       merchantToken: get(merchantTokenAtom),
     });
   },
-  makeEffect: makeClient(),
+  makeEffect: RpcClient.make(ShopActorRpcs, { flatten: true }),
 }) {}
 
-/** The shop's count for a member; refetched on every notice naming {@link COUNT_KEY}. */
-export const countAtom = ShopActorClient.query("MemberGetCount", undefined, {
+/**
+ * The member's count query itself, without the wrappers {@link countAtom} adds: the node
+ * {@link seedShop} fills.
+ */
+export const countQuery = ShopActorClient.query("MemberGetCount", undefined, {
   serializationKey: "count",
-  timeToLive: "5 minutes",
-}).pipe(Atom.withReactivity([COUNT_KEY]), refreshOnFocus);
+});
+
+/** The shop's count for a member; refetched on every notice naming {@link COUNT_KEY}. */
+export const countAtom = countQuery.pipe(Atom.withReactivity([COUNT_KEY]), refreshOnFocus);
+
+/** The merchant's count query; see {@link countQuery}. */
+export const merchantCountQuery = ShopActorClient.query("MerchantGetCount", undefined, {
+  serializationKey: "merchant-count",
+});
 
 /** The shop's count for a merchant; see {@link countAtom}. */
-export const merchantCountAtom = ShopActorClient.query("MerchantGetCount", undefined, {
-  serializationKey: "merchant-count",
-  timeToLive: "5 minutes",
-}).pipe(Atom.withReactivity([COUNT_KEY]), refreshOnFocus);
+export const merchantCountAtom = merchantCountQuery.pipe(
+  Atom.withReactivity([COUNT_KEY]),
+  refreshOnFocus,
+);
 
 export const incrementAtom = ShopActorClient.mutation("MemberIncrement");
 
@@ -310,24 +205,71 @@ export const activationAtom = ShopActorClient.query("MemberActivation", undefine
   serializationKey: "activation",
 });
 
-/** Who the actor says this member is; see `loadQuery`. */
+/** Who the actor says this member is. */
 export const whoAmIAtom = ShopActorClient.query("MemberWhoAmI", undefined, {
   serializationKey: "whoami",
 });
 
-/** Who the actor says this merchant is; see `loadQuery`. */
+/** Who the actor says this merchant is. */
 export const merchantWhoAmIAtom = ShopActorClient.query("MerchantWhoAmI", undefined, {
   serializationKey: "merchant-whoami",
 });
 
 /**
- * Turns notices into invalidations; mounted by the page. The stream never ends. A notice
- * published before this subscribes is dropped, which can happen to the first connect's
- * synthetic notice while the runtime is still being built; the count is primed by then, so
- * nothing is stale. Every reconnect happens with the subscription live.
+ * Fills a query atom's node with a value the page already has, as if the query had answered.
+ * The registry consumes the value when it first creates the node; a node that is already
+ * there (a page left less than its idle TTL ago) is refetched instead.
  */
-export const noticesAtom = ShopActorClient.runtime.atom(
-  Stream.fromPubSub(notices).pipe(
+const seed = <A, E>(
+  registry: AtomRegistry.AtomRegistry,
+  atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+  value: A,
+) => {
+  if (!Atom.isSerializable(atom)) throw new Error("only a query with a serializationKey is seeded");
+  const { key, encode } = atom[Atom.SerializableTypeId];
+  if (registry.getNodes().has(key)) registry.refresh(atom);
+  else registry.setSerializable(key, encode(AsyncResult.success(value)));
+};
+
+/**
+ * Seeds the socket's atoms from a shop page's loader data: the shop and credential the protocol
+ * connects with, a fresh connection state, and the role's count, who-am-I and (for a member)
+ * activation, so the page shows them at once and the socket only keeps them current. Run it
+ * once, in the browser, before the page reads any socket atom. A second run on the same
+ * registry (React's StrictMode doubles a state initializer in development) finds the nodes and
+ * refetches instead, which costs one round trip and nothing else.
+ */
+export const seedShop = (
+  registry: AtomRegistry.AtomRegistry,
+  input: {
+    readonly key: ShopKey;
+    readonly merchantToken: Option.Option<string>;
+    readonly caller: ConnectionCaller;
+    readonly snapshot: ShopSnapshot;
+  },
+) => {
+  registry.set(shopKeyAtom, input.key);
+  registry.set(merchantTokenAtom, input.merchantToken);
+  registry.set(notAMemberAtom, false);
+  registry.set(merchantExpiredAtom, false);
+  registry.set(connectionStateAtom, "connecting");
+  if (Option.isSome(input.merchantToken)) {
+    seed(registry, merchantCountQuery, input.snapshot.count);
+    seed(registry, merchantWhoAmIAtom, input.caller);
+  } else {
+    seed(registry, countQuery, input.snapshot.count);
+    seed(registry, whoAmIAtom, input.caller);
+    seed(registry, activationAtom, input.snapshot.activation);
+  }
+};
+
+/**
+ * Turns notices into invalidations; mounted by the page. The stream never ends. It sees the
+ * last notice published before it subscribed (see {@link noticeBus}), so every connect, the
+ * first included, refetches the count.
+ */
+export const noticesAtom = ShopActorClient.runtime.atom((get) =>
+  Stream.fromPubSub(get(noticeBus)).pipe(
     Stream.tap((notice) => Reactivity.invalidate(notice.invalidated)),
   ),
 );

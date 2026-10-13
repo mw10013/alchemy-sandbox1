@@ -12,7 +12,7 @@ const INTEG_E2E_TOKEN = "integ";
  * the TanStack Start dev server and want `WEBSITE_PORT`. Better Auth builds links on
  * `AUTH_ORIGIN`, which the real stack binds to the Website's URL; here the Backend is its own
  * origin, so a link can be followed against it directly. Links are delivered inline, so the
- * test gets them back from `RequestMagicLink`. The ticket and fake Shopify secrets are bound as
+ * test gets them back from test control's `IssueMagicLink`. The fake Shopify secret is bound as
  * on the real stack, and test control is on.
  */
 export default Alchemy.Stack(
@@ -22,9 +22,6 @@ export default Alchemy.Stack(
     const backend = yield* Backend;
     yield* backend.bind("AuthOrigin", { env: { AUTH_ORIGIN: backend.url } });
     yield* backend.bind("MagicLinkDelivery", { env: { MAGIC_LINK_DELIVERY: "inline" } });
-    yield* backend.bind("Tickets", {
-      env: { TICKET_SECRET: yield* Alchemy.makeRandom("TicketSecret") },
-    });
     yield* backend.bind("Shopify", {
       env: {
         SHOPIFY_API_KEY: SHOPIFY_API_KEY,

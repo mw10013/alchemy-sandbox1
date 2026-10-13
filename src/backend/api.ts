@@ -1,0 +1,190 @@
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Match from "effect/Match";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import {
+  Email,
+  Forbidden,
+  MagicLinkRequested,
+  NotAShopMember,
+  RequestInfo,
+  ReturnPath,
+  ShoutText,
+  TooManyRequests,
+  Unauthorized,
+} from "../api/backend.ts";
+import { ShopKey } from "../api/shop.ts";
+import { ShopActors } from "./actor-client.ts";
+import { Auth } from "./auth.ts";
+import { MagicLinkDelivery } from "./magic-link-delivery.ts";
+import { Members } from "./members.ts";
+import { sessionFromCookie } from "./middleware.ts";
+import { SignInLimit } from "./resources.ts";
+import { ShopAccess } from "./shop-access.ts";
+
+/**
+ * The {@link SignInLimit} client. Yielding the binding attaches it to the Worker, so the layer
+ * is built in the Worker's init.
+ */
+export class SignInLimiter extends Context.Service<SignInLimiter, Cloudflare.RateLimitClient>()(
+  "app/SignInLimiter",
+) {
+  static readonly layer = Layer.effect(
+    SignInLimiter,
+    Effect.gen(function* () {
+      return yield* SignInLimit;
+    }),
+  );
+
+  /** A limiter that always answers `success`, for tests. */
+  static readonly layerTest = (success: boolean) =>
+    Layer.succeed(SignInLimiter, {
+      raw: Effect.die("SignInLimiter has no raw binding off the Worker"),
+      limit: () => Effect.succeed({ success }),
+    });
+
+  /**
+   * A limiter that admits everyone. Under `alchemy dev` no client IP arrives, so every request
+   * would share one key and a few sign-ins would lock everyone out.
+   */
+  static readonly layerOpen = SignInLimiter.layerTest(true);
+}
+
+/**
+ * The arguments of each method, decoded again on arrival: the binding carries plain data, and a
+ * server function that already validated it is the only caller, so a value that does not decode
+ * is a defect.
+ */
+const decodeRequest = Schema.decodeUnknownEffect(RequestInfo);
+const decodeShout = Schema.decodeUnknownEffect(Schema.Struct({ input: ShoutText }));
+const decodeMagicLinkInput = Schema.decodeUnknownEffect(
+  Schema.Struct({ email: Email, returnTo: Schema.optional(ReturnPath) }),
+);
+const decodeSnapshotInput = Schema.decodeUnknownEffect(
+  Schema.Struct({ key: ShopKey, sessionToken: Schema.optional(Schema.String) }),
+);
+const encodeMagicLinkRequested = Schema.encodeSync(MagicLinkRequested);
+
+const make = Effect.gen(function* () {
+  const authService = yield* Auth;
+  const { auth, maySignIn } = authService;
+  const delivery = yield* MagicLinkDelivery;
+  const members = yield* Members;
+  const limiter = yield* SignInLimiter;
+  const shopAccess = yield* ShopAccess;
+  const actors = yield* ShopActors;
+
+  /** The signed-in user and session from the request's cookie; see {@link sessionFromCookie}. */
+  const session = (request: RequestInfo) =>
+    decodeRequest(request).pipe(
+      Effect.orDie,
+      Effect.flatMap(({ cookie }) => sessionFromCookie(cookie)),
+      Effect.provideService(Auth, authService),
+    );
+
+  const hello = Effect.fn("BackendApi.hello")(function* (_request: RequestInfo) {
+    yield* Effect.log("Backend.Hello"); // used to count calls in the dev log
+    const now = yield* DateTime.now;
+    return { message: "Hello from the backend Worker.", servedAt: DateTime.formatIso(now) };
+  });
+
+  const shout = Effect.fn("BackendApi.shout")(function* (
+    _request: RequestInfo,
+    payload: { readonly input: ShoutText },
+  ) {
+    const { input } = yield* decodeShout(payload).pipe(Effect.orDie);
+    yield* Effect.log("Backend.Shout");
+    return { input, output: input.toUpperCase() };
+  });
+
+  /**
+   * A non-member gets the same reply as a member, minus the link: the caller must not learn who
+   * may sign in. A Better Auth failure stays a defect for the same reason. Better Auth requires
+   * a `Headers` object here but reads none of it on this path: it skips its form CSRF check when
+   * called without a request, and its own rate limit is off.
+   */
+  const requestMagicLink = Effect.fn("BackendApi.requestMagicLink")(function* (
+    request: RequestInfo,
+    payload: { readonly email: Email; readonly returnTo?: ReturnPath | undefined },
+  ) {
+    const { ip } = yield* decodeRequest(request).pipe(Effect.orDie);
+    const { email, returnTo } = yield* decodeMagicLinkInput(payload).pipe(Effect.orDie);
+    const { success } = yield* limiter.limit({ key: ip ?? "unknown" }).pipe(Effect.orDie);
+    if (!success) return yield* new TooManyRequests();
+    if (!(yield* maySignIn(email))) {
+      yield* Effect.logInfo("sign-in requested for a non-member");
+      return encodeMagicLinkRequested({ link: Option.none() });
+    }
+    yield* auth.api
+      .signInMagicLink({
+        body: { email, callbackURL: returnTo ?? "/app", errorCallbackURL: "/sign-in" },
+        headers: new Headers(),
+      })
+      .pipe(Effect.orDie);
+    return encodeMagicLinkRequested({ link: yield* delivery.take(email) });
+  });
+
+  const me = Effect.fn("BackendApi.me")(function* (request: RequestInfo) {
+    return (yield* session(request)).me;
+  });
+
+  const listMembers = Effect.fn("BackendApi.listMembers")(function* (request: RequestInfo) {
+    const { me } = yield* session(request);
+    return yield* Match.value(me.role).pipe(
+      Match.when("admin", () => members.list()),
+      Match.orElse(() => Effect.fail(new Forbidden())),
+    );
+  });
+
+  /**
+   * The gate, then the actor's snapshot: the shop page's first data and who the socket will
+   * say this browser is. The gate's refusal maps to the failure the page renders; an
+   * unavailable gate is a defect.
+   */
+  const shopSnapshot = Effect.fn("BackendApi.shopSnapshot")(
+    function* (
+      request: RequestInfo,
+      payload: { readonly key: ShopKey; readonly sessionToken?: string | undefined },
+    ) {
+      const { cookie } = yield* decodeRequest(request).pipe(Effect.orDie);
+      const { key, sessionToken } = yield* decodeSnapshotInput(payload).pipe(Effect.orDie);
+      yield* Effect.log(`Backend.shopSnapshot: shop=${key}`); // used to count calls in the dev log
+      const caller = yield* shopAccess.resolve({ key, cookie, sessionToken });
+      const snapshot = yield* actors.snapshot(key);
+      return { caller, snapshot };
+    },
+    Effect.catchTag("ShopAccessDenied", ({ status }) =>
+      Match.value(status).pipe(
+        Match.when(401, () => Effect.fail(new Unauthorized())),
+        Match.when(403, () => Effect.fail(new Forbidden())),
+        Match.when(404, () => Effect.fail(new NotAShopMember())),
+        Match.when(503, () => Effect.die(new Error("the actor gate is unavailable"))),
+        Match.exhaustive,
+      ),
+    ),
+  );
+
+  return { hello, shout, requestMagicLink, me, listMembers, shopSnapshot };
+});
+
+/**
+ * The Backend's methods for the Website, returned by the Worker beside `fetch` and called
+ * schemaless over the service binding. Each takes the {@link RequestInfo} its server function
+ * forwards first, and each that needs the visitor checks the session itself; nothing the
+ * Website worked out about the visitor is trusted.
+ *
+ * The binding carries plain data only, so a method answers with JSON-plain values and the
+ * server function uses them as typed; a schema whose type is not JSON-plain (an `Option`, a
+ * `DateTime`) is encoded here and decoded in its server function, as `requestMagicLink` does
+ * with {@link MagicLinkRequested}. A typed failure crosses as a plain `{ _tag, ...fields }`
+ * object, which the server function decodes back into its class.
+ */
+export class BackendApi extends Context.Service<BackendApi, Effect.Success<typeof make>>()(
+  "app/BackendApi",
+) {
+  static readonly layer = Layer.effect(BackendApi, make);
+}

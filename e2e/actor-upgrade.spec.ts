@@ -1,6 +1,9 @@
+import * as Schema from "effect/Schema";
 import http from "node:http";
-import { SANDBOX_SHOP } from "../src/api/shop.ts";
-import { expect, test } from "./fixtures.ts";
+import { SANDBOX_SHOP, ShopKey } from "../src/api/shop.ts";
+import { CONNECTION_CLOSE_NOT_A_MEMBER } from "../src/api/shop-actor.ts";
+import { awaitHydration, expect, ownMember, test } from "./fixtures.ts";
+import { shop } from "./screens.ts";
 
 test.use({ storageState: "playwright/.auth/member.json" });
 
@@ -46,4 +49,33 @@ test("an upgrade from another site is refused, and the same one from this site o
     false,
   );
   expect(await upgradeOpens(url.toString(), { cookie, origin: url.origin })).toBe(true);
+});
+
+test("a visitor who is not a member sees the not-a-member page, and the gate closes its socket with 4404", async ({
+  backend,
+  browser,
+}) => {
+  // An own member is a member of the sandbox shop only.
+  const { context, page } = await ownMember(
+    browser,
+    backend,
+    `not-a-member-${test.info().workerIndex}`,
+  );
+  const otherShop = Schema.decodeUnknownSync(ShopKey)("other-shop.myshopify.com");
+  await page.goto(`/app/shop/${otherShop}`);
+  await awaitHydration(page);
+  await expect(shop(page).notAMember).toBeVisible();
+  await expect(shop(page).count).toHaveCount(0);
+
+  const code = await page.evaluate(
+    (path) =>
+      new Promise<number>((resolve) => {
+        const url = new URL(path, window.location.origin);
+        url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+        new WebSocket(url).addEventListener("close", (event) => resolve(event.code));
+      }),
+    `/api/actor/${otherShop}`,
+  );
+  expect(code).toBe(CONNECTION_CLOSE_NOT_A_MEMBER);
+  await context.close();
 });

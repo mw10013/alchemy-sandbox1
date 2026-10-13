@@ -79,8 +79,8 @@ const make = Effect.gen(function* () {
  * the request.
  *
  * Baton's rule: a membership edit is followed by a revoke on that shop's actor, so a socket
- * bound to the old membership does not outlive it. `Members` holds no stub; whoever edits
- * calls `SystemRevoke` after the write.
+ * opened under the old membership does not outlive it. `Members` holds no stub; whoever edits
+ * calls `ShopActors.revoke` after the write.
  */
 export class Members extends Context.Service<Members, Effect.Success<typeof make>>()(
   "app/Members",

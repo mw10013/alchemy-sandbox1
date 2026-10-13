@@ -3,16 +3,16 @@ import { useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { describe, expect, it } from "vite-plus/test";
-import { testRegistry } from "../../test/browser/backend.ts";
 import { renderHookInApp, renderInApp } from "../../test/browser/render.tsx";
-import { helloAtom } from "../backend-client.ts";
+import { shopTestRegistry } from "../../test/browser/shop-actor.ts";
+import { countQuery } from "../shop-actor-client.ts";
 
 describe("browser tests", () => {
   it("render a themed Astryx component and click it", async () => {
     let clicks = 0;
     const screen = await renderInApp(
       <Button label="Go" variant="primary" onClick={() => clicks++} />,
-      testRegistry({}),
+      shopTestRegistry({}),
     );
     const button = screen.getByRole("button", { name: "Go" });
 
@@ -24,12 +24,10 @@ describe("browser tests", () => {
   });
 
   it("read an atom through a hook, backed by test handlers", async () => {
-    const registry = testRegistry({
-      Hello: () => Effect.succeed({ message: "Hello", servedAt: "now" }),
-    });
-    const { result } = await renderHookInApp(() => useAtomValue(helloAtom), registry);
+    const registry = shopTestRegistry({ MemberGetCount: () => Effect.succeed({ value: 7 }) });
+    const { result } = await renderHookInApp(() => useAtomValue(countQuery), registry);
 
     await expect.poll(() => AsyncResult.isSuccess(result.current)).toBe(true);
-    expect(AsyncResult.getOrThrow(result.current).message).toBe("Hello");
+    expect(AsyncResult.getOrThrow(result.current).value).toBe(7);
   });
 });

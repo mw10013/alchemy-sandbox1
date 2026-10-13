@@ -1,17 +1,26 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
-import { describe, expect, it } from "vite-plus/test";
-import { shopTestRegistry } from "../../test/browser/shop-actor.ts";
-import { renderInApp } from "../../test/browser/render.tsx";
-import { EmailFromInput } from "../api/backend.ts";
-import { COUNT_KEY } from "../api/shop-actor.ts";
 import * as Schema from "effect/Schema";
-import { notices } from "../shop-actor-client.ts";
-import { connectionStateAtom, notAMemberAtom, reconnectAtom } from "../ticket-client.ts";
+import * as Socket from "effect/socket/Socket";
+import { renderToString } from "react-dom/server";
+import { describe, expect, it } from "vite-plus/test";
+import { renderInApp } from "../../test/browser/render.tsx";
+import { shopTestRegistry } from "../../test/browser/shop-actor.ts";
+import { applyCloseOutcome, closeOutcome, reconnectAtom } from "../actor-connection.ts";
+import { EmailFromInput } from "../api/backend.ts";
+import { SANDBOX_SHOP } from "../api/shop.ts";
+import {
+  CONNECTION_CLOSE_DISPLACED,
+  CONNECTION_CLOSE_NOT_A_MEMBER,
+  COUNT_KEY,
+  type ConnectionCaller,
+} from "../api/shop-actor.ts";
+import type { ShopPageData } from "../server/shop.ts";
+import { noticeBus } from "../shop-actor-client.ts";
 import ShopPage from "./ShopPage.tsx";
 
-const activation = () => Effect.succeed({ id: "activation-1" });
-const member = {
+const member: ConnectionCaller = {
   role: "member",
   memberId: "mem-1",
   memberEmail: Schema.decodeUnknownSync(EmailFromInput)("m1@m.com"),
@@ -19,40 +28,74 @@ const member = {
   userId: "user-1",
   sessionId: "session-1",
   sessionExpiresAt: 0,
-} as const;
-const memberWhoAmI = () => Effect.succeed(member);
+};
+const merchant: ConnectionCaller = { role: "merchant" };
+
+const snapshotOf = (caller: ConnectionCaller, value: number): ShopPageData => ({
+  _tag: "Snapshot",
+  caller,
+  snapshot: { count: { value }, activation: { id: "activation-1" } },
+});
+
+const memberPage = (data: ShopPageData) => (
+  <ShopPage role="member" shop={SANDBOX_SHOP} merchantToken={Option.none()} data={data} />
+);
+
+/** A notice from the actor, as the socket would deliver it to this registry's page. */
+const notice = (registry: ReturnType<typeof shopTestRegistry>) =>
+  PubSub.publish(registry.get(noticeBus), {
+    _tag: "ShopActorNotice",
+    invalidated: [COUNT_KEY],
+  }).pipe(Effect.runPromise);
+
+/** The socket closing with `code`, as the browser protocol's retry policy reports it. */
+const closeWith = (registry: ReturnType<typeof shopTestRegistry>, code: number) =>
+  Effect.runPromise(
+    applyCloseOutcome(
+      registry,
+      closeOutcome(
+        new Socket.SocketError({ reason: new Socket.SocketCloseError({ code }) }),
+        false,
+      ),
+    ),
+  );
 
 describe("ShopPage", () => {
-  it("shows the count, who is signed in and the activation", async () => {
+  it("renders the snapshot before hydration, with no socket", () => {
+    // React's server markup separates adjacent text parts with `<!-- -->`.
+    const text = renderToString(memberPage(snapshotOf(member, 7))).replaceAll("<!-- -->", "");
+    expect(text).toContain("Signed in as m1@m.com (member)");
+    expect(text).toContain(">7<");
+    expect(text).toContain("Activation activation-1");
+    expect(text).not.toContain("Loading…");
+  });
+
+  it("shows the snapshot at once and asks the actor for nothing", async () => {
+    let reads = 0;
     const registry = shopTestRegistry({
-      MemberGetCount: () => Effect.succeed({ value: 7 }),
-      MemberActivation: activation,
-      MemberWhoAmI: memberWhoAmI,
+      MemberGetCount: () => Effect.sync(() => ({ value: 100 + ++reads })),
     });
-    const screen = await renderInApp(<ShopPage role="member" />, registry);
+    const screen = await renderInApp(memberPage(snapshotOf(member, 7)), registry);
 
     await expect.element(screen.getByRole("status", { name: "Count" })).toHaveTextContent("7");
     await expect.element(screen.getByText("Signed in as m1@m.com (member)")).toBeVisible();
     await expect.element(screen.getByText("Activation activation-1")).toBeVisible();
+    expect(reads).toBe(0);
   });
 
-  it("increments through the actor and shows the new value", async () => {
+  it("increments through the actor and shows the value a notice refetches", async () => {
     let value = 0;
     const registry = shopTestRegistry({
       MemberGetCount: () => Effect.sync(() => ({ value })),
       MemberIncrement: () => Effect.sync(() => ({ value: ++value })),
-      MemberActivation: activation,
-      MemberWhoAmI: memberWhoAmI,
     });
-    const screen = await renderInApp(<ShopPage role="member" />, registry);
+    const screen = await renderInApp(memberPage(snapshotOf(member, 0)), registry);
     await expect.element(screen.getByRole("status", { name: "Count" })).toHaveTextContent("0");
     await expect.element(screen.getByRole("button", { name: "Reset" })).not.toBeInTheDocument();
 
     await screen.getByRole("button", { name: "Increment" }).click();
     // The page refetches on the actor's notice, not on the mutation's result.
-    await PubSub.publish(notices, { _tag: "ShopActorNotice", invalidated: [COUNT_KEY] }).pipe(
-      Effect.runPromise,
-    );
+    await notice(registry);
 
     await expect.element(screen.getByRole("status", { name: "Count" })).toHaveTextContent("1");
     expect(value).toBe(1);
@@ -63,59 +106,40 @@ describe("ShopPage", () => {
     const registry = shopTestRegistry({
       MerchantGetCount: () => Effect.sync(() => ({ value })),
       MerchantResetCount: () => Effect.sync(() => ({ value: (value = 0) })),
-      MerchantWhoAmI: () => Effect.succeed({ role: "merchant" } as const),
     });
-    const screen = await renderInApp(<ShopPage role="merchant" />, registry);
+    const screen = await renderInApp(
+      <ShopPage
+        role="merchant"
+        shop={SANDBOX_SHOP}
+        merchantToken={Option.some("token")}
+        data={snapshotOf(merchant, 5)}
+      />,
+      registry,
+    );
     await expect.element(screen.getByRole("status", { name: "Count" })).toHaveTextContent("5");
-    await expect.element(screen.getByText(/^Merchant of /)).toBeVisible();
+    await expect.element(screen.getByText(`Merchant of ${SANDBOX_SHOP}`)).toBeVisible();
     await expect.element(screen.getByRole("button", { name: "Increment" })).not.toBeInTheDocument();
 
     await screen.getByRole("button", { name: "Reset" }).click();
-    await PubSub.publish(notices, { _tag: "ShopActorNotice", invalidated: [COUNT_KEY] }).pipe(
-      Effect.runPromise,
-    );
+    await notice(registry);
 
     await expect.element(screen.getByRole("status", { name: "Count" })).toHaveTextContent("0");
   });
 
-  it("refetches the count when a notice names it", async () => {
-    const answers = [3, 4];
-    const registry = shopTestRegistry({
-      MemberGetCount: () => Effect.sync(() => ({ value: answers.shift() ?? -1 })),
-      MemberActivation: activation,
-      MemberWhoAmI: memberWhoAmI,
-    });
-    const screen = await renderInApp(<ShopPage role="member" />, registry);
-    await expect.element(screen.getByRole("status", { name: "Count" })).toHaveTextContent("3");
-
-    await PubSub.publish(notices, { _tag: "ShopActorNotice", invalidated: [COUNT_KEY] }).pipe(
-      Effect.runPromise,
-    );
-
-    await expect.element(screen.getByRole("status", { name: "Count" })).toHaveTextContent("4");
-  });
-
   it("says when the shop cannot be reached", async () => {
-    const registry = shopTestRegistry({
-      MemberGetCount: () => Effect.die("unreachable"),
-      MemberActivation: activation,
-      MemberWhoAmI: memberWhoAmI,
-    });
-    const screen = await renderInApp(<ShopPage role="member" />, registry);
+    const registry = shopTestRegistry({ MemberGetCount: () => Effect.die("unreachable") });
+    const screen = await renderInApp(memberPage(snapshotOf(member, 1)), registry);
+    await notice(registry);
 
     await expect
       .element(screen.getByRole("alert"))
       .toHaveTextContent("Couldn't reach the shop. Try again.");
   });
 
-  it("a displaced socket shows Signed in elsewhere, and Reconnect asks again", async () => {
-    const registry = shopTestRegistry({
-      MemberGetCount: () => Effect.succeed({ value: 1 }),
-      MemberActivation: activation,
-      MemberWhoAmI: memberWhoAmI,
-    });
-    registry.set(connectionStateAtom, "displaced");
-    const screen = await renderInApp(<ShopPage role="member" />, registry);
+  it("a displaced socket (4409) shows Signed in elsewhere, and Reconnect asks again", async () => {
+    const registry = shopTestRegistry({});
+    const screen = await renderInApp(memberPage(snapshotOf(member, 1)), registry);
+    await closeWith(registry, CONNECTION_CLOSE_DISPLACED);
     await expect.element(screen.getByText("Signed in elsewhere")).toBeVisible();
 
     const before = registry.get(reconnectAtom);
@@ -123,10 +147,20 @@ describe("ShopPage", () => {
     expect(registry.get(reconnectAtom)).toBe(before + 1);
   });
 
-  it("a member of another shop is told so instead of the count", async () => {
+  it("a member removed while the page is open (4404) is told so instead of the count", async () => {
     const registry = shopTestRegistry({});
-    registry.set(notAMemberAtom, true);
-    const screen = await renderInApp(<ShopPage role="member" />, registry);
+    const screen = await renderInApp(memberPage(snapshotOf(member, 1)), registry);
+    await closeWith(registry, CONNECTION_CLOSE_NOT_A_MEMBER);
+
+    await expect
+      .element(screen.getByRole("alert"))
+      .toHaveTextContent("You're not a member of this shop.");
+    await expect.element(screen.getByRole("status", { name: "Count" })).not.toBeInTheDocument();
+  });
+
+  it("a member of another shop is told so by the loader, and no socket is opened", async () => {
+    const registry = shopTestRegistry({});
+    const screen = await renderInApp(memberPage({ _tag: "NotAMember" }), registry);
 
     await expect
       .element(screen.getByRole("alert"))

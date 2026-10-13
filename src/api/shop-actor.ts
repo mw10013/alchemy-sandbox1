@@ -1,8 +1,7 @@
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import { Rpc, RpcGroup, RpcMiddleware } from "effect/rpc";
-import { Email, Forbidden, Unauthorized } from "./backend.ts";
-import { ShopKey } from "./shop.ts";
+import { Email, Forbidden } from "./backend.ts";
 
 export const Count = Schema.Struct({ value: Schema.Int });
 export type Count = typeof Count.Type;
@@ -34,7 +33,7 @@ export const COUNT_KEY = "count";
  * A member on a socket: Baton's `ConnectionState` for the `member` role (`memberId`,
  * `memberEmail`, `teamIds`), plus the Better Auth session it was resolved from. `sessionId`
  * scopes a revoke to one session; `sessionExpiresAt` (epoch ms, the session's `expiresAt`) is
- * the backstop for a missed revoke, checked on every call. `teamIds` is carried as Baton
+ * the backstop for a missed revoke, checked on every message. `teamIds` is carried as Baton
  * carries it; nothing reads it yet.
  */
 export const MemberCaller = Schema.Struct({
@@ -55,60 +54,30 @@ export type MemberCaller = typeof MemberCaller.Type;
 export const MerchantCaller = Schema.Struct({ role: Schema.Literal("merchant") });
 export type MerchantCaller = typeof MerchantCaller.Type;
 
-/** The Backend's own calls through the stub (Baton's `rpc` role). Never on a socket. */
-export const SystemCaller = Schema.Struct({ role: Schema.Literal("system") });
-export type SystemCaller = typeof SystemCaller.Type;
-
-/** What a socket can carry: a member or a merchant, never the system. */
+/** What a socket can carry: a member or a merchant. */
 export const ConnectionCaller = Schema.Union([MemberCaller, MerchantCaller]);
 export type ConnectionCaller = typeof ConnectionCaller.Type;
 
-/** Who is making a call: Baton's `CallerRole`, with `system` for `rpc`. */
-export const Caller = Schema.Union([MemberCaller, MerchantCaller, SystemCaller]);
-export type Caller = typeof Caller.Type;
-
-/** The caller of the current procedure, provided by {@link CallerMiddleware}. */
-export class CurrentCaller extends Context.Service<CurrentCaller, Caller>()("CurrentCaller") {}
+/** The caller of the current procedure, provided by {@link ConnectionMiddleware}. */
+export class CurrentCaller extends Context.Service<CurrentCaller, ConnectionCaller>()(
+  "CurrentCaller",
+) {}
 
 /**
- * What a `Ticket` says: who may bind a socket on which shop, until when (epoch ms). A
- * ticket is minted immediately before a connect and spent on that connect's first call, so
- * its life ({@link TICKET_TTL_MILLIS}) only has to cover that gap; it is not a session.
+ * The header naming a socket's {@link ConnectionCaller}, as JSON. Only the Backend's gate sets
+ * it, on the upgrade it forwards to the actor, and it rebuilds that request from nothing, so a
+ * browser cannot set it. The actor decodes it once, when it accepts the socket.
  */
-export const TicketClaims = Schema.Struct({
-  shop: ShopKey,
-  caller: ConnectionCaller,
-  expiresAt: Schema.Number,
-});
-export type TicketClaims = typeof TicketClaims.Type;
-
-/** The RPC header a socket's first call carries its `Ticket` in. */
-export const TICKET_HEADER = "x-actor-ticket";
+export const CONNECTION_HEADER = "x-actor-connection";
 
 /**
- * The header that names the {@link Caller} on the HTTP path into the actor: set by the Backend
- * on its stub calls and on the requests it forwards. Never read on the socket path.
+ * Provides {@link CurrentCaller}: the socket's caller, written into the socket when it was
+ * accepted, from {@link CONNECTION_HEADER}. Nothing a message carries is read.
  */
-export const CALLER_HEADER = "x-actor-caller";
-
-export const TICKET_TTL_MILLIS = 60_000;
-
-/**
- * Who is on a socket, as the actor writes it into the socket's attachment when it binds:
- * the caller from the ticket and when it was bound (Baton's `connectedAt`).
- */
-export const SocketIdentity = Schema.Struct({ caller: ConnectionCaller, boundAt: Schema.Number });
-export type SocketIdentity = typeof SocketIdentity.Type;
-
-/**
- * Provides {@link CurrentCaller}. On the HTTP path it reads {@link CALLER_HEADER}; on the
- * socket path it reads the identity bound to the socket, binding it from the first call's
- * {@link TICKET_HEADER} if there is none yet. No identity is {@link Unauthorized}.
- */
-export class CallerMiddleware extends RpcMiddleware.Service<
-  CallerMiddleware,
+export class ConnectionMiddleware extends RpcMiddleware.Service<
+  ConnectionMiddleware,
   { provides: CurrentCaller }
->()("CallerMiddleware", { error: Unauthorized }) {}
+>()("ConnectionMiddleware") {}
 
 /** Admits a `merchant` caller only. */
 export class RequireMerchant extends RpcMiddleware.Service<
@@ -122,20 +91,27 @@ export class RequireMember extends RpcMiddleware.Service<
   { requires: CurrentCaller }
 >()("RequireMember", { error: Forbidden }) {}
 
-/** Admits the Backend's own `system` caller only. */
-export class RequireSystem extends RpcMiddleware.Service<
-  RequireSystem,
-  { requires: CurrentCaller }
->()("RequireSystem", { error: Forbidden }) {}
-
 /** Close code for a socket whose identity was revoked (Baton's): the browser asks again. */
 export const CONNECTION_CLOSE_REVOKED = 3401;
 
 /**
- * Close code for a socket the actor will not serve (Baton's); terminal to the browser. Nothing
- * sends it yet: a bad ticket fails the call that carried it and leaves the socket open.
+ * Close code for a socket that may not open this shop (Baton's): sent by the gate for a 403 (an
+ * operator, or a Shopify token for another shop), and by the actor for a socket whose
+ * {@link CONNECTION_HEADER} does not decode. Terminal to the browser.
  */
 export const CONNECTION_CLOSE_FORBIDDEN = 4403;
+
+/** Close code the gate sends for a 401 (Baton's): no session, or a Shopify token it rejects. */
+export const CONNECTION_CLOSE_UNAUTHENTICATED = 4401;
+
+/** Close code the gate sends for a 404 (Baton's): no `Member` row for this shop. */
+export const CONNECTION_CLOSE_NOT_A_MEMBER = 4404;
+
+/**
+ * Close code the gate sends for a 503, when it could not answer (WebSocket's "try again
+ * later"). The browser retries.
+ */
+export const CONNECTION_CLOSE_TRY_AGAIN = 1013;
 
 /**
  * Close code for a member's oldest socket when a newer one takes the last of
@@ -147,42 +123,32 @@ export const CONNECTION_CLOSE_DISPLACED = 4409;
 /** At most this many sockets per member (Baton's `maxConnectionsPerMember`); merchants are not capped. */
 export const MAX_CONNECTIONS_PER_MEMBER = 2;
 
+/** What `ShopActor.snapshot` returns for the Backend: the page's first data, read at once. */
+export const ShopSnapshot = Schema.Struct({ count: Count, activation: Activation });
+export type ShopSnapshot = typeof ShopSnapshot.Type;
+
 /**
- * A member's procedures. Each `Require…` admits exactly its role, so a read both roles may make
- * is declared once per role, as Baton does, never with a role switch inside a handler. The
- * first middleware added runs innermost: the role check reads the caller
- * {@link CallerMiddleware} provides.
+ * A member's procedures, served on the socket only. Each `Require…` admits exactly its role, so
+ * a read both roles may make is declared once per role, as Baton does, never with a role switch
+ * inside a handler. The first middleware added runs innermost: the role check reads the caller
+ * {@link ConnectionMiddleware} provides.
  */
 export const MemberRpcs = RpcGroup.make(
   Rpc.make("MemberGetCount", { success: Count }),
   Rpc.make("MemberIncrement", { success: Count }),
   Rpc.make("MemberActivation", { success: Activation }),
-  Rpc.make("MemberWhoAmI", { success: Caller }),
+  Rpc.make("MemberWhoAmI", { success: ConnectionCaller }),
 )
   .middleware(RequireMember)
-  .middleware(CallerMiddleware);
+  .middleware(ConnectionMiddleware);
 
 /** A merchant's procedures; see {@link MemberRpcs} for the role rule. */
 export const MerchantRpcs = RpcGroup.make(
   Rpc.make("MerchantGetCount", { success: Count }),
   Rpc.make("MerchantResetCount", { success: Count }),
-  Rpc.make("MerchantWhoAmI", { success: Caller }),
+  Rpc.make("MerchantWhoAmI", { success: ConnectionCaller }),
 )
   .middleware(RequireMerchant)
-  .middleware(CallerMiddleware);
+  .middleware(ConnectionMiddleware);
 
-/**
- * The Backend's procedures, through the stub. `SystemRevoke` closes sockets with
- * {@link CONNECTION_CLOSE_REVOKED}: `by: "member"` every socket of one member (Baton's
- * `revokeMemberConnections`), `by: "session"` every socket of one Better Auth session.
- */
-export const SystemRpcs = RpcGroup.make(
-  Rpc.make("SystemRevoke", {
-    payload: { by: Schema.Literals(["member", "session"]), id: Schema.String },
-    success: Schema.Struct({ closed: Schema.Int }),
-  }),
-)
-  .middleware(RequireSystem)
-  .middleware(CallerMiddleware);
-
-export const ShopActorRpcs = MemberRpcs.merge(MerchantRpcs, SystemRpcs);
+export const ShopActorRpcs = MemberRpcs.merge(MerchantRpcs);

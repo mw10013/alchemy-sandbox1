@@ -102,11 +102,11 @@ export const merchant = async (page: Page, backend: Run, shop: ShopKey) => {
 
 /**
  * Resolves once the next actor socket the page opens has answered a call successfully. The
- * browser binds every new socket on connect and the actor answers only after binding, so that
- * answer means the socket is bound (revocable, displaceable, counted). Start it before the
- * navigation or click that opens the socket, and await it after.
+ * page refetches the count on every connect, and the actor names a socket when it accepts it,
+ * so that answer means the actor holds the socket (revocable, displaceable, counted). Start it
+ * before the navigation or click that opens the socket, and await it after.
  */
-export const nextBoundSocket = (page: Page) =>
+export const nextOpenSocket = (page: Page) =>
   new Promise<void>((resolve) => {
     const onSocket = (socket: WebSocket) => {
       if (!new URL(socket.url()).pathname.startsWith("/api/actor/")) return;

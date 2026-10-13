@@ -26,9 +26,9 @@ export const text = (status: number, body: string, headers?: Record<string, stri
   new Response(body, { status, headers: { "content-type": "text/plain", ...headers } });
 
 /**
- * Rejects bad requests before a Website route forwards them to the Backend. `content-length`
- * can lie and the Backend still reads the body, so this stops honest oversize requests and
- * garbage; it is not a hard memory limit.
+ * Rejects bad requests before the test-control route forwards them to the Backend, the only
+ * Effect RPC left on the Website. `content-length` can lie and the Backend still reads the
+ * body, so this stops honest oversize requests and garbage; it is not a hard memory limit.
  */
 export const rejectRequest = (request: Request): Response | undefined => {
   const headers = Object.fromEntries(request.headers);

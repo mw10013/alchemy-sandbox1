@@ -1,20 +1,19 @@
 import { RuntimeContext } from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as SQL from "alchemy/SQL/D1";
-import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import { ConnectionCaller } from "../api/shop-actor.ts";
 import { TestControlAuth, TestControlRpcs, TestControlUnauthorized } from "../api/test-control.ts";
-import { TICKET_TTL_MILLIS } from "../api/shop-actor.ts";
-import { SystemActors } from "./actor-client.ts";
+import { ShopActors } from "./actor-client.ts";
 import { Auth } from "./auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { Members } from "./members.ts";
 import { AuthDb } from "./resources.ts";
 import { Shopify } from "./shopify.ts";
-import { Tickets } from "./ticket.ts";
 
 /** The stage's `E2E_TOKEN`, read once by the Worker, which serves test control only when it has one. */
 export class TestControlToken extends Context.Service<TestControlToken, string>()(
@@ -77,9 +76,8 @@ export const TestControlHandlers = TestControlRpcs.toLayer(
     const delivery = yield* MagicLinkDelivery;
     const members = yield* Members;
     const testData = yield* TestData;
-    const actors = yield* SystemActors;
+    const actors = yield* ShopActors;
     const shopify = yield* Shopify;
-    const tickets = yield* Tickets;
 
     return TestControlRpcs.of({
       ResetData: () => testData.reset(),
@@ -88,23 +86,15 @@ export const TestControlHandlers = TestControlRpcs.toLayer(
         Effect.gen(function* () {
           const removed = yield* members.remove(shop, email);
           if (Option.isNone(removed)) return { removed: false, closed: 0 };
-          // Baton's rule on `Members`: the edit is followed by a revoke on the shop's actor.
-          // Unlike the Better Auth hooks, a failed revoke is a defect here, so a test sees it.
-          const { closed } = yield* actors
-            .call(shop, (client) => client.SystemRevoke({ by: "member", id: removed.value }))
-            .pipe(Effect.orDie);
+          // Baton's rule on `Members`: the edit is followed by a revoke on the shop's actor. A
+          // failed revoke is logged and answers `closed: 0`, which a test sees.
+          const { closed } = yield* actors.revoke(shop, "member", removed.value);
           return { removed: true, closed };
         }),
       IssueMerchantSessionToken: ({ shop, expiresInSeconds }) =>
         shopify
           .signSessionToken({ shop, expiresIn: expiresInSeconds })
           .pipe(Effect.map((token) => ({ token }))),
-      IssueActorTicketAs: ({ shop, caller }) =>
-        Effect.gen(function* () {
-          const now = yield* Clock.currentTimeMillis;
-          const ticket = yield* tickets.mint({ shop, caller, expiresAt: now + TICKET_TTL_MILLIS });
-          return { ticket };
-        }),
       IssueMagicLink: ({ email, returnTo }, { headers }) =>
         Effect.gen(function* () {
           if (!(yield* maySignIn(email)))
@@ -123,3 +113,19 @@ export const TestControlHandlers = TestControlRpcs.toLayer(
     });
   }),
 );
+
+const decodeTestCaller = Schema.decodeUnknownOption(Schema.fromJsonString(ConnectionCaller));
+
+/**
+ * The caller a test names for the test-only upgrade route, `/api/test-control/actor/<key>`: the
+ * JSON {@link ConnectionCaller} in `x-test-caller`, admitted only with the stage's `E2E_TOKEN`
+ * in `x-e2e-token`. The route forwards the upgrade to the actor as that caller, skipping the
+ * gate, so a test can open a socket as an identity no sign-in produces, such as an expired
+ * session. None for a wrong token or a caller that does not decode; the route is then 404, as
+ * it is on a stage without the token. The Website has no route to it.
+ */
+export const testControlCaller = (
+  token: string,
+  headers: { readonly [name: string]: string | undefined },
+): Option.Option<ConnectionCaller> =>
+  headers["x-e2e-token"] === token ? decodeTestCaller(headers["x-test-caller"]) : Option.none();

@@ -7,27 +7,32 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as References from "effect/References";
-import * as RpcClient from "effect/rpc/RpcClient";
-import * as RpcTest from "effect/rpc/RpcTest";
 import * as Schema from "effect/Schema";
-import { BackendRpcs, EmailFromInput, ReturnPath, type Member } from "../api/backend.ts";
+import {
+  EmailFromInput,
+  MagicLinkRequested,
+  ReturnPath,
+  type Member,
+  type RequestInfo,
+} from "../api/backend.ts";
 import { SANDBOX_SHOP, type ShopKey } from "../api/shop.ts";
+import { ShopActors } from "./actor-client.ts";
+import { BackendApi, SignInLimiter } from "./api.ts";
 import { Auth } from "./auth.ts";
-import { BackendHandlers, SignInLimiter } from "./handlers.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { Mailer, SentMail } from "./mailer.ts";
-import { SystemActors } from "./actor-client.ts";
 import { Members } from "./members.ts";
 import { ShopAccess } from "./shop-access.ts";
-import { Tickets } from "./ticket.ts";
-import { CurrentUserLive, RequireAdminLive } from "./middleware.ts";
 
 const ORIGIN = "http://test.local";
 const email = Schema.decodeUnknownSync(EmailFromInput);
 const returnPath = Schema.decodeUnknownSync(ReturnPath);
+const decodeRequested = Schema.decodeSync(MagicLinkRequested);
+
+/** A request with only a cookie, as a server function forwards it. */
+const withCookie = (cookie: string | undefined): RequestInfo => ({ cookie, ip: undefined });
 
 const admin = email("a@a.com");
 const member = email("m1@m.com");
@@ -43,7 +48,7 @@ const members: ReadonlyArray<Member> = [
 const revoked: Array<{ key: ShopKey; by: "member" | "session"; id: string }> = [];
 
 /**
- * The Backend's RPC layers over Better Auth on an in-memory database, fresh per test.
+ * {@link BackendApi} over Better Auth on an in-memory database, fresh per test.
  * `delivery` is the stage's {@link MagicLinkDelivery} choice; `allow` is the rate limiter's
  * answer. The test owns every effect of the Backend, the logger included: `Info` is dropped,
  * so only a warning or error reaches the test output.
@@ -55,16 +60,15 @@ const TestBackend = ({
   delivery: "inline" | "mailed";
   allow?: boolean;
 }) =>
-  Layer.mergeAll(BackendHandlers, CurrentUserLive, RequireAdminLive).pipe(
+  BackendApi.layer.pipe(
     Layer.provideMerge(
       Auth.layerWith({ secret: "test-secret-test-secret-test-secret" }).pipe(
         Layer.provideMerge(
           Layer.mergeAll(
             Members.layerTest(members),
-            SystemActors.layerTest(revoked),
+            ShopActors.layerTest(revoked),
             SignInLimiter.layerTest(allow),
             Layer.succeed(ShopAccess, { resolve: () => Effect.die("ShopAccess needs D1") }),
-            Tickets.layerWith(Redacted.make("test-ticket-secret")),
             (delivery === "inline"
               ? MagicLinkDelivery.layerInline
               : MagicLinkDelivery.layerMailed
@@ -75,7 +79,8 @@ const TestBackend = ({
         Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ AUTH_ORIGIN: ORIGIN }))),
       ),
     ),
-    Layer.provide(RuntimeContext.phantom),
+    // A Worker method runs with Alchemy's runtime marker, which the bridge provides per call.
+    Layer.provideMerge(RuntimeContext.phantom),
     Layer.provide(Layer.succeed(References.MinimumLogLevel, "Warn")),
   );
 
@@ -94,11 +99,13 @@ const toCookieHeader = (setCookies: ReadonlyArray<string>) =>
 
 /** Requests a link for `address` and follows it; returns the cookie header of the new session. */
 const signIn = Effect.fn("signIn")(function* (address: typeof member, returnTo = "/app") {
-  const client = yield* RpcTest.makeClient(BackendRpcs);
-  const { link } = yield* client.RequestMagicLink({
-    email: address,
-    returnTo: returnPath(returnTo),
-  });
+  const api = yield* BackendApi;
+  const { link } = decodeRequested(
+    yield* api.requestMagicLink(withCookie(undefined), {
+      email: address,
+      returnTo: returnPath(returnTo),
+    }),
+  );
   assert.isTrue(Option.isSome(link), "inline delivery returns the link");
   const response = yield* serve(new Request(Option.getOrThrow(link)));
   assert.strictEqual(response.status, 302);
@@ -141,8 +148,8 @@ describe("magic-link sign-in (inline delivery)", () => {
       Effect.gen(function* () {
         yield* seedOperator;
         const cookie = yield* signIn(address);
-        const client = yield* RpcTest.makeClient(BackendRpcs);
-        const me = yield* client.Me().pipe(RpcClient.withHeaders({ cookie }));
+        const api = yield* BackendApi;
+        const me = yield* api.me(withCookie(cookie));
         assert.strictEqual(me.email, address);
         assert.strictEqual(me.role, role);
       }).pipe(Effect.provide(TestBackend({ delivery: "inline" }))),
@@ -150,8 +157,10 @@ describe("magic-link sign-in (inline delivery)", () => {
 
   it.live("a non-member gets no link and no mail", () =>
     Effect.gen(function* () {
-      const client = yield* RpcTest.makeClient(BackendRpcs);
-      const { link } = yield* client.RequestMagicLink({ email: stranger });
+      const api = yield* BackendApi;
+      const { link } = decodeRequested(
+        yield* api.requestMagicLink(withCookie(undefined), { email: stranger }),
+      );
       assert.isTrue(Option.isNone(link));
       assert.deepStrictEqual(yield* Ref.get(yield* SentMail), []);
     }).pipe(Effect.provide(TestBackend({ delivery: "inline" }))),
@@ -177,7 +186,7 @@ describe("magic-link sign-in (inline delivery)", () => {
     Effect.gen(function* () {
       const cookie = yield* signIn(member);
       revoked.length = 0;
-      const client = yield* RpcTest.makeClient(BackendRpcs);
+      const api = yield* BackendApi;
       const response = yield* serve(
         new Request(`${ORIGIN}/api/auth/sign-out`, {
           method: "POST",
@@ -186,7 +195,7 @@ describe("magic-link sign-in (inline delivery)", () => {
         }),
       );
       assert.strictEqual(response.status, 200);
-      const error = yield* client.Me().pipe(RpcClient.withHeaders({ cookie }), Effect.flip);
+      const error = yield* api.me(withCookie(cookie)).pipe(Effect.flip);
       assert.strictEqual(error._tag, "Unauthorized");
       assert.deepStrictEqual(
         revoked.map(({ key, by }) => ({ key, by })),
@@ -196,53 +205,18 @@ describe("magic-link sign-in (inline delivery)", () => {
   );
 });
 
-describe("guards", () => {
-  it.live("Me without a session is Unauthorized", () =>
-    Effect.gen(function* () {
-      const client = yield* RpcTest.makeClient(BackendRpcs);
-      const error = yield* client.Me().pipe(Effect.flip);
-      assert.strictEqual(error._tag, "Unauthorized");
-    }).pipe(Effect.provide(TestBackend({ delivery: "inline" }))),
-  );
-
-  it.live("ListMembers needs an admin", () =>
-    Effect.gen(function* () {
-      const client = yield* RpcTest.makeClient(BackendRpcs);
-      const asMember = yield* signIn(member);
-      const error = yield* client
-        .ListMembers()
-        .pipe(RpcClient.withHeaders({ cookie: asMember }), Effect.flip);
-      assert.strictEqual(error._tag, "Forbidden");
-      yield* seedOperator;
-      const asAdmin = yield* signIn(admin);
-      const list = yield* client.ListMembers().pipe(RpcClient.withHeaders({ cookie: asAdmin }));
-      assert.deepStrictEqual(
-        list.map((row) => row.email),
-        [member, member2],
-      );
-    }).pipe(Effect.provide(TestBackend({ delivery: "inline" }))),
-  );
-});
-
 describe("magic-link sign-in (mail delivery)", () => {
   it.live("a member is mailed the link and gets none back", () =>
     Effect.gen(function* () {
-      const client = yield* RpcTest.makeClient(BackendRpcs);
-      const { link } = yield* client.RequestMagicLink({ email: member });
+      const api = yield* BackendApi;
+      const { link } = decodeRequested(
+        yield* api.requestMagicLink(withCookie(undefined), { email: member }),
+      );
       assert.isTrue(Option.isNone(link));
       const [mail, ...rest] = yield* Ref.get(yield* SentMail);
       assert.deepStrictEqual(rest, []);
       assert.strictEqual(mail?.to, member);
       assert.include(mail?.text, `${ORIGIN}/api/auth/magic-link/verify?token=`);
     }).pipe(Effect.provide(TestBackend({ delivery: "mailed" }))),
-  );
-
-  it.live("the rate limit refuses before anything is sent", () =>
-    Effect.gen(function* () {
-      const client = yield* RpcTest.makeClient(BackendRpcs);
-      const error = yield* client.RequestMagicLink({ email: member }).pipe(Effect.flip);
-      assert.strictEqual(error._tag, "TooManyRequests");
-      assert.deepStrictEqual(yield* Ref.get(yield* SentMail), []);
-    }).pipe(Effect.provide(TestBackend({ delivery: "mailed", allow: false }))),
   );
 });

@@ -1,12 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { ShopKey } from "../api/shop.ts";
 import ShopPage from "../components/ShopPage";
-import { loadQuery } from "../query.ts";
-import { loadTicket, merchantCountAtom, merchantWhoAmIAtom } from "../shop-actor-client.ts";
-import { merchantTokenAtom, shopKeyAtom } from "../ticket-client.ts";
+import { getShopSnapshot } from "../server/shop.ts";
 
 const decodeShopKey = Schema.decodeUnknownOption(ShopKey);
 
@@ -16,9 +13,9 @@ const decodeSearch = Schema.decodeUnknownOption(MerchantSearch);
 
 /**
  * A merchant's shop page, without App Bridge: the Shopify session token arrives in the
- * `token` search param (test control mints one) and goes to the Backend on every ticket
- * request, on the socket URL and on server rendering's reads. No Better Auth session is
- * involved, so this route sits outside `/app`.
+ * `token` search param (test control mints one) and goes to the Backend with the loader's
+ * snapshot request and on the socket URL. No Better Auth session is involved, so this route
+ * sits outside `/app`.
  */
 export const Route = createFileRoute("/merchant/$key")({
   params: {
@@ -29,15 +26,18 @@ export const Route = createFileRoute("/merchant/$key")({
   validateSearch: (search): typeof MerchantSearch.Type =>
     Option.getOrElse(decodeSearch(search), () => ({})),
   loaderDeps: ({ search }) => ({ token: search.token }),
-  loader: async ({ context, params, deps }) => {
-    context.registry.set(shopKeyAtom, params.key);
-    context.registry.set(merchantTokenAtom, Option.fromUndefinedOr(deps.token));
-    const ticket = await loadTicket(context.registry);
-    if (Exit.isFailure(ticket)) return;
-    await Promise.all([
-      loadQuery(context.registry, merchantCountAtom),
-      loadQuery(context.registry, merchantWhoAmIAtom),
-    ]);
+  loader: ({ params, deps }) =>
+    getShopSnapshot({ data: { key: params.key, sessionToken: deps.token } }),
+  component: function MerchantShopRoute() {
+    const { key } = Route.useParams();
+    const { token } = Route.useSearch();
+    return (
+      <ShopPage
+        role="merchant"
+        shop={key}
+        merchantToken={Option.fromUndefinedOr(token)}
+        data={Route.useLoaderData()}
+      />
+    );
   },
-  component: () => <ShopPage role="merchant" />,
 });

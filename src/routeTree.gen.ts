@@ -15,7 +15,6 @@ import { Route as AppRouteImport } from './routes/app'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminMembersRouteImport } from './routes/admin.members'
-import { Route as ApiRpcRouteImport } from './routes/api.rpc'
 import { Route as ApiTestControlRouteImport } from './routes/api.test-control'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as MerchantKeyRouteImport } from './routes/merchant.$key'
@@ -52,11 +51,6 @@ const AdminMembersRoute = AdminMembersRouteImport.update({
   id: '/members',
   path: '/members',
   getParentRoute: () => AdminRoute,
-} as any)
-const ApiRpcRoute = ApiRpcRouteImport.update({
-  id: '/api/rpc',
-  path: '/api/rpc',
-  getParentRoute: () => rootRouteImport,
 } as any)
 const ApiTestControlRoute = ApiTestControlRouteImport.update({
   id: '/api/test-control',
@@ -95,7 +89,6 @@ export interface FileRoutesByFullPath {
   '/app': typeof AppRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
-  '/api/rpc': typeof ApiRpcRoute
   '/api/test-control': typeof ApiTestControlRoute
   '/merchant/$key': typeof MerchantKeyRoute
   '/admin/': typeof AdminIndexRoute
@@ -108,7 +101,6 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
-  '/api/rpc': typeof ApiRpcRoute
   '/api/test-control': typeof ApiTestControlRoute
   '/merchant/$key': typeof MerchantKeyRoute
   '/admin': typeof AdminIndexRoute
@@ -124,7 +116,6 @@ export interface FileRoutesById {
   '/app': typeof AppRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
-  '/api/rpc': typeof ApiRpcRoute
   '/api/test-control': typeof ApiTestControlRoute
   '/merchant/$key': typeof MerchantKeyRoute
   '/admin/': typeof AdminIndexRoute
@@ -141,7 +132,6 @@ export interface FileRouteTypes {
     | '/app'
     | '/sign-in'
     | '/admin/members'
-    | '/api/rpc'
     | '/api/test-control'
     | '/merchant/$key'
     | '/admin/'
@@ -154,7 +144,6 @@ export interface FileRouteTypes {
     | '/'
     | '/sign-in'
     | '/admin/members'
-    | '/api/rpc'
     | '/api/test-control'
     | '/merchant/$key'
     | '/admin'
@@ -169,7 +158,6 @@ export interface FileRouteTypes {
     | '/app'
     | '/sign-in'
     | '/admin/members'
-    | '/api/rpc'
     | '/api/test-control'
     | '/merchant/$key'
     | '/admin/'
@@ -184,7 +172,6 @@ export interface RootRouteChildren {
   AdminRoute: typeof AdminRouteWithChildren
   AppRoute: typeof AppRouteWithChildren
   SignInRoute: typeof SignInRoute
-  ApiRpcRoute: typeof ApiRpcRoute
   ApiTestControlRoute: typeof ApiTestControlRoute
   MerchantKeyRoute: typeof MerchantKeyRoute
   ApiActorKeyRoute: typeof ApiActorKeyRoute
@@ -234,13 +221,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin/members'
       preLoaderRoute: typeof AdminMembersRouteImport
       parentRoute: typeof AdminRoute
-    }
-    '/api/rpc': {
-      id: '/api/rpc'
-      path: '/api/rpc'
-      fullPath: '/api/rpc'
-      preLoaderRoute: typeof ApiRpcRouteImport
-      parentRoute: typeof rootRouteImport
     }
     '/api/test-control': {
       id: '/api/test-control'
@@ -316,7 +296,6 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRoute: AdminRouteWithChildren,
   AppRoute: AppRouteWithChildren,
   SignInRoute: SignInRoute,
-  ApiRpcRoute: ApiRpcRoute,
   ApiTestControlRoute: ApiTestControlRoute,
   MerchantKeyRoute: MerchantKeyRoute,
   ApiActorKeyRoute: ApiActorKeyRoute,

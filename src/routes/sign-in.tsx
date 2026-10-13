@@ -1,9 +1,11 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { ReturnPath } from "../api/backend.ts";
 import SignInPage from "../components/SignInPage";
-import { currentMember } from "../session.ts";
+import { getMe } from "../server/session.ts";
+import { requestMagicLink } from "../server/sign-in.ts";
 import { homeFor } from "./-guards.ts";
 
 /**
@@ -22,12 +24,19 @@ export const Route = createFileRoute("/sign-in")({
     redirect: decodeField(ReturnPath, search.redirect),
     error: decodeField(Schema.String, search.error),
   }),
-  beforeLoad: async ({ context }) => {
-    const me = await currentMember(context.registry);
-    if (Option.isSome(me)) throw redirect({ to: homeFor(me.value.role) });
+  beforeLoad: async () => {
+    const me = await getMe();
+    if (me !== null) throw redirect({ to: homeFor(me.role) });
   },
   component: function SignInRoute() {
     const { redirect, error } = Route.useSearch();
-    return <SignInPage returnTo={redirect} error={error} />;
+    const request = useServerFn(requestMagicLink);
+    return (
+      <SignInPage
+        returnTo={redirect}
+        error={error}
+        requestMagicLink={(input) => request({ data: input })}
+      />
+    );
   },
 });

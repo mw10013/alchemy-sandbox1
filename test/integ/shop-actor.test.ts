@@ -8,35 +8,36 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
-import { RpcClient } from "effect/rpc";
 import * as Schema from "effect/Schema";
 import { SANDBOX_SHOP, ShopKey } from "../../src/api/shop.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,
+  CONNECTION_CLOSE_FORBIDDEN,
+  CONNECTION_CLOSE_NOT_A_MEMBER,
   CONNECTION_CLOSE_REVOKED,
+  CONNECTION_CLOSE_UNAUTHENTICATED,
+  CONNECTION_HEADER,
   COUNT_KEY,
-  TICKET_HEADER,
 } from "../../src/api/shop-actor.ts";
 import {
   authOrigin,
   type Credential,
   connect,
+  connectAs,
   control,
   email,
-  httpActor,
-  issueTicket,
   nextCloseCode,
+  openAs,
   signIn,
   socketUrl,
-  upgradeStatus,
 } from "./actor-clients.ts";
 import Stack from "./stack.ts";
 
 /**
  * Deploys the Backend with `ShopActor` into workerd and drives the actor as browsers do,
- * straight at the Backend (no Website or Vite in front): sockets that bind with a ticket on
- * their first call, the gate on the upgrade and on `IssueActorTicket`, the role split, and
- * revocation and displacement closing the right sockets.
+ * straight at the Backend (no Website or Vite in front): sockets named by the gate on their
+ * upgrade, the gate's refusals as close codes, the role split, and revocation, displacement
+ * and session expiry closing the right sockets.
  */
 const { test, beforeAll, deploy } = Test.make({
   providers: Cloudflare.providers(),
@@ -50,17 +51,11 @@ const otherShop = Schema.decodeUnknownSync(ShopKey)("other-shop.myshopify.com");
 const m1 = email("m1@m.com");
 const m2 = email("m2@m.com");
 
-/**
- * A browser's connect: a ticket from `IssueActorTicket` with the browser's credential, a
- * socket through the gate, and a first call that carries the ticket and binds the socket.
- */
+/** A browser's socket through the gate, open once its first call is answered. */
 const open = (backendUrl: string, credential: Credential) =>
   Effect.gen(function* () {
-    const ticket = yield* issueTicket(backendUrl, key, credential);
-    const socket = yield* connect(socketUrl(backendUrl, key, credential), credential);
-    yield* "cookie" in credential
-      ? socket.bind(ticket, socket.client.MemberWhoAmI())
-      : socket.bind(ticket, socket.client.MerchantWhoAmI());
+    const socket = yield* connectAs(backendUrl, key, credential);
+    yield* "cookie" in credential ? socket.client.MemberWhoAmI() : socket.client.MerchantWhoAmI();
     return socket;
   });
 
@@ -80,8 +75,8 @@ const assertOpen = (closes: Queue.Dequeue<unknown>) =>
 test(
   "two sockets share one actor: a write on one notifies both",
   Effect.gen(function* () {
-    const { backendUrl } = yield* stack;
-    const cookie = yield* signIn(backendUrl, m1);
+    const { backendUrl, e2eToken } = yield* stack;
+    const cookie = yield* signIn(backendUrl, e2eToken, m1);
     yield* Effect.gen(function* () {
       const a = yield* open(backendUrl, { cookie });
       const b = yield* open(backendUrl, { cookie });
@@ -100,7 +95,7 @@ test(
   "roles: a merchant resets and a member may not; a member increments and a merchant may not",
   Effect.gen(function* () {
     const { backendUrl, e2eToken } = yield* stack;
-    const cookie = yield* signIn(backendUrl, m1);
+    const cookie = yield* signIn(backendUrl, e2eToken, m1);
     const token = yield* merchantToken(backendUrl, e2eToken);
     yield* Effect.gen(function* () {
       const merchant = yield* open(backendUrl, { token });
@@ -113,38 +108,25 @@ test(
         yield* merchant.client.MemberIncrement().pipe(Effect.flip),
       ])
         assert.strictEqual(error._tag, "Forbidden");
-
-      // The same split over HTTP through the Backend, as server rendering reads it.
-      const asMerchant = yield* httpActor(backendUrl, key, { token });
-      const asMember = yield* httpActor(backendUrl, key, { cookie });
-      assert.deepStrictEqual(yield* asMerchant.MerchantResetCount(), { value: 0 });
-      for (const error of [
-        yield* asMember.MerchantResetCount().pipe(Effect.flip),
-        yield* asMember.MerchantGetCount().pipe(Effect.flip),
-        yield* asMerchant.MemberIncrement().pipe(Effect.flip),
-      ])
-        assert.strictEqual(error._tag, "Forbidden");
     }).pipe(Effect.scoped);
   }),
 );
 
 test(
-  "binding: no ticket and a tampered ticket fail Unauthorized and leave the socket open",
+  "a forged connection header on the browser's upgrade is dropped by the gate",
   Effect.gen(function* () {
-    const { backendUrl } = yield* stack;
-    const cookie = yield* signIn(backendUrl, m1);
+    const { backendUrl, e2eToken } = yield* stack;
+    const cookie = yield* signIn(backendUrl, e2eToken, m1);
     yield* Effect.gen(function* () {
-      const socket = yield* connect(socketUrl(backendUrl, key), { cookie });
-      const none = yield* socket.client.MemberWhoAmI().pipe(Effect.flip);
-      assert.strictEqual(none._tag, "Unauthorized");
-      const ticket = yield* issueTicket(backendUrl, key, { cookie });
-      const tampered = yield* socket.client
-        .MemberWhoAmI()
-        .pipe(RpcClient.withHeaders({ [TICKET_HEADER]: `${ticket}x` }), Effect.flip);
-      assert.strictEqual(tampered._tag, "Unauthorized");
-      yield* assertOpen(socket.closes);
-      const bound = yield* socket.bind(ticket, socket.client.MemberWhoAmI());
-      assert.strictEqual(bound.role, "member");
+      const socket = yield* connect(socketUrl(backendUrl, key), {
+        cookie,
+        [CONNECTION_HEADER]: JSON.stringify({ role: "merchant" }),
+      });
+      const caller = yield* socket.client.MemberWhoAmI();
+      assert.strictEqual(caller.role, "member");
+      assert.strictEqual(caller.role === "member" && caller.memberEmail, m1);
+      const error = yield* socket.client.MerchantGetCount().pipe(Effect.flip);
+      assert.strictEqual(error._tag, "Forbidden");
     }).pipe(Effect.scoped);
   }),
 );
@@ -152,13 +134,13 @@ test(
 test(
   "sign-out closes only that session's sockets with 3401",
   Effect.gen(function* () {
-    const { backendUrl } = yield* stack;
-    const first = yield* signIn(backendUrl, m1);
-    const second = yield* signIn(backendUrl, m1);
+    const { backendUrl, e2eToken } = yield* stack;
+    const first = yield* signIn(backendUrl, e2eToken, m1);
+    const second = yield* signIn(backendUrl, e2eToken, m1);
     yield* Effect.gen(function* () {
       const a = yield* open(backendUrl, { cookie: first });
       const b = yield* open(backendUrl, { cookie: second });
-      const origin = yield* authOrigin(backendUrl, m1);
+      const origin = yield* authOrigin(backendUrl, e2eToken, m1);
       const signOut = yield* HttpClient.execute(
         HttpClientRequest.post(`${backendUrl}/api/auth/sign-out`).pipe(
           HttpClientRequest.setHeaders({ cookie: first, origin }),
@@ -174,15 +156,15 @@ test(
 );
 
 test(
-  "RemoveMember closes the member's sockets with 3401 and the gate then refuses it",
+  "RemoveMember closes the member's sockets with 3401 and the gate then refuses it with 4404",
   Effect.gen(function* () {
     const { backendUrl, e2eToken } = yield* stack;
     const removed = email("integ-removed@e2e.test");
     yield* control(backendUrl, e2eToken, (c) =>
       c.AddMember({ shop: key, email: removed }).pipe(Effect.ignore),
     );
-    const cookie = yield* signIn(backendUrl, removed);
-    const other = yield* signIn(backendUrl, m2);
+    const cookie = yield* signIn(backendUrl, e2eToken, removed);
+    const other = yield* signIn(backendUrl, e2eToken, m2);
     yield* Effect.gen(function* () {
       const a = yield* open(backendUrl, { cookie });
       const b = yield* open(backendUrl, { cookie: other });
@@ -191,13 +173,12 @@ test(
       );
       assert.deepStrictEqual(result, { removed: true, closed: 1 });
       assert.strictEqual(yield* nextCloseCode(a.closes), CONNECTION_CLOSE_REVOKED);
+      // The reconnect goes back through the gate, which no longer finds the member.
+      assert.strictEqual(yield* nextCloseCode(a.closes), CONNECTION_CLOSE_NOT_A_MEMBER);
       assert.strictEqual((yield* b.client.MemberWhoAmI()).role, "member");
-      const refused = yield* issueTicket(backendUrl, key, { cookie }).pipe(Effect.flip);
-      assert.strictEqual(refused._tag, "NotAShopMember");
-
-      yield* control(backendUrl, e2eToken, (c) => c.AddMember({ shop: key, email: removed }));
-      yield* issueTicket(backendUrl, key, { cookie });
+      yield* assertOpen(b.closes);
     }).pipe(Effect.scoped);
+    yield* control(backendUrl, e2eToken, (c) => c.AddMember({ shop: key, email: removed }));
   }),
 );
 
@@ -205,7 +186,7 @@ test(
   "a member's third socket displaces the oldest with 4409; merchants are not capped",
   Effect.gen(function* () {
     const { backendUrl, e2eToken } = yield* stack;
-    const cookie = yield* signIn(backendUrl, m1);
+    const cookie = yield* signIn(backendUrl, e2eToken, m1);
     const token = yield* merchantToken(backendUrl, e2eToken);
     yield* Effect.gen(function* () {
       const a = yield* open(backendUrl, { cookie });
@@ -230,79 +211,80 @@ test(
 );
 
 test(
-  "a socket whose session has expired fails Unauthorized and closes with 3401",
+  "a socket whose session has expired is closed with 3401 on its next message",
   Effect.gen(function* () {
     const { backendUrl, e2eToken } = yield* stack;
-    const cookie = yield* signIn(backendUrl, m1);
     yield* Effect.gen(function* () {
-      const { ticket } = yield* control(backendUrl, e2eToken, (c) =>
-        c.IssueActorTicketAs({
-          shop: key,
-          caller: {
-            role: "member",
-            memberId: "mem-1",
-            memberEmail: m1,
-            teamIds: [],
-            userId: "user-expired",
-            sessionId: "session-expired",
-            sessionExpiresAt: Date.now() - 1,
-          },
-        }),
-      );
-      const socket = yield* connect(socketUrl(backendUrl, key), { cookie });
-      const error = yield* socket.bind(ticket, socket.client.MemberWhoAmI()).pipe(Effect.flip);
-      assert.strictEqual(error._tag, "Unauthorized");
+      const socket = yield* openAs(backendUrl, e2eToken, key, {
+        role: "member",
+        memberId: "mem-1",
+        memberEmail: m1,
+        teamIds: [],
+        userId: "user-expired",
+        sessionId: "session-expired",
+        sessionExpiresAt: Date.now() - 1,
+      });
+      yield* socket.client.MemberWhoAmI().pipe(Effect.forkScoped);
       assert.strictEqual(yield* nextCloseCode(socket.closes), CONNECTION_CLOSE_REVOKED);
     }).pipe(Effect.scoped);
   }),
 );
 
 test(
-  "the gate: 401, 403, 404 on the upgrade, and the same answers from IssueActorTicket",
+  "the gate: 4401, 4403 and 4404 close a refused upgrade",
   Effect.gen(function* () {
     const { backendUrl, e2eToken } = yield* stack;
     // The operator's user row comes from ResetData; see `TestData`.
     yield* control(backendUrl, e2eToken, (c) => c.ResetData());
-    const operator = yield* signIn(backendUrl, email("a@a.com"));
-    const member2 = yield* signIn(backendUrl, m2);
+    const operator = yield* signIn(backendUrl, e2eToken, email("a@a.com"));
+    const member2 = yield* signIn(backendUrl, e2eToken, m2);
     const otherShopToken = yield* merchantToken(backendUrl, e2eToken, otherShop);
-    const at = (shop: ShopKey, query = "") => `${backendUrl}/api/actor/${shop}${query}`;
+    const closeCode = (shop: ShopKey, credential?: Credential) =>
+      Effect.gen(function* () {
+        const socket = yield* connect(
+          socketUrl(backendUrl, shop, credential),
+          credential !== undefined && "cookie" in credential ? { cookie: credential.cookie } : {},
+        );
+        return yield* nextCloseCode(socket.closes);
+      }).pipe(Effect.scoped);
 
-    assert.strictEqual(yield* upgradeStatus(at(key)), 401, "no session");
-    assert.strictEqual(yield* upgradeStatus(at(key), { cookie: operator }), 403, "operator");
+    assert.strictEqual(yield* closeCode(key), CONNECTION_CLOSE_UNAUTHENTICATED, "no session");
     assert.strictEqual(
-      yield* upgradeStatus(at(otherShop), { cookie: member2 }),
-      404,
+      yield* closeCode(key, { cookie: operator }),
+      CONNECTION_CLOSE_FORBIDDEN,
+      "operator",
+    );
+    assert.strictEqual(
+      yield* closeCode(otherShop, { cookie: member2 }),
+      CONNECTION_CLOSE_NOT_A_MEMBER,
       "not a member of that shop",
     );
     assert.strictEqual(
-      yield* upgradeStatus(at(key, `?token=${otherShopToken}`)),
-      403,
+      yield* closeCode(key, { token: otherShopToken }),
+      CONNECTION_CLOSE_FORBIDDEN,
       "a token for another shop",
     );
-    assert.strictEqual(yield* upgradeStatus(at(key, "?token=bad")), 401, "a bad token");
-
-    const ticketError = (shop: ShopKey, credential: Credential | { readonly none: true }) =>
-      ("none" in credential
-        ? issueTicket(backendUrl, shop, { cookie: "" })
-        : issueTicket(backendUrl, shop, credential)
-      ).pipe(
-        Effect.flip,
-        Effect.map((error) => error._tag),
-      );
-    assert.strictEqual(yield* ticketError(key, { none: true }), "Unauthorized");
-    assert.strictEqual(yield* ticketError(key, { cookie: operator }), "NotAShopMember");
-    assert.strictEqual(yield* ticketError(otherShop, { cookie: member2 }), "NotAShopMember");
-    assert.strictEqual(yield* ticketError(key, { token: otherShopToken }), "NotAShopMember");
-    assert.strictEqual(yield* ticketError(key, { token: "bad" }), "Unauthorized");
+    assert.strictEqual(
+      yield* closeCode(key, { token: "bad" }),
+      CONNECTION_CLOSE_UNAUTHENTICATED,
+      "a bad token",
+    );
   }),
 );
 
 test(
-  "a path under /api/actor/ that names no key is 404",
+  "anything but an upgrade under /api/actor/<key> is 426; a path naming no key is 404",
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
-    const response = yield* HttpClient.get(`${backendUrl}/api/actor/NOT-A-KEY`);
-    assert.strictEqual(response.status, 404);
+    const get = yield* HttpClient.get(`${backendUrl}/api/actor/${key}`);
+    assert.strictEqual(get.status, 426);
+    const post = yield* HttpClient.execute(
+      HttpClientRequest.post(`${backendUrl}/api/actor/${key}`).pipe(
+        HttpClientRequest.bodyJsonUnsafe({}),
+      ),
+    );
+    assert.strictEqual(post.status, 426);
+    const none = yield* HttpClient.get(`${backendUrl}/api/actor/NOT-A-KEY`);
+    assert.strictEqual(none.status, 404);
   }).pipe(Effect.provide(FetchHttpClient.layer)),
 );

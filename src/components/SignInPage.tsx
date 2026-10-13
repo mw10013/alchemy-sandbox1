@@ -1,5 +1,4 @@
-import type { CSSProperties } from "react";
-import { useAtom } from "@effect/atom-react";
+import { type CSSProperties, useState } from "react";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { Card } from "@astryxdesign/core/Card";
@@ -8,15 +7,11 @@ import { VStack } from "@astryxdesign/core/Layout";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { useForm } from "@tanstack/react-form";
-import * as Cause from "effect/Cause";
 import * as Match from "effect/Match";
-import * as Option from "effect/Option";
-import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Schema from "effect/Schema";
-import type { RpcClientError } from "effect/rpc";
-import { EmailFromInput, type ReturnPath, type TooManyRequests } from "../api/backend.ts";
-import { requestMagicLinkAtom } from "../backend-client.ts";
+import { type Email, EmailFromInput, type ReturnPath } from "../api/backend.ts";
 import { fieldStatus, schemaForm } from "../form.ts";
+import type { MagicLinkResult } from "../server/sign-in.ts";
 
 /**
  * The page paints its own body background: no shell hosts it. The height is the viewport's,
@@ -34,16 +29,16 @@ const contentStyle: CSSProperties = {
 
 const SignInForm = schemaForm(Schema.Struct({ email: EmailFromInput }));
 
-/** User-facing text for a failed request; it follows the copy rules on `RootDocument`. */
-const describeFailure = (cause: Cause.Cause<TooManyRequests | RpcClientError.RpcClientError>) =>
-  Option.match(Cause.findErrorOption(cause), {
-    onNone: () => "Something went wrong. Try again.",
-    onSome: (error) =>
-      Match.valueTags(error, {
-        TooManyRequests: () => "Too many attempts. Try again in a minute.",
-        RpcClientError: () => "Something went wrong. Try again.",
-      }),
-  });
+/** Copy for a request that did not go through; follows the copy rules on `RootDocument`. */
+const SOMETHING_WENT_WRONG = "Something went wrong. Try again.";
+const TOO_MANY_ATTEMPTS = "Too many attempts. Try again in a minute.";
+
+/** The page's state after a submit: the answer, or the copy for a request that failed. */
+type Outcome =
+  | { readonly _tag: "Idle" }
+  | { readonly _tag: "Sending" }
+  | { readonly _tag: "Sent"; readonly link: string | undefined }
+  | { readonly _tag: "Failed"; readonly message: string };
 
 /**
  * Requests a magic link for an address. The reply is the same whether or not the address is a
@@ -56,17 +51,31 @@ const describeFailure = (cause: Cause.Cause<TooManyRequests | RpcClientError.Rpc
 export default function SignInPage({
   returnTo,
   error,
+  requestMagicLink,
 }: {
   returnTo: ReturnPath | undefined;
   error: string | undefined;
+  requestMagicLink: (input: {
+    readonly email: Email;
+    readonly returnTo: ReturnPath | undefined;
+  }) => Promise<MagicLinkResult>;
 }) {
-  const [result, requestMagicLink] = useAtom(requestMagicLinkAtom);
+  const [outcome, setOutcome] = useState<Outcome>({ _tag: "Idle" });
 
   const form = useForm({
     defaultValues: { email: "" },
     ...SignInForm.options,
-    onSubmit: ({ value }) => {
-      requestMagicLink({ payload: { email: SignInForm.decode(value).email, returnTo } });
+    onSubmit: async ({ value }) => {
+      setOutcome({ _tag: "Sending" });
+      const next = await requestMagicLink({ email: SignInForm.decode(value).email, returnTo }).then(
+        (result): Outcome =>
+          Match.valueTags(result, {
+            Sent: ({ link }): Outcome => ({ _tag: "Sent", link }),
+            TooManyRequests: (): Outcome => ({ _tag: "Failed", message: TOO_MANY_ATTEMPTS }),
+          }),
+        (): Outcome => ({ _tag: "Failed", message: SOMETHING_WENT_WRONG }),
+      );
+      setOutcome(next);
     },
   });
 
@@ -106,7 +115,12 @@ export default function SignInPage({
             />
           )}
         </form.Field>
-        <Button label="Send link" type="submit" variant="primary" isLoading={result.waiting} />
+        <Button
+          label="Send link"
+          type="submit"
+          variant="primary"
+          isLoading={outcome._tag === "Sending"}
+        />
       </VStack>
     </form>
   );
@@ -118,10 +132,11 @@ export default function SignInPage({
           Alchemy-sandbox1
         </Text>
         <Card padding={8} width="100%">
-          {AsyncResult.match(result, {
-            onInitial: () => signInForm(undefined),
-            onFailure: ({ cause }) => signInForm(describeFailure(cause)),
-            onSuccess: ({ value }) => (
+          {Match.valueTags(outcome, {
+            Idle: () => signInForm(undefined),
+            Sending: () => signInForm(undefined),
+            Failed: ({ message }) => signInForm(message),
+            Sent: ({ link }) => (
               <VStack gap={4} hAlign="stretch">
                 <VStack gap={1} hAlign="center">
                   <Heading level={2}>Check your email</Heading>
@@ -129,13 +144,10 @@ export default function SignInPage({
                     The link expires in 5 minutes.
                   </Text>
                 </VStack>
-                {Option.match(value.link, {
-                  onNone: () => null,
+                {link !== undefined && (
                   // A plain anchor, not a router link: the verify route is a server route.
-                  onSome: (link) => (
-                    <Button label="Open link" variant="primary" href={link} as="a" />
-                  ),
-                })}
+                  <Button label="Open link" variant="primary" href={link} as="a" />
+                )}
               </VStack>
             ),
           })}

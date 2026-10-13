@@ -7,11 +7,10 @@ import type * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcTest from "effect/rpc/RpcTest";
 import { onTestFinished } from "vite-plus/test";
 import {
-  CallerMiddleware,
+  ConnectionMiddleware,
   CurrentCaller,
   RequireMember,
   RequireMerchant,
-  RequireSystem,
   ShopActorRpcs,
 } from "../../src/api/shop-actor.ts";
 import { ShopActorClient } from "../../src/shop-actor-client.ts";
@@ -24,20 +23,18 @@ const unexpected = Object.fromEntries(
 ) as unknown as Handlers;
 
 /**
- * The actor's middlewares with no socket and no ticket: every role check passes, so a test
- * reaches every handler it names, and the caller is a placeholder no test handler reads (a
- * who-am-I test gives its own answer). Roles are the actor's concern and are tested against
- * it in integ.
+ * The actor's middlewares with no socket: every role check passes, so a test reaches every
+ * handler it names, and the caller is a placeholder no test handler reads (a who-am-I test
+ * gives its own answer). Roles are the actor's concern and are tested against it in integ.
  */
 const roleMiddlewares = Layer.mergeAll(
-  Layer.succeed(CallerMiddleware)(
-    CallerMiddleware.of((effect) =>
-      Effect.provideService(effect, CurrentCaller, { role: "system" }),
+  Layer.succeed(ConnectionMiddleware)(
+    ConnectionMiddleware.of((effect) =>
+      Effect.provideService(effect, CurrentCaller, { role: "merchant" }),
     ),
   ),
   Layer.succeed(RequireMember)(RequireMember.of((effect) => effect)),
   Layer.succeed(RequireMerchant)(RequireMerchant.of((effect) => effect)),
-  Layer.succeed(RequireSystem)(RequireSystem.of((effect) => effect)),
 );
 
 /**
@@ -56,7 +53,7 @@ export const shopActorClientLayer = (handlers: Partial<Handlers>) =>
 
 /**
  * A registry whose {@link ShopActorClient} atoms run on {@link shopActorClientLayer}, disposed
- * when the test finishes; the same seam as `testRegistry` for `BackendClient`.
+ * when the test finishes.
  */
 export const shopTestRegistry = (handlers: Partial<Handlers>) => {
   const registry = AtomRegistry.make({

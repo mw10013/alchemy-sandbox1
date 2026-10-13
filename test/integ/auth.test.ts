@@ -5,10 +5,11 @@ import * as Effect from "effect/Effect";
 import * as Cookies from "effect/http/Cookies";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
-import * as Option from "effect/Option";
-import * as RpcClient from "effect/rpc/RpcClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Schema from "effect/Schema";
-import { BackendRpcs, EmailFromInput } from "../../src/api/backend.ts";
+import { EmailFromInput } from "../../src/api/backend.ts";
+import { control } from "./actor-clients.ts";
 import Stack from "./stack.ts";
 
 /**
@@ -40,26 +41,33 @@ const atBackend = (link: string, backendUrl: string) => {
 
 const member = Schema.decodeUnknownSync(EmailFromInput)("m1@m.com");
 
+/** The part of Better Auth's `get-session` answer this test reads. */
+const Session = Schema.Struct({
+  user: Schema.Struct({ email: Schema.String, role: Schema.String }),
+});
+
 test(
-  "a seeded member signs in with a magic link and is the current user",
+  "a seeded member signs in with a magic link and the session names them",
   Effect.gen(function* () {
-    const { backendUrl } = yield* stack;
-    yield* Effect.gen(function* () {
-      const client = yield* RpcClient.make(BackendRpcs);
-      const { link } = yield* client.RequestMagicLink({ email: member });
-      assert.isTrue(Option.isSome(link), "inline delivery returns the link");
+    const { backendUrl, e2eToken } = yield* stack;
+    const { link } = yield* control(backendUrl, e2eToken, (c) =>
+      c.IssueMagicLink({ email: member }),
+    );
 
-      // The verify response is a redirect that sets the session cookie; do not follow it.
-      const verify = yield* HttpClient.get(atBackend(Option.getOrThrow(link), backendUrl)).pipe(
-        Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
-      );
-      assert.strictEqual(verify.status, 302);
-      const cookie = Cookies.toCookieHeader(verify.cookies);
-      assert.isNotEmpty(cookie);
+    // The verify response is a redirect that sets the session cookie; do not follow it.
+    const verify = yield* HttpClient.get(atBackend(link, backendUrl)).pipe(
+      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+    );
+    assert.strictEqual(verify.status, 302);
+    const cookie = Cookies.toCookieHeader(verify.cookies);
+    assert.isNotEmpty(cookie);
 
-      const me = yield* client.Me().pipe(RpcClient.withHeaders({ cookie }));
-      assert.strictEqual(me.email, member);
-      assert.strictEqual(me.role, "user");
-    }).pipe(Effect.provide(Test.rpcClientLayer(`${backendUrl}/rpc`)));
-  }),
+    const session = yield* HttpClient.execute(
+      HttpClientRequest.get(`${backendUrl}/api/auth/get-session`).pipe(
+        HttpClientRequest.setHeader("cookie", cookie),
+      ),
+    ).pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(Session)));
+    assert.strictEqual(session.user.email, member);
+    assert.strictEqual(session.user.role, "user");
+  }).pipe(Effect.provide(FetchHttpClient.layer)),
 );

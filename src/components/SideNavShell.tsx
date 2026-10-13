@@ -1,7 +1,5 @@
 import type { ReactNode } from "react";
-import { RegistryContext } from "@effect/atom-react";
-import { useContext } from "react";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { SideNav, SideNavHeading, SideNavItem, SideNavSection } from "@astryxdesign/core/SideNav";
 import { signOut } from "../session.ts";
@@ -27,11 +25,12 @@ export default function SideNavShell({
 }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const registry = useContext(RegistryContext);
+  const router = useRouter();
 
+  // Leave the guarded side first: signing out on it would redirect to sign-in, then here to `/`.
   const onSignOut = async () => {
-    await signOut(registry);
     await navigate({ to: "/" });
+    await signOut(router);
   };
 
   return (

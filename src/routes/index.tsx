@@ -1,21 +1,18 @@
 import { createFileRoute } from "@tanstack/react-router";
-import * as Option from "effect/Option";
+import { useServerFn } from "@tanstack/react-start";
 import HomePage from "../components/HomePage";
-import { helloAtom } from "../backend-client.ts";
-import { loadQuery } from "../query.ts";
-import { currentMember } from "../session.ts";
+import { getHello, shout } from "../server/playground.ts";
+import { getMe } from "../server/session.ts";
 
 export const Route = createFileRoute("/")({
   // A failed Hello rejects, and the route error boundary shows it.
-  loader: async ({ context }) => {
-    const [, me] = await Promise.all([
-      loadQuery(context.registry, helloAtom),
-      currentMember(context.registry),
-    ]);
-    return { me: Option.getOrUndefined(me) };
+  loader: async () => {
+    const [hello, me] = await Promise.all([getHello(), getMe()]);
+    return { hello, me: me ?? undefined };
   },
   component: function HomeRoute() {
-    const { me } = Route.useLoaderData();
-    return <HomePage me={me} />;
+    const { hello, me } = Route.useLoaderData();
+    const shoutFn = useServerFn(shout);
+    return <HomePage me={me} hello={hello} shout={(input) => shoutFn({ data: { input } })} />;
   },
 });

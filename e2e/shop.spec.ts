@@ -6,7 +6,7 @@ import {
   control,
   expect,
   merchant,
-  nextBoundSocket,
+  nextOpenSocket,
   ownMember,
   test,
 } from "./fixtures.ts";
@@ -66,10 +66,10 @@ test("sign-out in one window sends the other to sign-in; an admin is untouched",
   await page.goto(path);
   await awaitHydration(page);
   const other = await context.newPage();
-  const bound = nextBoundSocket(other);
+  const opened = nextOpenSocket(other);
   await other.goto(path);
   await awaitHydration(other);
-  await bound;
+  await opened;
 
   const adminContext = await browser.newContext({ storageState: { cookies: [], origins: [] } });
   const admin = await adminContext.newPage();
@@ -96,10 +96,10 @@ test("a member removed while the page is open is told so", async ({ backend, bro
     backend,
     `removed-${test.info().workerIndex}`,
   );
-  const bound = nextBoundSocket(page);
+  const opened = nextOpenSocket(page);
   await page.goto(path);
   await awaitHydration(page);
-  await bound;
+  await opened;
 
   await backend(control((c) => c.RemoveMember({ shop: SANDBOX_SHOP, email })));
 
@@ -117,10 +117,10 @@ test("a third window displaces the oldest, and Reconnect there takes it back", a
     `displaced-${test.info().workerIndex}`,
   );
   const open = async (page: Page) => {
-    const bound = nextBoundSocket(page);
+    const opened = nextOpenSocket(page);
     await page.goto(path);
     await awaitHydration(page);
-    await bound;
+    await opened;
     return page;
   };
   await open(first);
@@ -130,11 +130,24 @@ test("a third window displaces the oldest, and Reconnect there takes it back", a
   await expect(shop(first).signedInElsewhere).toBeVisible();
   await expect(shop(second).signedInElsewhere).toHaveCount(0);
 
-  const rebound = nextBoundSocket(first);
+  const reopened = nextOpenSocket(first);
   await shop(first).reconnect.click();
-  await rebound;
+  await reopened;
   await expect(shop(first).signedInElsewhere).toHaveCount(0);
   await expect(shop(second).signedInElsewhere).toBeVisible();
   await expect(shop(third).signedInElsewhere).toHaveCount(0);
   await context.close();
+});
+
+test("a merchant whose Shopify session expired is told so", async ({ backend, browser }) => {
+  const merchantContext = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  const page = await merchantContext.newPage();
+  const { token } = await backend(
+    control((c) => c.IssueMerchantSessionToken({ shop: SANDBOX_SHOP, expiresInSeconds: -60 })),
+  );
+  await page.goto(`/merchant/${SANDBOX_SHOP}?token=${encodeURIComponent(token)}`);
+  await awaitHydration(page);
+  await expect(shop(page).expired).toBeVisible();
+  await expect(shop(page).count).toHaveCount(0);
+  await merchantContext.close();
 });
