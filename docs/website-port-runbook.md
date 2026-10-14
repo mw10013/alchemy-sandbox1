@@ -9,7 +9,7 @@ How the local dev server's port is chosen, found and kept unique per checkout.
 - There is no default. `vp run dev`, `alchemy dev` and `pnpm port` fail if `WEBSITE_PORT` is not set. Plain `vp dev` is blocked because it bypasses Alchemy.
 - `strictPort: true`: if the port is taken, dev fails with "Could not bind to port … (already in use)". It never moves to another port, so a checkout can't end up talking to another checkout's server.
 - The Backend Worker uses `dev: { port: 0 }`, an ephemeral port. Only the Website reaches it, through the `BACKEND` service binding, so nothing needs to know its port.
-- Deploys ignore all of this. Workers on Cloudflare have no port; the dev settings are only set when `ALCHEMY_DEV` is true. Staging and production need no `WEBSITE_PORT`.
+- Deploys ignore all of this. Workers on Cloudflare have no port; the dev settings are only set when `ALCHEMY_DEV` is true. Staging needs no `WEBSITE_PORT`.
 
 ## Finding the port
 

@@ -14,38 +14,20 @@
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import path from "node:path";
 
+import { Checkout, PerDeveloperStage, type PerDeveloper } from "../../src/backend/stage.ts";
 import { runCommand } from "./command.ts";
 
 export class WorktreeError extends Schema.TaggedError<WorktreeError>()("WorktreeError", {
   message: Schema.String,
 }) {}
 
-export const MAX_INDEX = 99;
-
-/**
- * A linked worktree's branch, folder and herdr workspace label, `wt-01` for
- * index 1, as a codec: decode a branch name to its index (1 to 99, so `wt-00`
- * is not a worktree), encode an index to the name.
- */
-export const WorktreeBranch = Schema.String.check(Schema.isPattern(/^wt-\d{2}$/u)).pipe(
-  Schema.decodeTo(
-    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_INDEX })),
-    SchemaTransformation.transform({
-      decode: (branch) => Number(branch.slice("wt-".length)),
-      encode: (index) => `wt-${String(index).padStart(2, "0")}`,
-    }),
-  ),
-);
-
-/** The index in a `wt-NN` branch name; none for any other branch, or `wt-00`. */
-export const worktreeIndex = Schema.decodeUnknownOption(WorktreeBranch);
-
-/** `wt-01` for index 1. */
-export const worktreeName = Schema.encodeSync(WorktreeBranch);
+/** The index in a `wt-NN` branch name ({@link Checkout}); none for any other branch, or `wt-00`. */
+export const worktreeIndex = Schema.decodeUnknownOption(Checkout);
 
 /**
  * `WEBSITE_PORT` from a `.env`'s text, read with Effect's dotenv rules. Fails
@@ -131,41 +113,47 @@ export const checkoutPaths = runCommand("git", ["worktree", "list", "--porcelain
   ),
 );
 
-/** `$USER` as a stage part: lowercase letters and digits only, so the stage matches Alchemy's `[a-z0-9]+([-_a-z0-9]+)*` with underscores between parts. */
-const StageUser = Schema.String.check(Schema.isPattern(/^[a-z0-9]+$/u));
-
 /**
- * The dev stage for a checkout: `dev_<user>` in the main checkout, whatever branch it is on, and
- * `dev_<user>_wtNN` in a linked worktree on branch `wt-NN`. Fails, rather than falling back to
- * a guess, when `user` is not lowercase letters and digits or a linked worktree is on another
- * branch.
+ * The stage of `environment` for a checkout: `<environment>-<user>` in the main checkout,
+ * whatever branch it is on, and `<environment>-<user>-wt-NN` in a linked worktree on branch
+ * `wt-NN` ({@link PerDeveloperStage}). Fails, rather than falling back to a guess, when `user` is
+ * not lowercase letters and digits or a linked worktree is on another branch.
  */
-export const devStageOf = Effect.fn("devStageOf")(function* (
+export const stageOf = Effect.fn("stageOf")(function* (
+  environment: PerDeveloper,
   user: string | undefined,
   checkout: { readonly linked: boolean },
   branch: string,
 ) {
-  const part = yield* Schema.decodeUnknownEffect(StageUser)(user).pipe(
+  const index = checkout.linked
+    ? yield* Effect.fromOption(worktreeIndex(branch)).pipe(
+        Effect.map(Option.some),
+        Effect.mapError(
+          () =>
+            new WorktreeError({
+              message: `a linked worktree must be on a wt-NN branch to name a stage, got "${branch}"`,
+            }),
+        ),
+      )
+    : Option.none<number>();
+  return yield* Schema.encodeUnknownEffect(PerDeveloperStage)({
+    environment,
+    user,
+    checkout: index,
+  }).pipe(
     Effect.mapError(
       () =>
         new WorktreeError({
-          message: `$USER must be lowercase letters and digits to name a dev stage, got ${JSON.stringify(user)}`,
+          message: `$USER must be lowercase letters and digits to name a stage, got ${JSON.stringify(user)}`,
         }),
     ),
   );
-  if (!checkout.linked) return `dev_${part}`;
-  const index = yield* Effect.fromOption(worktreeIndex(branch)).pipe(
-    Effect.mapError(
-      () =>
-        new WorktreeError({
-          message: `a linked worktree must be on a wt-NN branch to name a dev stage, got "${branch}"`,
-        }),
-    ),
-  );
-  return `dev_${part}_${worktreeName(index).replace("-", "")}`;
 });
 
-/** This checkout's dev stage, from `$USER` and the checkout; see {@link devStageOf}. */
-export const devStage = Effect.all([checkoutKind, currentBranch]).pipe(
-  Effect.flatMap(([checkout, branch]) => devStageOf(process.env.USER, checkout, branch)),
-);
+/** This checkout's stage of `environment`, from `$USER` and the checkout; see {@link stageOf}. */
+export const stage = (environment: PerDeveloper) =>
+  Effect.all([checkoutKind, currentBranch]).pipe(
+    Effect.flatMap(([checkout, branch]) =>
+      stageOf(environment, process.env.USER, checkout, branch),
+    ),
+  );

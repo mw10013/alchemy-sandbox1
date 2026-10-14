@@ -60,9 +60,8 @@ const magicLink = (backendUrl: string, e2eToken: string, address: Email) =>
 /** Signs in through an inline magic link and returns the session cookie. */
 export const signIn = (backendUrl: string, e2eToken: string, address: Email) =>
   Effect.gen(function* () {
-    // A reused stack names a dead port in the link; only its path and query carry the token.
     const url = yield* magicLink(backendUrl, e2eToken, address);
-    const verify = yield* HttpClient.get(new URL(url.pathname + url.search, backendUrl)).pipe(
+    const verify = yield* HttpClient.get(url).pipe(
       Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
     );
     assert.strictEqual(verify.status, 302);
@@ -70,9 +69,9 @@ export const signIn = (backendUrl: string, e2eToken: string, address: Email) =>
   }).pipe(Effect.provide(FetchHttpClient.layer));
 
 /**
- * The origin Better Auth trusts (the stack's `AUTH_ORIGIN`), read off a magic link. A reused
- * stack binds the previous run's port, so it is not the Backend's URL; a POST to Better Auth
- * with a cookie must name it as its `Origin`.
+ * The origin Better Auth trusts (the stack's `AUTH_ORIGIN`), read off a magic link rather than
+ * assumed to be the Backend's URL; a POST to Better Auth with a cookie must name it as its
+ * `Origin`.
  */
 export const authOrigin = (backendUrl: string, e2eToken: string, address: Email) =>
   magicLink(backendUrl, e2eToken, address).pipe(Effect.map((url) => url.origin));

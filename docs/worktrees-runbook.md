@@ -12,7 +12,8 @@ There is a fixed set of worktrees, `wt-01`, `wt-02`, …, created once and reuse
 | `wt-NN`  | `wt-NN` | chosen by T3 Code      | main's port + NN     | `wt-NN`, under `alchemy-sandbox1` |
 
 - **Folders:** `git worktree list` shows every checkout's folder, with main first. Look them up there; don't assume a path.
-- **Per checkout:** `.env`, `node_modules/`, `.alchemy/` (local emulator state) and `.logs/`.
+- **Per checkout:** `.env`, `node_modules/`, `.alchemy/` (local data and Alchemy state for every local stage) and `.logs/`.
+- **Stages:** each checkout has its own dev, test and e2e stage, `<environment>-<user>` in main and `<environment>-<user>-wt-NN` in a worktree (`dev-mw-wt-01`). `node scripts/stage.ts dev` prints the checkout's dev stage. They are all local, under the checkout's `.alchemy/`.
 - **Shared:** `refs/` exists once, in main. Each worktree has a `refs` symlink to it.
 - **herdr:** each checkout's dev server runs in a `dev` tab in that checkout's herdr workspace.
 
@@ -133,5 +134,5 @@ History stays linear: worktree branches are rebased, and `main` only moves by fa
 
 1. `vp run dev:stop` in the worktree.
 2. Close its herdr workspace.
-3. From main: `git worktree remove <wt-NN folder>`, then `git branch -D wt-NN`.
+3. From main: `git worktree remove <wt-NN folder>`, then `git branch -D wt-NN`. Its stages are all local, so removing the folder removes them; nothing is left in Cloudflare state.
 4. Archive its T3 threads.

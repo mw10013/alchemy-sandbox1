@@ -7,6 +7,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { RpcClient, type RpcClientError, type RpcGroup, RpcSerialization } from "effect/rpc";
 import * as Schema from "effect/Schema";
+import { EmailFromInput } from "../../src/contract/auth.ts";
 import { SANDBOX_SHOP, type ShopKey } from "../../src/contract/shop.ts";
 import { E2eEmail, TestControlRpcs } from "../../src/contract/test-control.ts";
 import { e2eToken } from "../../playwright.config.ts";
@@ -33,8 +34,15 @@ export const awaitHydration = async (page: Page) => {
  * rejects with the pretty cause; it is the only place the specs touch Effect. It is
  * worker-scoped, so it reads `baseURL` from the project: a worker fixture cannot depend on the
  * test-scoped `baseURL` option.
+ *
+ * `signIn` signs a seeded or `@e2e.test` user in on the test's `request` context, without a
+ * browser: a link from `IssueMagicLink`, fetched with redirects off so the verify response's
+ * session cookie lands in the context.
  */
-export const test = base.extend<{ goto: (path: string) => Promise<void> }, { backend: Run }>({
+export const test = base.extend<
+  { goto: (path: string) => Promise<void>; signIn: (email: string) => Promise<void> },
+  { backend: Run }
+>({
   backend: [
     // Playwright reads a fixture's dependencies from this pattern, so it must be `{}`, not `_`.
     // oxlint-disable-next-line no-empty-pattern
@@ -52,6 +60,14 @@ export const test = base.extend<{ goto: (path: string) => Promise<void> }, { bac
     },
     { scope: "worker" },
   ],
+  signIn: async ({ backend, request }, use) => {
+    await use(async (address) => {
+      const email = Schema.decodeUnknownSync(EmailFromInput)(address);
+      const { link } = await backend(control((c) => c.IssueMagicLink({ email })));
+      const verify = await request.get(link, { maxRedirects: 0 });
+      expect(verify.status()).toBe(302);
+    });
+  },
   /** Navigates and waits for hydration; a click before the marker is lost. */
   goto: async ({ page }, use) => {
     await use(async (path) => {

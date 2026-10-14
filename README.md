@@ -39,10 +39,11 @@ vp run dev:stop
 vp run db:reset    # wipe and reseed the local auth database, then restart
 ```
 
-Open `http://localhost:$(pnpm port)`. The server is `alchemy dev` under this checkout's stage
-(`dev_<user>`, or `dev_<user>_wtNN` in a worktree; `node scripts/dev-stage.ts` prints it), using
-local implementations where available and cloud resources when needed. The shared
-Cloudflare state backend requires cloud access. Development logs are captured by
+Open `http://localhost:$(pnpm port)`. The server is `alchemy dev` under this checkout's dev stage
+(`dev-<user>`, or `dev-<user>-wt-NN` in a worktree; `node scripts/stage.ts dev` prints it), using
+local implementations where available. Dev's resources and Alchemy's state both live under
+`.alchemy/` in the checkout, so dev needs no cloud access, and `vp run db:reset` removes them
+together. Development logs are captured by
 `s6-log` (install with `brew install s6`) in `.logs/dev`. No official
 `@cloudflare/vite-plugin` or Wrangler config is needed.
 
@@ -50,10 +51,11 @@ Cloudflare state backend requires cloud access. Development logs are captured by
 and points to `vp run dev`, which supplies the Backend and application bindings.
 
 Sign in at `/sign-in` with a seeded dev account (`seed/dev.sql`): `m1@m.com` or `m2@m.com`
-(members), or `a@a.com`, the operator. The operator is a Better Auth user row with
-`role = 'admin'`; `seed/dev-auth.sql` holds it, and the `AuthSeed` Action inserts it after Better
-Auth's migration, on every fresh database. Under `alchemy dev` the magic link is shown on the
-page and in `.logs/dev/current` instead of being emailed.
+(members), or `a@a.com`, the operator, a Better Auth user row with `role = 'admin'`. Each
+environment has one seed file (`seed/dev.sql`, `seed/test.sql` for test and e2e,
+`seed/staging.sql`), which the `Seed` Action runs after Better Auth's migration, on every fresh
+database. Under `alchemy dev` the magic link is shown on the page and in `.logs/dev/current`
+instead of being emailed.
 
 ## Validate
 
@@ -62,7 +64,7 @@ vp check
 vp test                    # unit, browser and integ projects
 vp test --project unit     # in-process tests under test/unit/, Better Auth on an in-memory database
 vp test --project integ    # deploys the Backend into workerd (test/integ) and drives it over HTTP
-vp run test:e2e            # Playwright, Chromium, against the e2e_<user> stage (not part of vp test)
+vp run test:e2e            # Playwright, Chromium, against the e2e-<user> stage (not part of vp test)
 vp build
 ```
 
@@ -70,16 +72,21 @@ Browser tests load Polaris from Shopify's CDN in their setup, as the pages do, s
 needs network access to `cdn.shopify.com`.
 
 Tests are Effect tests on `@effect/vitest`; the `integ` project uses `alchemy/Test/Vitest` in
-dev mode, needs no running dev server and keeps its stack under `.alchemy/` on the `test_<user>`
-stage. The stack is never destroyed: a re-run redeploys it as a no-op, and `vp run db:reset`
-wipes its local D1 along with dev's.
+dev mode, needs no running dev server and runs on this checkout's test stage (`test-<user>`, or
+`test-<user>-wt-NN`), with local state under `.alchemy/`. Each integ file deploys a fresh stage
+and destroys it afterwards, so every file starts from the seed alone; `NO_DESTROY=1 vp test
+--project integ` keeps the stage for inspecting after a failure.
 
-`vp run test:e2e` runs the Playwright specs under `test/e2e/` in Chromium. It starts `alchemy dev`
-on its own stage (`e2e_<user>`), with local state under `.alchemy/`, on `WEBSITE_PORT + 100`, so
-the dev server on `WEBSITE_PORT` keeps running; a server already on that port is reused, and one
-it started is stopped at the end. Before the specs it resets the stage's data (sessions,
-`@e2e.test` users and members; the seeded operator stays) and signs in once per role through the test-control procedures, which
-the Backend serves only on a stage given an `E2E_TOKEN`. `vp run test:e2e:ui` opens Playwright's
+`vp run test:e2e` runs the Playwright specs under `test/e2e/` in Chromium. It destroys this
+checkout's e2e stage (`e2e-<user>`, or `e2e-<user>-wt-NN`) and then starts `alchemy dev` on it,
+with local state under `.alchemy/`, on `WEBSITE_PORT + 100`, so the dev server on `WEBSITE_PORT`
+keeps running and every run starts from the seed alone. `E2E_REUSE_SERVER=1` reuses a server
+already on that port, keeping its data, for iterating; a server the run started is stopped at
+the end. Before the specs it signs in once per role through the test-control procedures, which
+the Backend serves only on a stage given an `E2E_TOKEN`. Tests never change seed rows; one that
+needs to makes its own `@e2e.test` member or shop. `test/e2e/http.spec.ts` covers the Website's
+HTTP behavior (guards, redirects, the auth proxy) with Playwright's `request` fixture and no
+browser. `vp run test:e2e:ui` opens Playwright's
 UI mode; arguments pass straight through, as in `vp run test:e2e --grep-invert @dev-only` (no
 `--`). Reports, traces and saved sign-ins go to `playwright/`, which is ignored.
 
@@ -146,7 +153,9 @@ vp run deploy:staging
 ```
 
 Alchemy stores authentication in its profiles; do not put credentials in source
-files. Deployment uses Alchemy's shared Cloudflare state store. Review the plan
+files. Staging uses Alchemy's shared Cloudflare state store; dev, test and e2e keep theirs
+locally. A stage outside those environments fails, naming it. To inspect state, name the store:
+`vp exec alchemy state list -r --backend cloudflare` (or `--backend local`). Review the plan
 before running the deployment script, which auto-approves with `--yes`. Production
 is reserved for a separate future instance. See
 [environment research](docs/alchemy-stages-and-deployments-research.md) for details.

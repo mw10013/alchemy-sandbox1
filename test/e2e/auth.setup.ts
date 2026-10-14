@@ -3,13 +3,6 @@ import { EmailFromInput } from "../../src/contract/auth.ts";
 import { control, test as setup } from "./fixtures.ts";
 import { followMagicLink } from "./screens.ts";
 
-/** "reset data" must finish before any sign-in; `fullyParallel` would otherwise spread them. */
-setup.describe.configure({ mode: "serial" });
-
-setup("reset data", async ({ backend }) => {
-  await backend(control((c) => c.ResetData()));
-});
-
 for (const [role, email] of [
   ["admin", "a@a.com"],
   ["member", "m1@m.com"],

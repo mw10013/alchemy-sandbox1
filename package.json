@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev:alchemy": "bash -o pipefail -c 'stage=$(node scripts/dev-stage.ts) && mkdir -p ./.logs/dev && NO_COLOR=1 alchemy dev --stage \"$stage\" 2>&1 | s6-log -b -l 65536 n20 s5242880 S104857600 T ./.logs/dev 1'",
+    "dev:alchemy": "bash -o pipefail -c 'stage=$(node scripts/stage.ts dev) && mkdir -p ./.logs/dev && NO_COLOR=1 alchemy dev --stage \"$stage\" 2>&1 | s6-log -b -l 65536 n20 s5242880 S104857600 T ./.logs/dev 1'",
     "dev": "node --env-file=.env scripts/dev.ts start",
     "dev:stop": "node --env-file=.env scripts/dev.ts stop",
     "dev:status": "node --env-file=.env scripts/dev.ts status",
@@ -14,8 +14,8 @@
     "port": "node --env-file=.env -p \"process.env.WEBSITE_PORT ?? (console.error('WEBSITE_PORT is not set'), process.exit(1))\"",
     "test:e2e": "vp exec playwright test",
     "test:e2e:ui": "vp exec playwright test --ui",
+    "test:e2e:server": "bash -c 'alchemy destroy --yes && exec alchemy dev'",
     "deploy:staging": "alchemy deploy --stage staging --yes",
-    "deploy:production": "alchemy deploy --stage production --yes",
     "refs": "node scripts/refs.ts",
     "refs:all": "node scripts/refs.ts fetch --all",
     "refs:check": "node scripts/refs.ts check"

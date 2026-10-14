@@ -35,7 +35,6 @@ import {
   TestControlAuthLive,
   TestControlHandlers,
   TestControlToken,
-  TestData,
   testControlCaller,
 } from "./test-control.ts";
 
@@ -171,8 +170,8 @@ const upgradeRequired = HttpServerResponse.empty({
  * (see {@link refuseUpgrade}). Anything but an upgrade there is 426: there is no HTTP RPC into
  * the actor. A path under `/api/actor/` that names no key is 404.
  *
- * Test control exists only with the `E2E_TOKEN` binding, which the stack sets off production;
- * without it `/api/test-control` and its upgrade route are 404.
+ * Test control exists only with the `E2E_TOKEN` binding, which the stack sets only when the test
+ * runner supplies the token; without it `/api/test-control` and its upgrade route are 404.
  */
 export default class Backend extends Cloudflare.Worker<Backend>()(
   "Backend",
@@ -190,7 +189,7 @@ export default class Backend extends Cloudflare.Worker<Backend>()(
     const shopAccess = yield* ShopAccess;
     const api = yield* BackendApi;
     const services = yield* Effect.context<
-      Auth | MagicLinkDelivery | Members | Shopify | ShopActors | TestData
+      Auth | MagicLinkDelivery | Members | Shopify | ShopActors
     >();
     const e2eToken = yield* Config.option(Config.String("E2E_TOKEN"));
     // The RPC server is built per request, inside the request's scope (workerd pins I/O to
@@ -268,9 +267,7 @@ export default class Backend extends Cloudflare.Worker<Backend>()(
     Effect.provide(Auth.layer),
     Effect.provide(ShopActors.layer),
     Effect.provide(MagicLinkDelivery.layer),
-    Effect.provide(
-      Layer.mergeAll(Members.layer, Mailer.layer, signInLimiter, TestData.layer, Shopify.layer),
-    ),
+    Effect.provide(Layer.mergeAll(Members.layer, Mailer.layer, signInLimiter, Shopify.layer)),
     Effect.provide(CloudflareD1(AuthDb)),
     Effect.provide(Cloudflare.Email.SendBinding),
     Effect.provide(Cloudflare.Workers.RateLimitBinding),

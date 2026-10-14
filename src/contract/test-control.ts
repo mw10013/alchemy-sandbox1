@@ -4,7 +4,7 @@ import { Email, ReturnPath } from "./auth.ts";
 import { Member, MemberExists } from "./members.ts";
 import { ShopKey } from "./shop.ts";
 
-/** An address a test adds. {@link TestControlRpcs} `ResetData` removes every such address. */
+/** An address a test adds, so it never collides with a seeded member. */
 export const E2eEmail = Email.check(
   Schema.isPattern(/@e2e\.test$/u, { message: "Test members use an @e2e.test address." }),
 );
@@ -21,10 +21,8 @@ export class TestControlAuth extends RpcMiddleware.Service<TestControlAuth>()("T
 
 /**
  * Procedures for a test runner. The Backend serves them only when it has the `E2E_TOKEN`
- * binding, which the stack never sets on production.
+ * binding, which the stack sets only when the test runner supplies the token.
  *
- * - `ResetData` removes every session, account and verification row, every `@e2e.test` user
- *   and `Member` row, so a stage is back to its seeded state; the seeded operator stays.
  * - `AddMember` and `RemoveMember` edit a shop's `Member` rows, as an admin UI would;
  *   `RemoveMember` then revokes the member's sockets on that shop's actor and answers how
  *   many it closed.
@@ -38,7 +36,6 @@ export class TestControlAuth extends RpcMiddleware.Service<TestControlAuth>()("T
  * `testControlCaller` in the Backend.
  */
 export const TestControlRpcs = RpcGroup.make(
-  Rpc.make("ResetData", { success: Schema.Void }),
   Rpc.make("AddMember", {
     payload: { shop: ShopKey, email: E2eEmail },
     success: Member,

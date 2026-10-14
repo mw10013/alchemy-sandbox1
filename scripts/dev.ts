@@ -33,14 +33,13 @@
  * `start` and `stop` hold `.logs/dev.lock` so parallel agents in one checkout
  * cannot start two servers.
  *
- * The server runs under this checkout's dev stage (`dev_<user>`, or `dev_<user>_wtNN` in a
- * worktree), which `scripts/dev-stage.ts` prints.
+ * The server runs under this checkout's dev stage (`dev-<user>`, or `dev-<user>-wt-NN` in a
+ * worktree), which `node scripts/stage.ts dev` prints.
  *
- * `db:reset` stops the server, forgets the dev AuthDb, its Better Auth
- * migration and its auth seed in Alchemy's state, removes the local data under `.alchemy/local`
- * (D1 and simulated email) and the e2e and integ stages' local state, and starts the server, which recreates, migrates
- * and seeds the database. Dev resources are all local, so nothing in the
- * cloud is touched.
+ * `db:reset` stops the server, removes this checkout's local data (`.alchemy/local`: D1,
+ * simulated email, Durable Objects) and local state (`.alchemy/state`) for every stage, and
+ * starts the server, which recreates, migrates and seeds the database. Dev, test and e2e keep
+ * everything in the checkout, so nothing in the cloud is touched.
  */
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as Array from "effect/Array";
@@ -61,7 +60,7 @@ import { fileURLToPath } from "node:url";
 
 import { runCommand } from "./lib/command.ts";
 import * as Herdr from "./lib/herdr.ts";
-import { checkoutKind, currentBranch, devStage } from "./lib/worktree.ts";
+import { checkoutKind, currentBranch, stage } from "./lib/worktree.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/u, "");
 const LOG = ".logs/dev/current";
@@ -73,30 +72,21 @@ const DEV_TAB = "dev";
  * `alchemy dev` from another checkout's and from an e2e stage's (Playwright's web server, on
  * another port, sets its stage through `ALCHEMY_STAGE` and has no `--stage` to match). The
  * script's own shell holds the stage only as `$stage`, so the match is on Alchemy's CLI process,
- * which gets the expanded argument. `dev_mw` also matches `dev_mw_wt01`; the working-directory
+ * which gets the expanded argument. `dev-mw` also matches `dev-mw-wt-01`; the working-directory
  * check that follows every match separates them.
  */
-const stage = Effect.runSync(Effect.cached(devStage.pipe(Effect.provide(NodeServices.layer))));
-const serverProcess = stage.pipe(Effect.map((name) => ` dev --stage ${name}`));
+const devStage = Effect.runSync(
+  Effect.cached(stage("dev").pipe(Effect.provide(NodeServices.layer))),
+);
+const serverProcess = devStage.pipe(Effect.map((name) => ` dev --stage ${name}`));
 const START_TIMEOUT_MS = 180_000;
 const LOCAL_DATA = ".alchemy/local";
 /**
- * The local state of the stages that keep it (`ALCHEMY_STATE=local`: e2e, and the integ
- * harness). Their resources live in {@link LOCAL_DATA}, so `db:reset` removes this with it, or
- * their records would point at databases that are gone and their next run would fail.
+ * The state of every local-state stage (dev, test and e2e). Their resources live in
+ * {@link LOCAL_DATA}, so `db:reset` removes the two together: records left without their data
+ * would say the database exists and the seed ran, and the next start would skip both.
  */
 const LOCAL_STATE = ".alchemy/state";
-/**
- * The dev stack's records for the auth database, the Better Auth migration Action that runs
- * against it and the `AuthSeed` Action that runs after that (`alchemy state list
- * Alchemy-sandbox1/<stage> -r`). All must go: a recreated database needs the migration and the
- * seed to run again.
- */
-const authDbState = stage.pipe(
-  Effect.map((name) =>
-    ["AuthDb", "BetterAuthMigrate", "AuthSeed"].map((id) => `Alchemy-sandbox1/${name}/${id}`),
-  ),
-);
 const STOP_TIMEOUT_MS = 20_000;
 
 class DevError extends Schema.TaggedError<DevError>()("DevError", {
@@ -509,11 +499,6 @@ const dbResetCommand = Command.make("db:reset", {}, () =>
   Effect.gen(function* () {
     const port = yield* loadPort;
     yield* withLock(step("stop", stopServer(port)));
-    for (const record of yield* authDbState)
-      yield* step(
-        `forget ${record}`,
-        runCommand("vp", ["exec", "alchemy", "state", "delete", record, "--no-input"]),
-      );
     const fs = yield* FileSystem.FileSystem;
     for (const dir of [LOCAL_DATA, LOCAL_STATE])
       yield* step(
@@ -524,7 +509,7 @@ const dbResetCommand = Command.make("db:reset", {}, () =>
   }).pipe(Effect.mapError(toUserError)),
 ).pipe(
   Command.withDescription(
-    "Reset the dev database: stop, forget AuthDb in Alchemy's state, remove local data and local state, start.",
+    "Reset the dev database: stop, remove local data and local state, start.",
   ),
 );
 

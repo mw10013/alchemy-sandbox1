@@ -65,7 +65,7 @@ Verify: `vp check`, `vp test --project unit`.
 1. `scripts/lib/worktree.ts`: `devStageOf` becomes `stageOf(environment, user, checkout, branch)`, building the name through the codec from step 1. It keeps its current failures: a `$USER` that is not lowercase letters and digits, or a linked worktree on a branch that is not `wt-NN`. `devStage` becomes `stage(environment)`. Update the module and symbol JSDoc to the new names.
 2. `scripts/dev-stage.ts` becomes `scripts/stage.ts`, taking the environment as a required positional argument (`effect/cli` `Argument`, decoded with `PerDeveloper`). It prints the stage and nothing else, and exits non-zero with the reason on stderr.
 3. `package.json` `dev:alchemy`: `stage=$(node scripts/stage.ts dev)`.
-4. `scripts/dev.ts`: import `stage` from the worktree module and use `stage("dev")`; update the JSDoc that names `dev_<user>` and `dev_<user>_wtNN`. The server match ` dev --stage <stage>` stays: `dev-mw` is a prefix of `dev-mw-wt-01`, and the working-directory check still separates them.
+4. `scripts/dev.ts`: import `stage` from the worktree module and use `stage("dev")`; its own cached `stage` constant takes another name (`devStage`, say) so the two do not collide. Update the JSDoc that names `dev_<user>` and `dev_<user>_wtNN`. The server match ` dev --stage <stage>` stays: `dev-mw` is a prefix of `dev-mw-wt-01`, and the working-directory check still separates them.
 
 Verify: `node scripts/stage.ts dev` prints `dev-mw`; `test` prints `test-mw`; `e2e` prints `e2e-mw`; `staging` and no argument both fail. Exercise the worktree branch with a fake checkout, as the dev-stages work did, and record the outputs in §16: `stageOf("dev", "mw", { linked: true }, "wt-01")` gives `dev-mw-wt-01`; branch `main` in a linked worktree fails; user `Bad.name` fails.
 
@@ -86,11 +86,11 @@ Verify: `vp check`; `vp test --project integ` (still on the old `test_mw` stage 
 
 1. `stageState`: `Layer.unwrap` over an Effect that reads `Alchemy.Stage`, takes `environmentOf` (dying with the stage named on `UnknownStage`) and matches: `dev`, `test`, `e2e` give `Alchemy.localState()`; `staging` gives `Cloudflare.state()`. Its JSDoc states the rule from the research once: state lives where the resources live; a per-developer environment that gains a resource running live under `alchemy dev` (`Alchemy.remote()`, or a service with no local simulator) moves to `Cloudflare.state()` when that resource lands. It also says that `Test.make`'s own `state` option is built without the stage, so integ files pass none and the harness uses this layer from the stack.
 2. `wireBackend(backend, { authOrigin, delivery, e2eToken })`: registers the seed (`seed(backend)`) and binds `AuthOrigin`, `MagicLinkDelivery`, `Shopify` (the fixed fake key plus `Alchemy.makeRandom("ShopifyApiSecret")`) and, when `e2eToken` is some, `TestControl`. It returns nothing the stacks do not need. Keep the binding names and the logical id `ShopifyApiSecret` exactly as today: renaming them recreates resources on staging.
-3. `alchemy.run.ts`: `state: stageState`. Keep its policy where it is: the website-URL auth origin, the delivery rule (inline under `alchemy dev` or with `E2E_TOKEN`), the `E2E_TOKEN` read and the production guards. Then call `wireBackend`. Rewrite the stack JSDoc: drop the `ALCHEMY_STATE` paragraph, and say the state store follows the stage's environment (`{@link stageState}`).
+3. `alchemy.run.ts`: `state: stageState`. Keep its policy where it is: the website-URL auth origin, the delivery rule (inline under `alchemy dev` or with `E2E_TOKEN`) and the `E2E_TOKEN` read. Drop the two `stage === "production"` guards and the JSDoc sentences that state them ("It is refused on the production stage", "Production never delivers inline"): `production` is not a listed environment, so `stageState` fails on it before the body runs and the guards cannot fire. They come back, matched on the environment, when production is designed. Drop the `deploy:production` script from `package.json` for the same reason. Then call `wireBackend`. Rewrite the stack JSDoc: drop the `ALCHEMY_STATE` paragraph, and say the state store follows the stage's environment (`{@link stageState}`).
 4. `test/integ/stack.ts`: `state: stageState`; `wireBackend(backend, { authOrigin: backend.url, delivery: "inline", e2eToken: Option.some(INTEG_E2E_TOKEN) })`. Its JSDoc keeps the reasons it differs (no Website, the Backend as its own origin, inline links, test control on) and drops the restated binding list.
 5. Remove every `ALCHEMY_STATE` use: `alchemy.run.ts`, `playwright.config.ts` (step 7 rewrites that config anyway) and the JSDoc in `scripts/dev.ts`.
 
-Verify: `vp check`; `vp exec alchemy plan --stage staging` shows **no changes** to `Backend`, its bindings, `ShopifyApiSecret` or `BetterAuthSecret`; the only changes are `AuthDb` (`importFiles` removed), `AuthSeed` removed and `Seed` added. Record the plan output in §16. **Do not deploy.** If anything else changes, stop and record it in §17. `vp exec alchemy plan --stage live_mw` fails naming `live_mw`.
+Verify: `vp check`; `vp exec alchemy plan --stage staging` shows **no changes** to `Backend`, its bindings, `ShopifyApiSecret` or `BetterAuthSecret`; the only changes are `AuthDb` (`importFiles` removed, an **update**: the D1 provider's `diff` replaces only on account, name, jurisdiction or location hint), `AuthSeed` removed and `Seed` added. Record the plan output in §16. **Do not deploy.** If anything else changes, stop and record it in §17. `vp exec alchemy plan --stage live_mw` fails naming `live_mw`.
 
 ## 8. Step 5: dev on `dev-mw` with local state
 
@@ -114,7 +114,7 @@ Verify: `vp test --project integ` passes twice in a row. After each run, `.alche
 
 ## 10. Step 7: e2e destroys its stage, then starts `alchemy dev`
 
-1. `package.json`: a script `test:e2e:server` that destroys the e2e stage and then replaces itself with `alchemy dev`, so the signal Playwright sends reaches `alchemy dev`: `bash -c 'alchemy destroy --yes && exec alchemy dev'`. It reads the stage from `ALCHEMY_STAGE`, which Playwright sets. If `vp run`'s wrapper keeps Playwright's shutdown signal from reaching `alchemy dev`, find a shape that works and record it.
+1. `package.json`: a script `test:e2e:server` that destroys the e2e stage and then replaces itself with `alchemy dev`, so the signal Playwright sends reaches `alchemy dev`: `bash -c 'alchemy destroy --yes && exec alchemy dev'`. It reads the stage from `ALCHEMY_STAGE`, which Playwright sets. If `vp run`'s wrapper keeps Playwright's shutdown signal from reaching `alchemy dev`, find a shape that works and record it. The destroy must also succeed when the stage has no state yet (the first run, and every run after `db:reset`): `alchemy destroy` plans from the state store, so an empty store should converge on nothing. Check that case first; if it fails instead, record it in §17 and find a guard that does not mask a real destroy failure.
 2. `playwright.config.ts`:
    - `stage` from `execFileSync("node", ["scripts/stage.ts", "e2e"])`.
    - `webServer.command: "vp run test:e2e:server"`.
@@ -155,7 +155,7 @@ Verify: `vp run test:e2e` passes; the new specs run without opening a page (chec
 1. `README.md`: the dev stage (`dev-<user>`, `dev-<user>-wt-NN`, `node scripts/stage.ts dev`); dev's state is local, so "The shared Cloudflare state backend requires cloud access" goes; the seed (`seed/dev.sql`, the `Seed` Action, one file per environment); the test paragraphs (integ deploys a fresh `test-…` stage per file and destroys it, `NO_DESTROY=1`; e2e destroys `e2e-…` before each run, `E2E_REUSE_SERVER=1`, no reset step; HTTP specs). Remove the "never destroyed" sentence and the `ResetData` description.
 2. `docs/glossary.md`: add **Environment** and **Stage** with the definitions from §1 and the naming rule.
 3. `docs/worktrees-runbook.md`: stage names, and retiring a worktree. Its stages are all local now, so deleting the folder removes them; no Cloudflare records are left.
-4. Grep for `dev_`, `e2e_`, `test_`, `wtNN`, `ALCHEMY_STATE`, `AuthSeed`, `seedAuth`, `-auth.sql`, `seedsFor` and `devStage` across `src`, `test`, `scripts`, `README.md`, `AGENTS.md` and the runbooks. Fix every hit. Leave research and plan docs alone: they are history.
+4. Grep for `dev_`, `e2e_`, `test_`, `wtNN`, `ALCHEMY_STATE`, `AuthSeed`, `seedAuth`, `-auth.sql`, `seedsFor`, `devStage` and `production` across `src`, `test`, `scripts`, `package.json`, `README.md`, `AGENTS.md` and the runbooks. Fix every hit (the README's `production` branch of the Cloudflare docs snapshot is not a stage; leave it). Leave research and plan docs alone: they are history.
 
 Verify: the grep finds nothing outside `docs/*-research.md` and `docs/*-plan.md`.
 
@@ -186,6 +186,69 @@ Owed after this plan, not part of it:
 
 Record each as: date, step, what the plan said, what was done, why.
 
+- **2026-10-14, step 0.** `state list Alchemy-sandbox1 -r` before any deletion:
+
+  ```
+  Alchemy-sandbox1/dev_mw/AuthDb
+  Alchemy-sandbox1/dev_mw/AuthSeed
+  Alchemy-sandbox1/dev_mw/Backend
+  Alchemy-sandbox1/dev_mw/BetterAuthMigrate
+  Alchemy-sandbox1/dev_mw/BetterAuthSecret
+  Alchemy-sandbox1/dev_mw/ShopifyApiSecret
+  Alchemy-sandbox1/dev_mw/Website
+  Alchemy-sandbox1/dev_mw/output
+  Alchemy-sandbox1/staging/AuthDb
+  Alchemy-sandbox1/staging/AuthSeed
+  Alchemy-sandbox1/staging/Backend
+  Alchemy-sandbox1/staging/BetterAuthMigrate
+  Alchemy-sandbox1/staging/BetterAuthSecret
+  Alchemy-sandbox1/staging/ShopifyApiSecret
+  Alchemy-sandbox1/staging/Website
+  Alchemy-sandbox1/staging/output
+  ```
+
+  The seven `dev_mw` records were deleted one at a time and `output` went with them. There were no `dev/` and no `dev_mw_wt01/` records, so nothing of `wt-01`'s was kept or deleted (its port 3901 was not listening). Nothing is owed in Cloudflare state for `wt-01`.
+
+- **2026-10-14, step 1.** The `wt-NN` codec moved into `src/backend/stage.ts` as `Checkout`, so the rule lives once: `scripts/lib/worktree.ts` drops `WorktreeBranch` and `MAX_INDEX` (no other users) and builds `worktreeIndex`/`worktreeName` on `Checkout`. `PerDeveloperStage` is a `Schema.Union` of two `TemplateLiteralParser`s (`<env>-<user>` and `<env>-<user>-<checkout>`) decoded to `{ environment, user, checkout: Option<number> }`.
+- **2026-10-14, step 2.** `scripts/stage.ts` takes `Argument.Literals("environment", PerDeveloper.literals)` rather than `Argument.String` piped through `Argument.withSchema(PerDeveloper)`: `withSchema` needs a codec whose encoded side is `string`, and `PerDeveloper`'s is the literal union (type error). On a bad or missing argument `effect/cli` prints its help to stdout and the error to stderr, exit 1, as `dev-stage.ts` did. `stageOf` with a fake checkout: `("dev","mw",{linked:true},"wt-01")` gives `dev-mw-wt-01`; `("dev","mw",{linked:true},"main")` fails "a linked worktree must be on a wt-NN branch to name a stage, got \"main\""; `("dev","Bad.name",{linked:false},"main")` fails "$USER must be lowercase letters and digits to name a stage, got \"Bad.name\""; `("test","mw",{linked:false},"feature")` gives `test-mw`; `("e2e","mw",{linked:true},"wt-12")` gives `e2e-mw-wt-12`. In a linked worktree with both a bad branch and a bad user, the branch is now reported first.
+- **2026-10-14, step 3.** The verify said integ would still run on `test_mw`. It cannot: `seed` rejects `test_mw` through `environmentOf`. Step 3 was verified with `ALCHEMY_TEST_STAGE=test-mw vp test --project integ` (12 passed), ahead of step 6 setting it.
+- **2026-10-14, step 4.** `vp exec alchemy plan --stage staging`:
+
+  ```
+  Plan: 3 to update, 2 tasks
+  [AuthDb] update
+  [Backend] update
+  [Backend/AuthDb] noop
+  [Backend/AuthEmail] noop
+  [Backend/AuthOrigin] noop
+  [Backend/MagicLinkDelivery] noop
+  [Backend/ShopActor] noop
+  [Backend/Shopify] noop
+  [Backend/SignInLimit] noop
+  [BetterAuthSecret] noop
+  [ShopifyApiSecret] noop
+  [Website] update
+  [Website/BACKEND] noop
+  [AuthSeed] drop [action]
+  [Seed] run [action]
+  ```
+
+  `Backend` and `Website` show `update`, which the plan said should not happen; see §17. Every binding, `BetterAuthSecret` and `ShopifyApiSecret` are `noop`. The same plan from `HEAD` (a temporary detached worktree, removed afterwards) shows `Backend` update, `Website` update, `AuthDb` noop and `AuthSeed` run, so this work's own delta is exactly `AuthDb` update, `AuthSeed` drop, `Seed` run. The final-check plan after steps 5 to 11 is identical. `plan --stage live_mw` fails with `UnknownStage: stage "live_mw" belongs to no known environment`.
+
+- **2026-10-14, step 4.** `alchemy state list|read|delete` without `--backend` now fails: the CLI loads the stack's `state` layer with the stage `placeholder`, which `stageState` rejects. The steps' `state list` checks were run as `alchemy state list Alchemy-sandbox1 -r --backend cloudflare` (and `--backend local`), and the README says so.
+- **2026-10-14, step 4.** `wireBackend` takes the Backend as `Effect.Success<typeof Backend>` through `import type`, so `stack.ts` adds no runtime import of the Worker module beyond what the stacks already have.
+- **2026-10-14, step 5.** The step 5 `db:reset` already removed the old `e2e_mw` and `test_mw` local state, which step 11 meant to do; step 11's `db:reset` then found only dashed stages.
+- **2026-10-14, step 6.** The issued link's origin matched `backendUrl` (`http://localhost:57340` both), so `atBackend` and its JSDoc were removed. The same reused-stack workaround in `signIn` in `test/integ/actor-clients.ts` was removed too, and `authOrigin`'s JSDoc no longer claims a reused stack's port. Integ run times: 34.9 s and 37.1 s (Vitest duration; 36 s and 39 s wall), each with `created` on every deploy and `deleted` on every destroy, and no `Alchemy-sandbox1-test` directory under `.alchemy/state` afterwards.
+- **2026-10-14, step 7.** `bash -c 'alchemy destroy --yes && exec alchemy dev'` under `vp run` works: Playwright's shutdown stops `alchemy dev`, no e2e process is left and `WEBSITE_PORT + 100` is free after each run. `alchemy destroy` on a stage with no state logs `Plan: no resources` and exits 0. So the first run after a state wipe logs no `deleted` (stage empty); every later run logs `5 to delete` then `5 to create`. `dev:status` during an e2e run reported only the dev server. A stale orphan `alchemy dev` from 2026-10-13 (`ALCHEMY_STAGE=e2e_mw`, ppid 1, not listening) from the old e2e setup was found and stopped.
+- **2026-10-14, step 8.** Audit: no spec or integ test changes a seed row. Writes go to `@e2e.test` members, sessions the test created, and Durable Object state, which is not seeded. The gate test called `ResetData` because `ResetData` once inserted the operator's user row; the seed does that now, so the gate test needed nothing from it and the call was dropped. `auth.setup.ts` lost the reset and its `describe.configure({ mode: "serial" })`, whose only reason was running the reset before the sign-ins. `ResetData` was removed throughout (RPC, handler, `TestData` and its layer, Worker wiring, the unit test's stub layer and `it.todo`, and the JSDoc on `E2eEmail` and `TestControlRpcs`). Code that existed only because the integ stack survived between runs was dropped as well: `socket-facts.test.ts`'s pre-clean `RemoveMember` and its comment, and in `shop-actor.test.ts`'s RemoveMember test the `Effect.ignore` on `AddMember` and the trailing re-add. The e2e `ownMember` keeps its `Effect.ignore` (a Playwright retry reuses the worker-indexed name).
+- **2026-10-14, step 9.** The fourth spec could not be written as planned: the Website's auth proxy route forwards only `GET /api/auth/magic-link/verify` and `POST /api/auth/sign-out`, so `get-session` through the Website is 404 by design. The spec asserts that allow-list (`get-session` is 404 for a signed-in member) instead. The fixture is `signIn(email: string)`, test-scoped over `request` and `backend`. It decodes the address with `EmailFromInput` and expects the verify response's 302. The specs use an empty `storageState`. A trace of the four specs shows only `APIRequestContext` calls, with no context or page.
+- **2026-10-14, step 10.** Some grep hits were kept: `devStage` in `scripts/dev.ts` is the name step 2 asks for; `production` in `stage.ts` (the rule's JSDoc) and `stage.test.ts` (a rejected input) are intended; `production` in `scripts/refs.ts` is the Cloudflare docs branch, like the README's. Fixed outside the listed files: `docs/website-port-runbook.md` ("Staging and production need no `WEBSITE_PORT`") and the "never sets on production" JSDoc on `TestControlRpcs` and the Backend.
+- **2026-10-14, step 11.** `.alchemy/log/probe-mw` (the research probe's) is not in the step's list and was left.
+- **2026-10-14, final checks.** `vp check` passes; `vp test` passed twice (93 tests, 14 files) with no test stage left in `.alchemy/state`; `vp run test:e2e` passed twice (20 tests); dev runs on `dev-mw` and `a@a.com` and `m1@m.com` signed in; `state list --backend cloudflare` shows only `Alchemy-sandbox1/staging/` for this project; nothing committed or deployed.
+
 ## 17. Issues
 
 Record each as: date, step, the problem, what was tried, current state.
+
+- **2026-10-14, step 4.** The staging plan shows `Backend` and `Website` as `update`; the plan expected no change there. Cause: staging was last deployed from `b642c76` (`origin/main`), and the unpushed `699f3ad` changed Backend and Website code. Planning `HEAD` alone gives the same two updates. All their bindings are `noop`. Not stopped on, because the change does not come from this work; the next push deploys those code updates along with the `AuthDb`/`Seed` changes.
+- **2026-10-14, step 9.** Once, after several e2e runs, the dev server answered every SSR request with 500: `ERR_FILE_NOT_FOUND_IN_OPTIMIZED_DEP_DIR` for `node_modules/.vite/deps_ssr/react-dom_server.js?v=…`. The dev and e2e servers in one checkout share Vite's optimized-deps cache, and the e2e server's re-optimization replaced the files the dev server had loaded. `vp run dev:stop && vp run dev` fixed it. It did not recur in the final checks (two e2e runs with dev running). It is probably older than this work, since dev and e2e have always shared the checkout. A per-stage Vite `cacheDir` would separate them; not attempted.

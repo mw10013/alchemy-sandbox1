@@ -4,6 +4,8 @@ import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import react from "@vitejs/plugin-react";
 import cloudflare from "@alchemy.run/cloudflare-runtime/vite";
 import { playwright } from "vite-plus/test/browser-playwright";
+import * as Schema from "effect/Schema";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const websitePort = (mode: string) => {
@@ -11,6 +13,12 @@ const websitePort = (mode: string) => {
   if (!port) throw new Error("WEBSITE_PORT is not set");
   return Number(port);
 };
+
+/** This checkout's stage of `environment`, as `scripts/stage.ts` prints it. */
+const stageOf = (environment: "test") =>
+  Schema.decodeUnknownSync(Schema.Trim)(
+    execFileSync("node", ["scripts/stage.ts", environment], { encoding: "utf8" }),
+  );
 
 const browserStub = (file: string) =>
   fileURLToPath(new URL(`test/browser/stubs/${file}`, import.meta.url));
@@ -107,10 +115,19 @@ export default defineConfig(({ command, mode, isPreview }) => {
         {
           // Deploys the Backend in workerd through alchemy/Test; one file at a time, and
           // ALCHEMY_DEV is read by the Worker's init at plan, so the test process must set it.
+          // ALCHEMY_TEST_STAGE is the harness's default stage, so no test file names one; it is
+          // spawned only under test, so `vp build` and `vp run dev` do not run the script.
           test: {
             name: "integ",
             include: ["test/integ/**/*.test.ts"],
-            env: { ALCHEMY_DEV: "1" },
+            env:
+              mode === "test"
+                ? { ALCHEMY_DEV: "1", ALCHEMY_TEST_STAGE: stageOf("test") }
+                : { ALCHEMY_DEV: "1" },
+            // alchemy/Test/Vitest registers its sidecar cleanup after the file's afterAll hooks
+            // and expects them to run in that order; Vitest's default runs them in reverse, so
+            // `destroy` would wait on a sidecar already closed.
+            sequence: { hooks: "list" },
             testTimeout: 30_000,
             hookTimeout: 120_000,
             fileParallelism: false,

@@ -15,12 +15,13 @@ import Stack from "./stack.ts";
  * identity reaches the RPC middleware on every message, and a socket closed before its message
  * is dispatched leaves Alchemy's transport and the object clean.
  */
-const { test, beforeAll, deploy } = Test.make({
+const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),
 });
 
-/** Never destroyed; see the same declaration in `auth.test.ts`. */
+/** A fresh stage per file, destroyed afterwards; see the same declaration in `auth.test.ts`. */
 const stack = beforeAll(deploy(Stack));
+afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
 
 /** A seeded shop of its own, so no other file shares its actor. */
 const key = Schema.decodeUnknownSync(ShopKey)("other-shop.myshopify.com");
@@ -41,10 +42,6 @@ test(
   Effect.gen(function* () {
     const { backendUrl, e2eToken } = yield* stack;
     const address = email("facts-hibernate@e2e.test");
-    // A failed earlier run may have left the row; the stack is never reset between runs.
-    yield* control(backendUrl, e2eToken, (c) =>
-      c.RemoveMember({ shop: key, email: address }).pipe(Effect.ignore),
-    );
     const added = yield* control(backendUrl, e2eToken, (c) =>
       c.AddMember({ shop: key, email: address }),
     );

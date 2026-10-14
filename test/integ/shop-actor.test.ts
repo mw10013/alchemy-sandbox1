@@ -39,12 +39,13 @@ import Stack from "./stack.ts";
  * upgrade, the gate's refusals as close codes, the role split, and revocation, displacement
  * and session expiry closing the right sockets.
  */
-const { test, beforeAll, deploy } = Test.make({
+const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),
 });
 
-/** Never destroyed; see the same declaration in `auth.test.ts`. */
+/** A fresh stage per file, destroyed afterwards; see the same declaration in `auth.test.ts`. */
 const stack = beforeAll(deploy(Stack));
+afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
 
 const key = SANDBOX_SHOP;
 const otherShop = Schema.decodeUnknownSync(ShopKey)("other-shop.myshopify.com");
@@ -160,9 +161,7 @@ test(
   Effect.gen(function* () {
     const { backendUrl, e2eToken } = yield* stack;
     const removed = email("integ-removed@e2e.test");
-    yield* control(backendUrl, e2eToken, (c) =>
-      c.AddMember({ shop: key, email: removed }).pipe(Effect.ignore),
-    );
+    yield* control(backendUrl, e2eToken, (c) => c.AddMember({ shop: key, email: removed }));
     const cookie = yield* signIn(backendUrl, e2eToken, removed);
     const other = yield* signIn(backendUrl, e2eToken, m2);
     yield* Effect.gen(function* () {
@@ -178,7 +177,6 @@ test(
       assert.strictEqual((yield* b.client.MemberWhoAmI()).role, "member");
       yield* assertOpen(b.closes);
     }).pipe(Effect.scoped);
-    yield* control(backendUrl, e2eToken, (c) => c.AddMember({ shop: key, email: removed }));
   }),
 );
 
@@ -234,8 +232,6 @@ test(
   "the gate: 4401, 4403 and 4404 close a refused upgrade",
   Effect.gen(function* () {
     const { backendUrl, e2eToken } = yield* stack;
-    // The operator's user row comes from the stage's auth seed; ResetData leaves it.
-    yield* control(backendUrl, e2eToken, (c) => c.ResetData());
     const operator = yield* signIn(backendUrl, e2eToken, email("a@a.com"));
     const member2 = yield* signIn(backendUrl, e2eToken, m2);
     const otherShopToken = yield* merchantToken(backendUrl, e2eToken, otherShop);

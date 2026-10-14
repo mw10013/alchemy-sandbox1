@@ -17,27 +17,17 @@ import Stack from "./stack.ts";
  * the magic-link flow over HTTP. `dev` is not set here: the `integ` Vitest project sets
  * `ALCHEMY_DEV=1`, which the harness reads; the stack binds inline link delivery itself.
  */
-const { test, beforeAll, deploy } = Test.make({
+const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),
 });
 
 /**
- * Never destroyed. The stack is local and lives under this checkout's `.alchemy/`, so a reused
- * stack makes a re-run a no-op deploy, and `destroy` of a dev-mode stack hangs past the hook
- * timeout on Alchemy 2.0.0-beta.81.
+ * Each file deploys a fresh stage and destroys it when done: the seed is the only data a file
+ * starts with, so nothing one run changes reaches the next. `NO_DESTROY=1` keeps the stage for
+ * inspecting after a failure.
  */
 const stack = beforeAll(deploy(Stack));
-
-/**
- * The link against the Backend that is running now. The Backend takes a free port per start,
- * and a redeploy resolves the AuthOrigin binding from the previous run's URL, so a link from a
- * reused stack names a dead port; only its path and query carry the token.
- */
-const atBackend = (link: string, backendUrl: string) => {
-  const url = new URL(link);
-  assert.strictEqual(url.pathname, "/api/auth/magic-link/verify");
-  return new URL(url.pathname + url.search, backendUrl).toString();
-};
+afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
 
 const member = Schema.decodeUnknownSync(EmailFromInput)("m1@m.com");
 
@@ -55,7 +45,7 @@ test(
     );
 
     // The verify response is a redirect that sets the session cookie; do not follow it.
-    const verify = yield* HttpClient.get(atBackend(link, backendUrl)).pipe(
+    const verify = yield* HttpClient.get(link).pipe(
       Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
     );
     assert.strictEqual(verify.status, 302);

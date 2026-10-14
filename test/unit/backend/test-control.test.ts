@@ -21,7 +21,6 @@ import {
   TestControlAuthLive,
   TestControlHandlers,
   TestControlToken,
-  TestData,
 } from "../../../src/backend/test-control.ts";
 
 const TOKEN = "t";
@@ -38,8 +37,7 @@ const revoked: Array<{ key: ShopKey; by: "member" | "session"; id: string }> = [
 
 /**
  * The test-control handlers and token middleware over Better Auth on an in-memory database,
- * fresh per test, under the given {@link MagicLinkDelivery}. `ResetData` needs D1, so
- * {@link TestData} dies.
+ * fresh per test, under the given {@link MagicLinkDelivery}.
  */
 const TestBackend = (delivery: "inline" | "mailed" = "inline") =>
   Layer.mergeAll(TestControlHandlers, TestControlAuthLive).pipe(
@@ -51,7 +49,6 @@ const TestBackend = (delivery: "inline" | "mailed" = "inline") =>
         extra: Layer.mergeAll(
           Shopify.layerWith({ apiKey: "fake-api-key", apiSecret: Redacted.make("secret") }),
           Layer.succeed(TestControlToken, TOKEN),
-          Layer.succeed(TestData, { reset: () => Effect.die("TestData needs D1") }),
         ),
       }),
     ),
@@ -129,9 +126,5 @@ describe("test control", () => {
         .pipe(authorized);
       assert.isFalse(gone.removed);
     }).pipe(Effect.provide(TestBackend())),
-  );
-
-  it.todo(
-    "ResetData clears sessions and @e2e.test users and members, and leaves the seeded operator (needs D1: the e2e stage)",
   );
 });

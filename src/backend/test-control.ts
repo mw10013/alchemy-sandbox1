@@ -1,6 +1,4 @@
 import { RuntimeContext } from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as SQL from "alchemy/SQL/D1";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -16,7 +14,6 @@ import { ShopActors } from "./shop-actors.ts";
 import { Auth } from "./auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { Members } from "./members.ts";
-import { AuthDb } from "./resources.ts";
 import { Shopify } from "./shopify.ts";
 
 /** The stage's `E2E_TOKEN`, read once by the Worker, which serves test control only when it has one. */
@@ -35,44 +32,15 @@ export const TestControlAuthLive = Layer.effect(
   }),
 );
 
-/**
- * Wipes what tests leave behind in `AuthDb`. Sessions, accounts and verifications all go;
- * users and `Member` rows go only for `@e2e.test` addresses (their `TeamMember` edges cascade),
- * so the seeded members and their users, and the operator that `AuthSeed` inserts, stay.
- */
-export class TestData extends Context.Service<
-  TestData,
-  { readonly reset: () => Effect.Effect<void> }
->()("app/TestData") {
-  static readonly layer = Layer.effect(
-    TestData,
-    Effect.gen(function* () {
-      const d1 = yield* Cloudflare.D1.QueryDatabase(AuthDb);
-      const sql = yield* SQL.D1(d1);
-      return TestData.of({
-        reset: Effect.fn("TestData.reset")(function* () {
-          yield* sql`DELETE FROM session`;
-          yield* sql`DELETE FROM account`;
-          yield* sql`DELETE FROM verification`;
-          yield* sql`DELETE FROM "user" WHERE email LIKE '%@e2e.test'`;
-          yield* sql`DELETE FROM Member WHERE email LIKE '%@e2e.test'`;
-        }, Effect.orDie),
-      });
-    }),
-  );
-}
-
 export const TestControlHandlers = TestControlRpcs.toLayer(
   Effect.gen(function* () {
     const { auth, maySignIn } = yield* Auth;
     const delivery = yield* MagicLinkDelivery;
     const members = yield* Members;
-    const testData = yield* TestData;
     const actors = yield* ShopActors;
     const shopify = yield* Shopify;
 
     return TestControlRpcs.of({
-      ResetData: () => testData.reset(),
       AddMember: ({ shop, email }) => members.add(shop, email),
       RemoveMember: ({ shop, email }) =>
         Effect.gen(function* () {
