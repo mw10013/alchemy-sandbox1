@@ -31,9 +31,5 @@ Dev logs: `.logs/dev/current`. Rotated archives: `.logs/dev/`.
 Staging logs: use `cf o11y telemetry query` on `cloudflare-workers`, filtering `$metadata.service` to `alchemy-sandbox1-website-staging-a6uwn3bzazl3yzgy`.
 
 ## UI: Polaris web components
-- Polaris loads from Shopify's CDN as one `<script>` in `<head>`, from the URL constant `POLARIS_URL`. No App Bridge, no npm runtime package; `@shopify/polaris-types` supplies the JSX types and moves with the script URL.
-- Screens are built from `s-*` elements: `s-page` with `s-section` cards, `s-banner`, `s-button`, `s-link`, fields, `s-table`. No other design system, and no hand-rolled replacement for an element Polaris has.
-- Layout lives only in named parts under `src/components/screen/`. Routes and other components use no `s-stack`, `s-grid` or `s-box`, and no spacing or layout prop (`gap`, `padding`, `direction`, `alignItems`, …). A new shape is a new part.
-- Outside the Shopify admin nothing intercepts Polaris anchors: client-side navigation is a TanStack `<Link>`, or `href` plus an `onClick` that calls the router.
-- Light only. There is no dark mode; do not apply Polaris's internal dark palette class.
-- Custom CSS in `src/styles.css` covers only what Polaris lacks, for the plain boxes the parts draw.
+- Layout lives only in named parts under `src/components/screen/`. Elsewhere, no `s-stack`, `s-grid`, `s-box` or layout props (`gap`, `padding`, …); a new shape is a new part.
+- Outside the Shopify admin nothing intercepts Polaris anchors: navigate with a TanStack `<Link>`, or `href` plus an `onClick` that calls the router.
