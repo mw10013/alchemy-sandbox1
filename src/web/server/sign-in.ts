@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { Email, MagicLinkRequested, ReturnPath, TooManyRequests } from "../../contract/auth.ts";
+import { MagicLinkInput, MagicLinkRequested, TooManyRequests } from "../../contract/auth.ts";
 import { backend, requestInfo, rescue } from "./backend.ts";
 
 const decodeRequested = Schema.decodeUnknownSync(MagicLinkRequested);
@@ -15,11 +15,7 @@ export type MagicLinkResult =
   | { readonly _tag: "TooManyRequests" };
 
 export const requestMagicLink = createServerFn({ method: "POST" })
-  .validator(
-    Schema.toStandardSchemaV1(
-      Schema.Struct({ email: Email, returnTo: Schema.optional(ReturnPath) }),
-    ),
-  )
+  .validator(Schema.toStandardSchemaV1(MagicLinkInput))
   .handler(({ data }): Promise<MagicLinkResult> =>
     backend()
       .requestMagicLink(requestInfo(), data)

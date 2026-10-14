@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import * as Schema from "effect/Schema";
-import { ShoutText } from "../../contract/playground.ts";
+import { ShoutInput } from "../../contract/playground.ts";
 import { backend, requestInfo } from "./backend.ts";
 
 export const getHello = createServerFn({ method: "GET" }).handler(() =>
@@ -8,5 +8,5 @@ export const getHello = createServerFn({ method: "GET" }).handler(() =>
 );
 
 export const shout = createServerFn({ method: "POST" })
-  .validator(Schema.toStandardSchemaV1(Schema.Struct({ input: ShoutText })))
+  .validator(Schema.toStandardSchemaV1(ShoutInput))
   .handler(({ data }) => backend().shout(requestInfo(), data));

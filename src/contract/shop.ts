@@ -18,6 +18,16 @@ export const SANDBOX_SHOP: ShopKey = Schema.decodeUnknownSync(ShopKey)(
 );
 
 /**
+ * `shopSnapshot`'s input, shared by both sides of the binding; see `ShoutInput`. `sessionToken`
+ * is a merchant's Shopify session token; its absence makes the caller a member.
+ */
+export const ShopSnapshotInput = Schema.Struct({
+  key: ShopKey,
+  sessionToken: Schema.optional(Schema.String),
+});
+export type ShopSnapshotInput = typeof ShopSnapshotInput.Type;
+
+/**
  * The caller is signed in, or holds a valid Shopify token, but may not open this shop: an
  * operator, someone with no `Member` row for it, or a token for another shop.
  */

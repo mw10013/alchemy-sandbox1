@@ -4,8 +4,7 @@ import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Forbidden, ReturnPath, Unauthorized } from "../../contract/auth.ts";
-import { NotAShopMember } from "../../contract/shop.ts";
-import { ShopKey } from "../../contract/shop.ts";
+import { NotAShopMember, ShopSnapshotInput } from "../../contract/shop.ts";
 import type { ConnectionCaller, ShopSnapshot } from "../../contract/shop-actor.ts";
 import { backend, requestInfo, rescue } from "./backend.ts";
 
@@ -24,7 +23,6 @@ export type ShopPageData =
   | { readonly _tag: "NotAMember" }
   | { readonly _tag: "Expired" };
 
-const ShopInput = Schema.Struct({ key: ShopKey, sessionToken: Schema.optional(Schema.String) });
 const decodeReturnPath = Schema.decodeUnknownOption(ReturnPath);
 
 /**
@@ -32,7 +30,7 @@ const decodeReturnPath = Schema.decodeUnknownOption(ReturnPath);
  * `/app` guard would send them.
  */
 export const getShopSnapshot = createServerFn({ method: "GET" })
-  .validator(Schema.toStandardSchemaV1(ShopInput))
+  .validator(Schema.toStandardSchemaV1(ShopSnapshotInput))
   .handler(({ data }): Promise<ShopPageData> =>
     backend()
       .shopSnapshot(requestInfo(), data)

@@ -35,6 +35,13 @@ export type Role = typeof Role.Type;
 export const Me = Schema.Struct({ id: Schema.String, email: Email, role: Role });
 export type Me = typeof Me.Type;
 
+/** `requestMagicLink`'s input, shared by both sides of the binding; see `ShoutInput`. */
+export const MagicLinkInput = Schema.Struct({
+  email: Email,
+  returnTo: Schema.optional(ReturnPath),
+});
+export type MagicLinkInput = typeof MagicLinkInput.Type;
+
 /**
  * `link` is Some only under inline delivery; see `MagicLinkDelivery` in the Backend. It crosses
  * the binding encoded, as `string | null`.

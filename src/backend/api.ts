@@ -7,17 +7,15 @@ import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
-  Email,
   Forbidden,
+  MagicLinkInput,
   MagicLinkRequested,
   RequestInfo,
-  ReturnPath,
   TooManyRequests,
   Unauthorized,
 } from "../contract/auth.ts";
-import { NotAShopMember } from "../contract/shop.ts";
-import { ShoutText } from "../contract/playground.ts";
-import { ShopKey } from "../contract/shop.ts";
+import { NotAShopMember, ShopSnapshotInput } from "../contract/shop.ts";
+import { ShoutInput } from "../contract/playground.ts";
 import { ShopActors } from "./shop-actors.ts";
 import { Auth } from "./auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
@@ -60,13 +58,9 @@ export class SignInLimiter extends Context.Service<SignInLimiter, Cloudflare.Rat
  * is a defect.
  */
 const decodeRequest = Schema.decodeUnknownEffect(RequestInfo);
-const decodeShout = Schema.decodeUnknownEffect(Schema.Struct({ input: ShoutText }));
-const decodeMagicLinkInput = Schema.decodeUnknownEffect(
-  Schema.Struct({ email: Email, returnTo: Schema.optional(ReturnPath) }),
-);
-const decodeSnapshotInput = Schema.decodeUnknownEffect(
-  Schema.Struct({ key: ShopKey, sessionToken: Schema.optional(Schema.String) }),
-);
+const decodeShout = Schema.decodeUnknownEffect(ShoutInput);
+const decodeMagicLinkInput = Schema.decodeUnknownEffect(MagicLinkInput);
+const decodeSnapshotInput = Schema.decodeUnknownEffect(ShopSnapshotInput);
 const encodeMagicLinkRequested = Schema.encodeSync(MagicLinkRequested);
 
 const make = Effect.gen(function* () {
@@ -94,7 +88,7 @@ const make = Effect.gen(function* () {
 
   const shout = Effect.fn("BackendApi.shout")(function* (
     _request: RequestInfo,
-    payload: { readonly input: ShoutText },
+    payload: ShoutInput,
   ) {
     const { input } = yield* decodeShout(payload).pipe(Effect.orDie);
     yield* Effect.log("Backend.Shout");
@@ -109,7 +103,7 @@ const make = Effect.gen(function* () {
    */
   const requestMagicLink = Effect.fn("BackendApi.requestMagicLink")(function* (
     request: RequestInfo,
-    payload: { readonly email: Email; readonly returnTo?: ReturnPath | undefined },
+    payload: MagicLinkInput,
   ) {
     const { ip } = yield* decodeRequest(request).pipe(Effect.orDie);
     const { email, returnTo } = yield* decodeMagicLinkInput(payload).pipe(Effect.orDie);
@@ -146,10 +140,7 @@ const make = Effect.gen(function* () {
    * unavailable gate is a defect.
    */
   const shopSnapshot = Effect.fn("BackendApi.shopSnapshot")(
-    function* (
-      request: RequestInfo,
-      payload: { readonly key: ShopKey; readonly sessionToken?: string | undefined },
-    ) {
+    function* (request: RequestInfo, payload: ShopSnapshotInput) {
       const { cookie } = yield* decodeRequest(request).pipe(Effect.orDie);
       const { key, sessionToken } = yield* decodeSnapshotInput(payload).pipe(Effect.orDie);
       yield* Effect.log(`Backend.shopSnapshot: shop=${key}`); // used to count calls in the dev log
