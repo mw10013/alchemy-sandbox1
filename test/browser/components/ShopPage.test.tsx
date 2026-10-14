@@ -5,20 +5,20 @@ import * as Schema from "effect/Schema";
 import * as Socket from "effect/socket/Socket";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
-import { renderInApp } from "../../test/browser/render.tsx";
-import { shopTestRegistry } from "../../test/browser/shop-actor.ts";
-import { applyCloseOutcome, closeOutcome, reconnectAtom } from "../actor-connection.ts";
-import { EmailFromInput } from "../api/backend.ts";
-import { SANDBOX_SHOP } from "../api/shop.ts";
+import { renderInApp } from "../render.tsx";
+import { shopTestRegistry } from "../shop-actor.ts";
+import { applyCloseOutcome, closeOutcome, reconnectAtom } from "../../../src/actor-connection.ts";
+import { EmailFromInput } from "../../../src/api/backend.ts";
+import { SANDBOX_SHOP } from "../../../src/api/shop.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_NOT_A_MEMBER,
   COUNT_KEY,
   type ConnectionCaller,
-} from "../api/shop-actor.ts";
-import type { ShopPageData } from "../server/shop.ts";
-import { noticeBus } from "../shop-actor-client.ts";
-import ShopPage from "./ShopPage.tsx";
+} from "../../../src/api/shop-actor.ts";
+import type { ShopPageData } from "../../../src/server/shop.ts";
+import { noticeBus } from "../../../src/shop-actor-client.ts";
+import ShopPage from "../../../src/components/ShopPage.tsx";
 
 const member: ConnectionCaller = {
   role: "member",

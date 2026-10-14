@@ -1,34 +1,28 @@
-import { Memory } from "@alchemy.run/better-auth";
 import { assert, describe, it } from "@effect/vitest";
 import { RuntimeContext } from "alchemy";
 import * as Cause from "effect/Cause";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
-import * as References from "effect/References";
 import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as Schema from "effect/Schema";
-import { EmailFromInput, type Member } from "../api/backend.ts";
-import { SANDBOX_SHOP, type ShopKey } from "../api/shop.ts";
-import { E2eEmail, TestControlRpcs } from "../api/test-control.ts";
-import { Auth } from "./auth.ts";
-import { MagicLinkDelivery } from "./magic-link-delivery.ts";
-import { Mailer, SentMail } from "./mailer.ts";
-import { ShopActors } from "./actor-client.ts";
-import { Members } from "./members.ts";
-import { Shopify } from "./shopify.ts";
+import { EmailFromInput, type Member } from "../../../src/api/backend.ts";
+import { SANDBOX_SHOP, type ShopKey } from "../../../src/api/shop.ts";
+import { E2eEmail, TestControlRpcs } from "../../../src/api/test-control.ts";
+import { QuietLogs, testAuth } from "../../utils/backend.ts";
+import { SentMail } from "../../../src/backend/mailer.ts";
+import { ShopActors } from "../../../src/backend/actor-client.ts";
+import { Shopify } from "../../../src/backend/shopify.ts";
 import {
   TestControlAuthLive,
   TestControlHandlers,
   TestControlToken,
   TestData,
-} from "./test-control.ts";
+} from "../../../src/backend/test-control.ts";
 
-const ORIGIN = "http://test.local";
 const TOKEN = "t";
 const email = Schema.decodeUnknownSync(EmailFromInput);
 
@@ -49,26 +43,19 @@ const revoked: Array<{ key: ShopKey; by: "member" | "session"; id: string }> = [
 const TestBackend = (delivery: "inline" | "mailed" = "inline") =>
   Layer.mergeAll(TestControlHandlers, TestControlAuthLive).pipe(
     Layer.provideMerge(
-      Auth.layerWith({ secret: "test-secret-test-secret-test-secret" }).pipe(
-        Layer.provideMerge(
-          Layer.mergeAll(
-            Members.layerTest(members),
-            ShopActors.layerTest(revoked),
-            Shopify.layerWith({ apiKey: "fake-api-key", apiSecret: Redacted.make("secret") }),
-            Layer.succeed(TestControlToken, TOKEN),
-            Layer.succeed(TestData, { reset: () => Effect.die("TestData needs D1") }),
-            (delivery === "inline"
-              ? MagicLinkDelivery.layerInline
-              : MagicLinkDelivery.layerMailed
-            ).pipe(Layer.provideMerge(Mailer.layerTest)),
-          ),
+      testAuth({
+        members,
+        actors: ShopActors.layerTest(revoked),
+        delivery,
+        extra: Layer.mergeAll(
+          Shopify.layerWith({ apiKey: "fake-api-key", apiSecret: Redacted.make("secret") }),
+          Layer.succeed(TestControlToken, TOKEN),
+          Layer.succeed(TestData, { reset: () => Effect.die("TestData needs D1") }),
         ),
-        Layer.provide(Memory()),
-        Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ AUTH_ORIGIN: ORIGIN }))),
-      ),
+      }),
     ),
     Layer.provide(RuntimeContext.phantom),
-    Layer.provide(Layer.succeed(References.MinimumLogLevel, "Warn")),
+    Layer.provide(QuietLogs),
   );
 
 const authorized = RpcClient.withHeaders({ "x-e2e-token": TOKEN });

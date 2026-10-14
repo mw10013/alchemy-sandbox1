@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { EmailFromInput } from "../src/api/backend.ts";
+import { EmailFromInput } from "../../src/api/backend.ts";
 import { control, expect, test } from "./fixtures.ts";
 import { followMagicLink, shell } from "./screens.ts";
 

@@ -75,7 +75,7 @@ dev mode, needs no running dev server and keeps its stack under `.alchemy/` on t
 stage. The stack is never destroyed: a re-run redeploys it as a no-op, and `vp run db:reset`
 wipes its local D1 along with dev's.
 
-`vp run test:e2e` runs the Playwright specs under `e2e/` in Chromium. It starts `alchemy dev`
+`vp run test:e2e` runs the Playwright specs under `test/e2e/` in Chromium. It starts `alchemy dev`
 on its own stage (`e2e_<user>`), with local state under `.alchemy/`, on `WEBSITE_PORT + 100`, so
 the dev server on `WEBSITE_PORT` keeps running; a server already on that port is reused, and one
 it started is stopped at the end. Before the specs it resets the stage's data (sessions,

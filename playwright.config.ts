@@ -20,7 +20,7 @@ export const e2eToken = process.env.E2E_TOKEN ?? "e2e";
  * `PLAYWRIGHT_TEST_BASE_URL` the specs run against that target and no server is started.
  */
 export default defineConfig({
-  testDir: "e2e",
+  testDir: "test/e2e",
   outputDir: "playwright/test-results",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,

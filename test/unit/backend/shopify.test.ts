@@ -1,8 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import { SANDBOX_SHOP } from "../api/shop.ts";
-import { Shopify } from "./shopify.ts";
+import { SANDBOX_SHOP } from "../../../src/api/shop.ts";
+import { Shopify } from "../../../src/backend/shopify.ts";
 
 const layer = Shopify.layerWith({
   apiKey: "fake-api-key",

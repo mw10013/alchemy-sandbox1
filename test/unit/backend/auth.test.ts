@@ -1,14 +1,11 @@
-import { Memory } from "@alchemy.run/better-auth";
 import { assert, describe, it } from "@effect/vitest";
 import { RuntimeContext } from "alchemy";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import {
   EmailFromInput,
@@ -16,17 +13,17 @@ import {
   ReturnPath,
   type Member,
   type RequestInfo,
-} from "../api/backend.ts";
-import { SANDBOX_SHOP, type ShopKey } from "../api/shop.ts";
-import { ShopActors } from "./actor-client.ts";
-import { BackendApi, SignInLimiter } from "./api.ts";
-import { Auth } from "./auth.ts";
-import { MagicLinkDelivery } from "./magic-link-delivery.ts";
-import { Mailer, SentMail } from "./mailer.ts";
-import { Members } from "./members.ts";
-import { ShopAccess } from "./shop-access.ts";
+} from "../../../src/api/backend.ts";
+import { SANDBOX_SHOP, type ShopKey } from "../../../src/api/shop.ts";
+import { ShopActors } from "../../../src/backend/actor-client.ts";
+import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
+import { MagicLinkDelivery } from "../../../src/backend/magic-link-delivery.ts";
+import { QuietLogs, TEST_ORIGIN, testAuth } from "../../utils/backend.ts";
+import { Auth } from "../../../src/backend/auth.ts";
+import { SentMail } from "../../../src/backend/mailer.ts";
+import { ShopAccess } from "../../../src/backend/shop-access.ts";
 
-const ORIGIN = "http://test.local";
+const ORIGIN = TEST_ORIGIN;
 const email = Schema.decodeUnknownSync(EmailFromInput);
 const returnPath = Schema.decodeUnknownSync(ReturnPath);
 const decodeRequested = Schema.decodeSync(MagicLinkRequested);
@@ -62,26 +59,19 @@ const TestBackend = ({
 }) =>
   BackendApi.layer.pipe(
     Layer.provideMerge(
-      Auth.layerWith({ secret: "test-secret-test-secret-test-secret" }).pipe(
-        Layer.provideMerge(
-          Layer.mergeAll(
-            Members.layerTest(members),
-            ShopActors.layerTest(revoked),
-            SignInLimiter.layerTest(allow),
-            Layer.succeed(ShopAccess, { resolve: () => Effect.die("ShopAccess needs D1") }),
-            (delivery === "inline"
-              ? MagicLinkDelivery.layerInline
-              : MagicLinkDelivery.layerMailed
-            ).pipe(Layer.provideMerge(Mailer.layerTest)),
-          ),
+      testAuth({
+        members,
+        actors: ShopActors.layerTest(revoked),
+        delivery,
+        extra: Layer.mergeAll(
+          SignInLimiter.layerTest(allow),
+          Layer.succeed(ShopAccess, { resolve: () => Effect.die("ShopAccess needs D1") }),
         ),
-        Layer.provide(Memory()),
-        Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ AUTH_ORIGIN: ORIGIN }))),
-      ),
+      }),
     ),
     // A Worker method runs with Alchemy's runtime marker, which the bridge provides per call.
     Layer.provideMerge(RuntimeContext.phantom),
-    Layer.provide(Layer.succeed(References.MinimumLogLevel, "Warn")),
+    Layer.provide(QuietLogs),
   );
 
 /** Serves one web `Request` through Better Auth's routes, as the Worker's `fetch` would. */

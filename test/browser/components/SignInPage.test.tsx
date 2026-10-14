@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
-import { renderInApp } from "../../test/browser/render.tsx";
-import { shopTestRegistry } from "../../test/browser/shop-actor.ts";
-import type { MagicLinkResult } from "../server/sign-in.ts";
-import SignInPage from "./SignInPage.tsx";
+import { renderInApp } from "../render.tsx";
+import { shopTestRegistry } from "../shop-actor.ts";
+import type { MagicLinkResult } from "../../../src/server/sign-in.ts";
+import SignInPage from "../../../src/components/SignInPage.tsx";
 
 const requestLink = async (screen: Awaited<ReturnType<typeof renderInApp>>, email: string) => {
   await screen.getByLabelText("Email").fill(email);

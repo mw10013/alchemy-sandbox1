@@ -2,9 +2,9 @@ import { useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { describe, expect, it } from "vite-plus/test";
-import { renderHookInApp, renderInApp } from "../../test/browser/render.tsx";
-import { shopTestRegistry } from "../../test/browser/shop-actor.ts";
-import { countQuery } from "../shop-actor-client.ts";
+import { renderHookInApp, renderInApp } from "../render.tsx";
+import { shopTestRegistry } from "../shop-actor.ts";
+import { countQuery } from "../../../src/shop-actor-client.ts";
 
 describe("browser tests", () => {
   it("render a Polaris element and click it", async () => {

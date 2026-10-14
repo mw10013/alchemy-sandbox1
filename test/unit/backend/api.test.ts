@@ -1,8 +1,6 @@
-import { Memory } from "@alchemy.run/better-auth";
 import { assert, describe, it } from "@effect/vitest";
 import { RuntimeContext } from "alchemy";
 import * as Cause from "effect/Cause";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -10,25 +8,22 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import {
   EmailFromInput,
   MagicLinkRequested,
   type Member,
   type RequestInfo,
-} from "../api/backend.ts";
-import { SANDBOX_SHOP, type ShopKey } from "../api/shop.ts";
-import type { ConnectionCaller } from "../api/shop-actor.ts";
-import { ShopActors } from "./actor-client.ts";
-import { BackendApi, SignInLimiter } from "./api.ts";
-import { Auth } from "./auth.ts";
-import { MagicLinkDelivery } from "./magic-link-delivery.ts";
-import { Mailer, SentMail } from "./mailer.ts";
-import { Members } from "./members.ts";
-import { ShopAccess, ShopAccessDenied } from "./shop-access.ts";
+} from "../../../src/api/backend.ts";
+import { SANDBOX_SHOP, type ShopKey } from "../../../src/api/shop.ts";
+import type { ConnectionCaller } from "../../../src/api/shop-actor.ts";
+import { ShopActors } from "../../../src/backend/actor-client.ts";
+import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
+import { QuietLogs, testAuth } from "../../utils/backend.ts";
+import { Auth } from "../../../src/backend/auth.ts";
+import { SentMail } from "../../../src/backend/mailer.ts";
+import { ShopAccess, ShopAccessDenied } from "../../../src/backend/shop-access.ts";
 
-const ORIGIN = "http://test.local";
 const email = Schema.decodeUnknownSync(EmailFromInput);
 const decodeRequested = Schema.decodeSync(MagicLinkRequested);
 
@@ -59,26 +54,19 @@ const TestBackend = ({
 } = {}) =>
   BackendApi.layer.pipe(
     Layer.provideMerge(
-      Auth.layerWith({ secret: "test-secret-test-secret-test-secret" }).pipe(
-        Layer.provideMerge(
-          Layer.mergeAll(
-            Members.layerTest(members),
-            ShopActors.layerTest([], snapshot),
-            SignInLimiter.layerTest(allow),
-            Layer.succeed(ShopAccess, { resolve: () => gate }),
-            (delivery === "inline"
-              ? MagicLinkDelivery.layerInline
-              : MagicLinkDelivery.layerMailed
-            ).pipe(Layer.provideMerge(Mailer.layerTest)),
-          ),
+      testAuth({
+        members,
+        actors: ShopActors.layerTest([], snapshot),
+        delivery,
+        extra: Layer.mergeAll(
+          SignInLimiter.layerTest(allow),
+          Layer.succeed(ShopAccess, { resolve: () => gate }),
         ),
-        Layer.provide(Memory()),
-        Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ AUTH_ORIGIN: ORIGIN }))),
-      ),
+      }),
     ),
     // A Worker method runs with Alchemy's runtime marker, which the bridge provides per call.
     Layer.provideMerge(RuntimeContext.phantom),
-    Layer.provide(Layer.succeed(References.MinimumLogLevel, "Warn")),
+    Layer.provide(QuietLogs),
   );
 
 /** Requests a link for `address` and follows it; returns the cookie header of the new session. */

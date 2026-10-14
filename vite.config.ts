@@ -56,16 +56,16 @@ export default defineConfig(({ command, mode, isPreview }) => {
     test: {
       passWithNoTests: true,
       projects: [
-        { test: { name: "unit", include: ["src/**/*.test.ts"] } },
+        { test: { name: "unit", include: ["test/unit/**/*.test.ts"] } },
         {
-          // Components and hooks in Chromium: a `.test.tsx` is a browser test, a `.test.ts` a
-          // Node test, and the globs must not overlap because `vitest/browser` throws in Node.
+          // Components and hooks in Chromium. The directory picks the runtime, and the unit and
+          // browser globs must not overlap because `vitest/browser` throws in Node.
           plugins: [react()],
           resolve: { alias: browserStubs },
           optimizeDeps: { include: ["react/jsx-dev-runtime"] },
           test: {
             name: "browser",
-            include: ["src/**/*.test.tsx"],
+            include: ["test/browser/**/*.test.{ts,tsx}"],
             setupFiles: ["test/browser/setup.ts"],
             browser: {
               enabled: true,

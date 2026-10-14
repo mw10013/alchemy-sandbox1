@@ -4,7 +4,7 @@ import {
   RequireMember,
   RequireMerchant,
   ShopActorRpcs,
-} from "./shop-actor.ts";
+} from "../../../src/api/shop-actor.ts";
 
 /** Each role's middleware and the name prefix its procedures carry. */
 const roles = [

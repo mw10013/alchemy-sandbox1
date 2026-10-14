@@ -11,7 +11,7 @@ import {
   merchantExpiredAtom,
   notAMemberAtom,
   retryPolicy,
-} from "./actor-connection.ts";
+} from "../../src/actor-connection.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_FORBIDDEN,
@@ -19,7 +19,7 @@ import {
   CONNECTION_CLOSE_REVOKED,
   CONNECTION_CLOSE_TRY_AGAIN,
   CONNECTION_CLOSE_UNAUTHENTICATED,
-} from "./api/shop-actor.ts";
+} from "../../src/api/shop-actor.ts";
 
 const closed = (code: number) =>
   new Socket.SocketError({ reason: new Socket.SocketCloseError({ code }) });

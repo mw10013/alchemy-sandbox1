@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { EmailFromInput, ReturnPath } from "./backend.ts";
+import { EmailFromInput, ReturnPath } from "../../../src/api/backend.ts";
 
 const decodeEmail = Schema.decodeUnknownEffect(EmailFromInput);
 const decodeReturnPath = Schema.decodeUnknownEffect(ReturnPath);

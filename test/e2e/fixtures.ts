@@ -7,9 +7,9 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { RpcClient, type RpcClientError, type RpcGroup, RpcSerialization } from "effect/rpc";
 import * as Schema from "effect/Schema";
-import { SANDBOX_SHOP, type ShopKey } from "../src/api/shop.ts";
-import { E2eEmail, TestControlRpcs } from "../src/api/test-control.ts";
-import { e2eToken } from "../playwright.config.ts";
+import { SANDBOX_SHOP, type ShopKey } from "../../src/api/shop.ts";
+import { E2eEmail, TestControlRpcs } from "../../src/api/test-control.ts";
+import { e2eToken } from "../../playwright.config.ts";
 
 type Run = <A, E>(effect: Effect.Effect<A, E, RpcClient.Protocol>) => Promise<A>;
 

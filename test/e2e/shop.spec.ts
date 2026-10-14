@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
-import { EmailFromInput } from "../src/api/backend.ts";
-import { SANDBOX_SHOP } from "../src/api/shop.ts";
+import { EmailFromInput } from "../../src/api/backend.ts";
+import { SANDBOX_SHOP } from "../../src/api/shop.ts";
 import {
   awaitHydration,
   control,
