@@ -74,6 +74,6 @@ export default Alchemy.Stack(
     });
     if (Option.isSome(e2eToken))
       yield* backend.bind("TestControl", { env: { E2E_TOKEN: e2eToken.value } });
-    return { websiteUrl: website.url.as<string>() };
+    return { websiteUrl: website.url.as<string>(), backendUrl: backend.url.as<string>() };
   }),
 );
