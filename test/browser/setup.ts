@@ -1,4 +1,4 @@
-import { POLARIS_URL } from "../../src/polaris.ts";
+import { POLARIS_URL } from "../../src/web/components/polaris.ts";
 
 /**
  * Loads Polaris from the CDN URL the site uses before any browser test renders, so a component

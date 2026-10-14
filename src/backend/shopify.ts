@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import type { ShopKey } from "../api/shop.ts";
+import type { ShopKey } from "../contract/shop.ts";
 
 /** The fake Shopify app's API key (its client ID), the `aud` of every token it accepts. */
 export const SHOPIFY_API_KEY = "fake-api-key";

@@ -12,7 +12,7 @@ import * as Yaml from "effect/encoding/Yaml";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import * as Stream from "effect/Stream";
 
-import { POLARIS_URL } from "../src/polaris.ts";
+import { POLARIS_URL } from "../src/web/components/polaris.ts";
 import { checkoutKind } from "./lib/worktree.ts";
 import * as ShopifyDocs from "./refs-shopify-docs.ts";
 

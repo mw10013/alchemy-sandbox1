@@ -1,4 +1,5 @@
 import { defineConfig, loadEnv } from "vite-plus";
+import type { OxlintOverride } from "vite-plus/lint";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import react from "@vitejs/plugin-react";
 import cloudflare from "@alchemy.run/cloudflare-runtime/vite";
@@ -15,16 +16,44 @@ const browserStub = (file: string) =>
   fileURLToPath(new URL(`test/browser/stubs/${file}`, import.meta.url));
 
 /**
- * Server-only modules that components reach through `backend-client.ts`, replaced for the
- * browser project. The app gets the same effect from the TanStack Start compiler, whose plugin
- * stops Vitest's browser runner from starting. Exact patterns, because a string key would also
- * capture `@tanstack/react-start/server`.
+ * `@tanstack/react-start`, replaced for the browser project: browser code calls its
+ * `createIsomorphicFn`, which the TanStack Start compiler splits in the app, and that plugin
+ * stops Vitest's browser runner from starting. An exact pattern, because a string key would
+ * also capture `@tanstack/react-start/server`.
  */
-const browserStubs = [
-  { find: /^@tanstack\/react-start$/, replacement: browserStub("start.ts") },
-  { find: /^@tanstack\/react-start\/server$/, replacement: browserStub("start-server.ts") },
-  { find: /^cloudflare:workers$/, replacement: browserStub("cloudflare-workers.ts") },
-];
+const browserStubs = [{ find: /^@tanstack\/react-start$/, replacement: browserStub("start.ts") }];
+
+/**
+ * Effect is consumed one module at a time: `import * as Effect from "effect/Effect"`. The root
+ * barrel drags all 160 modules through Vite dev and the Worker bundle.
+ */
+const effectBarrel = {
+  name: "effect",
+  message: 'Import Effect modules by path: import * as Effect from "effect/Effect".',
+};
+
+/**
+ * Keeps `files` from importing the `forbidden` runtime directories under `src/`, which would put
+ * one Worker's code in another's bundle. Only `contract/` is shared. An override replaces the
+ * base `no-restricted-imports` options, so it carries {@link effectBarrel} again.
+ */
+const runtimeBoundary = (
+  files: string,
+  forbidden: ReadonlyArray<string>,
+  message: string,
+  options: { allowTypeImports?: boolean } = {},
+): OxlintOverride => ({
+  files: [files],
+  rules: {
+    "no-restricted-imports": [
+      "error",
+      {
+        paths: [effectBarrel],
+        patterns: [{ group: forbidden.map((dir) => `**/${dir}/**`), message, ...options }],
+      },
+    ],
+  },
+});
 
 export default defineConfig(({ command, mode, isPreview }) => {
   if (
@@ -48,7 +77,7 @@ export default defineConfig(({ command, mode, isPreview }) => {
                   compatibilityDate: "2026-07-01",
                   compatibilityFlags: ["nodejs_compat"],
                 }),
-            tanstackStart(),
+            tanstackStart({ srcDirectory: "src/web" }),
             react(),
           ],
     // Alchemy overrides this with an internal port behind its public proxy.
@@ -90,26 +119,24 @@ export default defineConfig(({ command, mode, isPreview }) => {
         },
       ],
     },
-    fmt: { ignorePatterns: ["src/routeTree.gen.ts", "AGENTS.md", "refs/**"] },
+    fmt: { ignorePatterns: ["src/web/routeTree.gen.ts", "AGENTS.md", "refs/**"] },
     lint: {
       ignorePatterns: ["refs/**"],
       jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
       rules: {
         "vite-plus/prefer-vite-plus-imports": "error",
-        // Effect is consumed one module at a time: `import * as Effect from "effect/Effect"`.
-        // The root barrel drags all 160 modules through Vite dev and the Worker bundle.
-        "no-restricted-imports": [
-          "error",
-          {
-            paths: [
-              {
-                name: "effect",
-                message: 'Import Effect modules by path: import * as Effect from "effect/Effect".',
-              },
-            ],
-          },
-        ],
+        "no-restricted-imports": ["error", { paths: [effectBarrel] }],
       },
+      overrides: [
+        runtimeBoundary("src/contract/**", ["backend", "web"], "The contract imports only itself."),
+        runtimeBoundary(
+          "src/web/**",
+          ["backend"],
+          "The Website bundle never carries Backend code; use `import type`.",
+          { allowTypeImports: true },
+        ),
+        runtimeBoundary("src/backend/**", ["web"], "The Backend never imports the Website."),
+      ],
       options: { typeAware: true, typeCheck: true },
     },
   };

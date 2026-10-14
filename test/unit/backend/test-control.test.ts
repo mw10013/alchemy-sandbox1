@@ -9,12 +9,13 @@ import * as Ref from "effect/Ref";
 import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as Schema from "effect/Schema";
-import { EmailFromInput, type Member } from "../../../src/api/backend.ts";
-import { SANDBOX_SHOP, type ShopKey } from "../../../src/api/shop.ts";
-import { E2eEmail, TestControlRpcs } from "../../../src/api/test-control.ts";
-import { QuietLogs, testAuth } from "../../utils/backend.ts";
+import { EmailFromInput } from "../../../src/contract/auth.ts";
+import { type Member } from "../../../src/contract/members.ts";
+import { SANDBOX_SHOP, type ShopKey } from "../../../src/contract/shop.ts";
+import { E2eEmail, TestControlRpcs } from "../../../src/contract/test-control.ts";
+import { QuietLogs, testAuth } from "./layers.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
-import { ShopActors } from "../../../src/backend/actor-client.ts";
+import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { Shopify } from "../../../src/backend/shopify.ts";
 import {
   TestControlAuthLive,

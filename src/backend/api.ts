@@ -10,19 +10,19 @@ import {
   Email,
   Forbidden,
   MagicLinkRequested,
-  NotAShopMember,
   RequestInfo,
   ReturnPath,
-  ShoutText,
   TooManyRequests,
   Unauthorized,
-} from "../api/backend.ts";
-import { ShopKey } from "../api/shop.ts";
-import { ShopActors } from "./actor-client.ts";
+} from "../contract/auth.ts";
+import { NotAShopMember } from "../contract/shop.ts";
+import { ShoutText } from "../contract/playground.ts";
+import { ShopKey } from "../contract/shop.ts";
+import { ShopActors } from "./shop-actors.ts";
 import { Auth } from "./auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { Members } from "./members.ts";
-import { sessionFromCookie } from "./middleware.ts";
+import { sessionFromCookie } from "./auth.ts";
 import { SignInLimit } from "./resources.ts";
 import { ShopAccess } from "./shop-access.ts";
 

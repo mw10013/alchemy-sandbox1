@@ -1,0 +1,16 @@
+diff --git a/package.json b/package.json
+index c75d103f082483bcb8dc4e4f1f4c4aa27ac343df..996830b2afef41bf729be18ecaf529ce2cf602bf 100644
+--- a/package.json
++++ b/package.json
+@@ -162,6 +162,11 @@
+       "bun": "./src/Cloudflare/Live.ts",
+       "default": "./lib/Cloudflare/Live.js"
+     },
++    "./Cloudflare/RpcWebSocket": {
++      "types": "./lib/Cloudflare/Workers/RpcWebSocket.d.ts",
++      "bun": "./src/Cloudflare/Workers/RpcWebSocket.ts",
++      "default": "./lib/Cloudflare/Workers/RpcWebSocket.js"
++    },
+     "./Cloudflare/RpcWebSocketClient": {
+       "types": "./lib/Cloudflare/Workers/RpcWebSocketClient.d.ts",
+       "bun": "./src/Cloudflare/Workers/RpcWebSocketClient.ts",

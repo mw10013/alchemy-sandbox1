@@ -13,8 +13,8 @@ import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
-import { Forbidden } from "../api/backend.ts";
-import { ShopKey } from "../api/shop.ts";
+import { Forbidden } from "../contract/auth.ts";
+import { ShopKey } from "../contract/shop.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_FORBIDDEN,
@@ -31,7 +31,7 @@ import {
   RequireMerchant,
   ShopActorRpcs,
   type ShopSnapshot,
-} from "../api/shop-actor.ts";
+} from "../contract/shop-actor.ts";
 import * as ActorSocket from "./actor-socket.ts";
 
 /** A row of the `count` table. A row that does not decode is a broken invariant, so it dies. */

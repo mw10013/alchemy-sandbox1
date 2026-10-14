@@ -5,8 +5,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { type Email, Member, MemberExists } from "../api/backend.ts";
-import { ShopKey } from "../api/shop.ts";
+import { type Email } from "../contract/auth.ts";
+import { Member, MemberExists } from "../contract/members.ts";
+import { ShopKey } from "../contract/shop.ts";
 import { AuthDb } from "./resources.ts";
 
 /** Rows of the `Member` table. A row that does not decode is a broken invariant, so it dies. */

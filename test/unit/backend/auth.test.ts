@@ -11,14 +11,14 @@ import {
   EmailFromInput,
   MagicLinkRequested,
   ReturnPath,
-  type Member,
   type RequestInfo,
-} from "../../../src/api/backend.ts";
-import { SANDBOX_SHOP, type ShopKey } from "../../../src/api/shop.ts";
-import { ShopActors } from "../../../src/backend/actor-client.ts";
+} from "../../../src/contract/auth.ts";
+import { type Member } from "../../../src/contract/members.ts";
+import { SANDBOX_SHOP, type ShopKey } from "../../../src/contract/shop.ts";
+import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
 import { MagicLinkDelivery } from "../../../src/backend/magic-link-delivery.ts";
-import { QuietLogs, TEST_ORIGIN, testAuth } from "../../utils/backend.ts";
+import { QuietLogs, TEST_ORIGIN, testAuth } from "./layers.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopAccess } from "../../../src/backend/shop-access.ts";

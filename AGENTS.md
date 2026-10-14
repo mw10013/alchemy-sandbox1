@@ -31,5 +31,5 @@ Dev logs: `.logs/dev/current`. Rotated archives: `.logs/dev/`.
 Staging logs: use `cf o11y telemetry query` on `cloudflare-workers`, filtering `$metadata.service` to `alchemy-sandbox1-website-staging-a6uwn3bzazl3yzgy`.
 
 ## UI: Polaris web components
-- Layout lives only in named parts under `src/components/screen/`. Elsewhere, no `s-stack`, `s-grid`, `s-box` or layout props (`gap`, `padding`, …); a new shape is a new part.
+- Layout lives only in named parts under `src/web/components/screen/`. Elsewhere, no `s-stack`, `s-grid`, `s-box` or layout props (`gap`, `padding`, …); a new shape is a new part.
 - Outside the Shopify admin nothing intercepts Polaris anchors: navigate with a TanStack `<Link>`, or `href` plus an `onClick` that calls the router.

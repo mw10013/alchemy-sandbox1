@@ -8,7 +8,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Schema from "effect/Schema";
-import { EmailFromInput } from "../../src/api/backend.ts";
+import { EmailFromInput } from "../../src/contract/auth.ts";
 import { control } from "./actor-clients.ts";
 import Stack from "./stack.ts";
 

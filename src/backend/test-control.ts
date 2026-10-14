@@ -6,9 +6,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { ConnectionCaller } from "../api/shop-actor.ts";
-import { TestControlAuth, TestControlRpcs, TestControlUnauthorized } from "../api/test-control.ts";
-import { ShopActors } from "./actor-client.ts";
+import { ConnectionCaller } from "../contract/shop-actor.ts";
+import {
+  TestControlAuth,
+  TestControlRpcs,
+  TestControlUnauthorized,
+} from "../contract/test-control.ts";
+import { ShopActors } from "./shop-actors.ts";
 import { Auth } from "./auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { Members } from "./members.ts";

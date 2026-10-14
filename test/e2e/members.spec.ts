@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
-import { SANDBOX_SHOP } from "../../src/api/shop.ts";
-import { E2eEmail } from "../../src/api/test-control.ts";
+import { SANDBOX_SHOP } from "../../src/contract/shop.ts";
+import { E2eEmail } from "../../src/contract/test-control.ts";
 import { control, expect, test } from "./fixtures.ts";
 
 test.use({ storageState: "playwright/.auth/admin.json" });

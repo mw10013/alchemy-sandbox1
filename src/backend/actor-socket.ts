@@ -9,9 +9,9 @@ import * as Option from "effect/Option";
 import { type Rpc, type RpcGroup, RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import { CONNECTION_CLOSE_FORBIDDEN, ConnectionCaller } from "../api/shop-actor.ts";
-// Alchemy's internal transport, reached by file: its package exports map has no entry for it.
-import * as RpcWebSocket from "../../node_modules/alchemy/lib/Cloudflare/Workers/RpcWebSocket.js";
+import { CONNECTION_CLOSE_FORBIDDEN, ConnectionCaller } from "../contract/shop-actor.ts";
+// Alchemy's internal transport; patches/ adds the exports entry the package lacks.
+import * as RpcWebSocket from "alchemy/Cloudflare/RpcWebSocket";
 
 /**
  * Who is on a socket, written into its attachment when the socket is accepted: the caller the

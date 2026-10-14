@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import http from "node:http";
-import { SANDBOX_SHOP, ShopKey } from "../../src/api/shop.ts";
-import { CONNECTION_CLOSE_NOT_A_MEMBER } from "../../src/api/shop-actor.ts";
+import { SANDBOX_SHOP, ShopKey } from "../../src/contract/shop.ts";
+import { CONNECTION_CLOSE_NOT_A_MEMBER } from "../../src/contract/shop-actor.ts";
 import { awaitHydration, expect, ownMember, test } from "./fixtures.ts";
 import { shop } from "./screens.ts";
 

@@ -11,7 +11,7 @@ import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 import * as Schema from "effect/Schema";
-import { ShopKey } from "../api/shop.ts";
+import { ShopKey } from "../contract/shop.ts";
 import {
   CONNECTION_CLOSE_FORBIDDEN,
   CONNECTION_CLOSE_NOT_A_MEMBER,
@@ -19,9 +19,9 @@ import {
   CONNECTION_CLOSE_UNAUTHENTICATED,
   CONNECTION_HEADER,
   ConnectionCaller,
-} from "../api/shop-actor.ts";
-import { TestControlRpcs } from "../api/test-control.ts";
-import { ShopActors } from "./actor-client.ts";
+} from "../contract/shop-actor.ts";
+import { TestControlRpcs } from "../contract/test-control.ts";
+import { ShopActors } from "./shop-actors.ts";
 import { BackendApi, SignInLimiter } from "./api.ts";
 import { Auth } from "./auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";

@@ -9,7 +9,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
-import { SANDBOX_SHOP, ShopKey } from "../../src/api/shop.ts";
+import { SANDBOX_SHOP, ShopKey } from "../../src/contract/shop.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_FORBIDDEN,
@@ -18,7 +18,7 @@ import {
   CONNECTION_CLOSE_UNAUTHENTICATED,
   CONNECTION_HEADER,
   COUNT_KEY,
-} from "../../src/api/shop-actor.ts";
+} from "../../src/contract/shop-actor.ts";
 import {
   authOrigin,
   type Credential,

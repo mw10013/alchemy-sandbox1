@@ -1,4 +1,4 @@
-import "../../src/styles.css";
+import "../../src/web/styles.css";
 import { RegistryContext } from "@effect/atom-react";
 import type * as AtomRegistry from "effect/reactivity/AtomRegistry";
 import type { ReactNode } from "react";

@@ -12,8 +12,8 @@ import {
   RequireMember,
   RequireMerchant,
   ShopActorRpcs,
-} from "../../src/api/shop-actor.ts";
-import { ShopActorClient } from "../../src/shop-actor-client.ts";
+} from "../../src/contract/shop-actor.ts";
+import { ShopActorClient } from "../../src/web/client/shop-actor-client.ts";
 
 type Handlers = RpcGroup.HandlersFrom<RpcGroup.Rpcs<typeof ShopActorRpcs>>;
 

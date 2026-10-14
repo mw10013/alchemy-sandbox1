@@ -12,14 +12,14 @@ import * as Schema from "effect/Schema";
 import {
   EmailFromInput,
   MagicLinkRequested,
-  type Member,
   type RequestInfo,
-} from "../../../src/api/backend.ts";
-import { SANDBOX_SHOP, type ShopKey } from "../../../src/api/shop.ts";
-import type { ConnectionCaller } from "../../../src/api/shop-actor.ts";
-import { ShopActors } from "../../../src/backend/actor-client.ts";
+} from "../../../src/contract/auth.ts";
+import { type Member } from "../../../src/contract/members.ts";
+import { SANDBOX_SHOP, type ShopKey } from "../../../src/contract/shop.ts";
+import type { ConnectionCaller } from "../../../src/contract/shop-actor.ts";
+import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
-import { QuietLogs, testAuth } from "../../utils/backend.ts";
+import { QuietLogs, testAuth } from "./layers.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopAccess, ShopAccessDenied } from "../../../src/backend/shop-access.ts";

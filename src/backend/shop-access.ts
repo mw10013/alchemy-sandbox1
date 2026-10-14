@@ -6,11 +6,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type { ShopKey } from "../api/shop.ts";
-import type { ConnectionCaller } from "../api/shop-actor.ts";
+import type { ShopKey } from "../contract/shop.ts";
+import type { ConnectionCaller } from "../contract/shop-actor.ts";
 import { Auth } from "./auth.ts";
 import { Members } from "./members.ts";
-import { sessionFromCookie } from "./middleware.ts";
+import { sessionFromCookie } from "./auth.ts";
 import { AuthDb } from "./resources.ts";
 import { Shopify } from "./shopify.ts";
 

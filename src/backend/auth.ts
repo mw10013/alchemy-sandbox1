@@ -8,14 +8,15 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { Email } from "../api/backend.ts";
+import { Email, Me, Unauthorized } from "../contract/auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
-import { ShopActors } from "./actor-client.ts";
+import { ShopActors } from "./shop-actors.ts";
 import { Members } from "./members.ts";
 
 const MAGIC_LINK_TTL_SECONDS = 300;
 
 const decodeEmail = Schema.decodeUnknownOption(Email);
+const decodeMe = Schema.decodeUnknownEffect(Me);
 
 export interface AuthOptions {
   /**
@@ -197,3 +198,30 @@ export class Auth extends Context.Service<Auth, Effect.Success<ReturnType<typeof
   static readonly layerWith = (options: AuthOptions) => Layer.effect(Auth, makeAuth(options));
   static readonly layer = Auth.layerWith({});
 }
+
+/**
+ * Resolves the Better Auth session from a `cookie` header value: the signed-in user as
+ * {@link Me}, the session's id, and its expiry in epoch ms. No session, or one that does not
+ * decode, is {@link Unauthorized}. The actor gate needs the session itself, to scope a revoke to
+ * it and to stop serving a socket past its expiry.
+ */
+export const sessionFromCookie = Effect.fn("sessionFromCookie")(function* (
+  cookie: string | undefined,
+) {
+  const { auth } = yield* Auth;
+  const session = yield* auth.getSession(new Headers({ cookie: cookie ?? "" })).pipe(
+    Effect.mapError(() => new Unauthorized()),
+    Effect.catchDefect(() => Effect.fail(new Unauthorized())),
+  );
+  if (session === null) return yield* new Unauthorized();
+  const me = yield* decodeMe({
+    id: session.user.id,
+    email: session.user.email,
+    role: session.user.role,
+  }).pipe(Effect.mapError(() => new Unauthorized()));
+  return {
+    me,
+    sessionId: session.session.id,
+    sessionExpiresAt: session.session.expiresAt.getTime(),
+  };
+});

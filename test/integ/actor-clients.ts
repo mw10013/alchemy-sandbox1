@@ -14,8 +14,8 @@ import { RpcClient, type RpcClientError, type RpcGroup, RpcSerialization } from 
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Socket from "effect/socket/Socket";
-import { type Email, EmailFromInput } from "../../src/api/backend.ts";
-import type { ShopKey } from "../../src/api/shop.ts";
+import { type Email, EmailFromInput } from "../../src/contract/auth.ts";
+import type { ShopKey } from "../../src/contract/shop.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_FORBIDDEN,
@@ -25,8 +25,8 @@ import {
   type Notice,
   NoticeFrame,
   ShopActorRpcs,
-} from "../../src/api/shop-actor.ts";
-import { TestControlRpcs } from "../../src/api/test-control.ts";
+} from "../../src/contract/shop-actor.ts";
+import { TestControlRpcs } from "../../src/contract/test-control.ts";
 
 /**
  * Clients for the integ tests, straight at the Backend (no Website or Vite in front): Better

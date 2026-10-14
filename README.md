@@ -9,7 +9,7 @@ Two request paths:
 
 - **Pages and Backend-owned writes:** browser → Website → server function → Backend. Route
   loaders, `beforeLoad` guards and writes the Backend owns (the sign-in link, members) call
-  TanStack server functions (`src/server/`), which call the Backend's methods schemaless over
+  TanStack server functions (`src/web/server/`), which call the Backend's methods schemaless over
   the `BACKEND` binding and forward the visitor's cookie. The Backend checks the session in
   every method.
 - **Live actor data:** browser → Website → the Backend's gate → actor socket. The Backend also
@@ -61,7 +61,7 @@ page and in `.logs/dev/current` instead of being emailed.
 ```sh
 vp check
 vp test                    # unit, browser and integ projects
-vp test --project unit     # in-process tests under src/, Better Auth on an in-memory database
+vp test --project unit     # in-process tests under test/unit/, Better Auth on an in-memory database
 vp test --project integ    # deploys the Backend into workerd (test/integ) and drives it over HTTP
 vp run test:e2e            # Playwright, Chromium, against the e2e_<user> stage (not part of vp test)
 vp build
@@ -116,19 +116,11 @@ replacement, and a failed download leaves the existing reference intact.
 Cloudflare docs snapshot the upstream `production` branch; refresh them with
 `vp run refs fetch cloudflare-docs`.
 
-`polaris` snapshots the Polaris bundle from the URL the site loads: `refs/polaris/` holds it raw
-(`*.min.js`) and formatted with `vp fmt` (`*.js`, about 32k lines) for reading. The CDN sends no
-version header, so the stamp's version is the build hash from the bundle's first line, and
-`check` reports it with the fetch date rather than comparing against the live bundle. Polaris's
-JSX types are read from `node_modules/@shopify/polaris-types`.
-
 Shopify docs are opt-in: `vp run refs fetch shopify-docs` downloads app build/design/launch
 pages, API guides and selected Admin GraphQL resources into `refs/shopify-docs/docs/`,
 with local images under `_assets/`. This ports Baton's sitemap-driven Markdown fetcher,
-including webhook topics decoded from Shopify's data endpoint. The App Home reference is also
-fetched under `v2.0-rc`, the Polaris version the site loads: those pages are missing from the
-sitemap, so each `app-home/latest` page is requested again under `app-home/v2.0-rc`, and a 404
-is skipped. `refs:all` skips this multi-minute mirror.
+including webhook topics decoded from Shopify's data endpoint. `refs:all` skips this
+multi-minute mirror.
 
 Webhook topics follow the `API_VERSION` in `scripts/refs-shopify-docs.ts` (currently
 `2026-10`); other API sections follow the site's `latest` pages. The stamp checks that
@@ -160,7 +152,7 @@ before running the deployment script, which auto-approves with `--yes`. Producti
 is reserved for a separate future instance. See
 [environment research](docs/alchemy-stages-and-deployments-research.md) for details.
 
-## Dependencies and Polaris
+## Dependencies
 
 ### Changing Node or pnpm versions
 
@@ -198,16 +190,5 @@ One upstream peer warning remains: Alchemy's transitive `capnp-es@0.0.16` declar
 TypeScript 5/6 support, while the requested latest TypeScript is `7.0.2`.
 The build, typecheck, and tests work with this version; the warning is not suppressed.
 
-Polaris is not an npm dependency at runtime: the root document loads it from Shopify's CDN
-(`src/polaris.ts`), with no App Bridge. Only its types are installed,
-`@shopify/polaris-types`, pinned exactly to the release that matches the script. Shopify
-publishes a stable release at a new URL rather than updating the release candidate's, so moving
-to stable 2.x changes the script URL and the types package together:
-
-```sh
-vp add -D -E @shopify/polaris-types@<version>
-```
-
 References: [Alchemy + TanStack Start](https://alchemy.run/cloudflare/frontend/tanstack-start),
-[Polaris web components 2.0 RC](https://shopify.dev/docs/api/app-home/v2.0-rc/web-components),
 [VP scaffolding](https://viteplus.dev/guide/create).
