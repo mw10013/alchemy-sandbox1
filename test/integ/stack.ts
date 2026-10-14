@@ -1,6 +1,7 @@
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
+import { seedAuth } from "../../src/backend/auth-seed.ts";
 import { SHOPIFY_API_KEY } from "../../src/backend/shopify.ts";
 import Backend from "../../src/backend/worker.ts";
 
@@ -20,6 +21,7 @@ export default Alchemy.Stack(
   { providers: Cloudflare.providers(), state: Alchemy.localState() },
   Effect.gen(function* () {
     const backend = yield* Backend;
+    yield* seedAuth(backend);
     yield* backend.bind("AuthOrigin", { env: { AUTH_ORIGIN: backend.url } });
     yield* backend.bind("MagicLinkDelivery", { env: { MAGIC_LINK_DELIVERY: "inline" } });
     yield* backend.bind("Shopify", {

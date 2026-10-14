@@ -24,7 +24,7 @@ export class TestControlAuth extends RpcMiddleware.Service<TestControlAuth>()("T
  * binding, which the stack never sets on production.
  *
  * - `ResetData` removes every session, account and verification row, every `@e2e.test` user
- *   and `Member` row, and puts back the operator, so a stage is back to its seeded state.
+ *   and `Member` row, so a stage is back to its seeded state; the seeded operator stays.
  * - `AddMember` and `RemoveMember` edit a shop's `Member` rows, as an admin UI would;
  *   `RemoveMember` then revokes the member's sockets on that shop's actor and answers how
  *   many it closed.

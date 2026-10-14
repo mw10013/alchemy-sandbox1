@@ -39,7 +39,8 @@ vp run dev:stop
 vp run db:reset    # wipe and reseed the local auth database, then restart
 ```
 
-Open `http://localhost:$(pnpm port)`. The server is `alchemy dev` under stage `dev`, using
+Open `http://localhost:$(pnpm port)`. The server is `alchemy dev` under this checkout's stage
+(`dev_<user>`, or `dev_<user>_wtNN` in a worktree; `node scripts/dev-stage.ts` prints it), using
 local implementations where available and cloud resources when needed. The shared
 Cloudflare state backend requires cloud access. Development logs are captured by
 `s6-log` (install with `brew install s6`) in `.logs/dev`. No official
@@ -50,10 +51,8 @@ and points to `vp run dev`, which supplies the Backend and application bindings.
 
 Sign in at `/sign-in` with a seeded dev account (`seed/dev.sql`): `m1@m.com` or `m2@m.com`
 (members), or `a@a.com`, the operator. The operator is a Better Auth user row with
-`role = 'admin'`, which the seed cannot insert (it runs before Better Auth's tables exist on a
-fresh database); test stages get it from test control's `ResetData`, and a fresh dev database
-needs it inserted once, for example with `sqlite3` on the dev D1 file under
-`.alchemy/local/d1`. Under `alchemy dev` the magic link is shown on the
+`role = 'admin'`; `seed/dev-auth.sql` holds it, and the `AuthSeed` Action inserts it after Better
+Auth's migration, on every fresh database. Under `alchemy dev` the magic link is shown on the
 page and in `.logs/dev/current` instead of being emailed.
 
 ## Validate
@@ -79,7 +78,7 @@ wipes its local D1 along with dev's.
 on its own stage (`e2e_<user>`), with local state under `.alchemy/`, on `WEBSITE_PORT + 100`, so
 the dev server on `WEBSITE_PORT` keeps running; a server already on that port is reused, and one
 it started is stopped at the end. Before the specs it resets the stage's data (sessions,
-`@e2e.test` users and members, and the operator's row) and signs in once per role through the test-control procedures, which
+`@e2e.test` users and members; the seeded operator stays) and signs in once per role through the test-control procedures, which
 the Backend serves only on a stage given an `E2E_TOKEN`. `vp run test:e2e:ui` opens Playwright's
 UI mode; arguments pass straight through, as in `vp run test:e2e --grep-invert @dev-only` (no
 `--`). Reports, traces and saved sign-ins go to `playwright/`, which is ignored.

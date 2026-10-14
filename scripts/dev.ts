@@ -33,9 +33,12 @@
  * `start` and `stop` hold `.logs/dev.lock` so parallel agents in one checkout
  * cannot start two servers.
  *
- * `db:reset` stops the server, forgets the dev AuthDb and its Better Auth
- * migration in Alchemy's state, removes the local data under `.alchemy/local`
- * (D1 and simulated email), and starts the server, which recreates, migrates
+ * The server runs under this checkout's dev stage (`dev_<user>`, or `dev_<user>_wtNN` in a
+ * worktree), which `scripts/dev-stage.ts` prints.
+ *
+ * `db:reset` stops the server, forgets the dev AuthDb, its Better Auth
+ * migration and its auth seed in Alchemy's state, removes the local data under `.alchemy/local`
+ * (D1 and simulated email) and the e2e and integ stages' local state, and starts the server, which recreates, migrates
  * and seeds the database. Dev resources are all local, so nothing in the
  * cloud is touched.
  */
@@ -58,25 +61,42 @@ import { fileURLToPath } from "node:url";
 
 import { runCommand } from "./lib/command.ts";
 import * as Herdr from "./lib/herdr.ts";
-import { checkoutKind, currentBranch } from "./lib/worktree.ts";
+import { checkoutKind, currentBranch, devStage } from "./lib/worktree.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/u, "");
 const LOG = ".logs/dev/current";
 const LOCK = ".logs/dev.lock";
 const DEV_TAB = "dev";
 /**
- * Matched against command lines: the `dev:alchemy` script's `--stage dev` keeps an e2e stage's
- * `alchemy dev` in the same checkout (Playwright's web server, on another port) out of reach.
+ * This checkout's dev stage, resolved on first use and kept. The `dev:alchemy` script passes it
+ * as `--stage`, so it is also the part of the server's command line that tells this checkout's
+ * `alchemy dev` from another checkout's and from an e2e stage's (Playwright's web server, on
+ * another port, sets its stage through `ALCHEMY_STAGE` and has no `--stage` to match). The
+ * script's own shell holds the stage only as `$stage`, so the match is on Alchemy's CLI process,
+ * which gets the expanded argument. `dev_mw` also matches `dev_mw_wt01`; the working-directory
+ * check that follows every match separates them.
  */
-const SERVER_PROCESS = "alchemy dev --stage dev";
+const stage = Effect.runSync(Effect.cached(devStage.pipe(Effect.provide(NodeServices.layer))));
+const serverProcess = stage.pipe(Effect.map((name) => ` dev --stage ${name}`));
 const START_TIMEOUT_MS = 180_000;
 const LOCAL_DATA = ".alchemy/local";
 /**
- * The dev stack's records for the auth database and the Better Auth migration Action that
- * runs against it (`alchemy state list Alchemy-sandbox1/dev -r`). Both must go: a recreated
- * database needs the migration to run again.
+ * The local state of the stages that keep it (`ALCHEMY_STATE=local`: e2e, and the integ
+ * harness). Their resources live in {@link LOCAL_DATA}, so `db:reset` removes this with it, or
+ * their records would point at databases that are gone and their next run would fail.
  */
-const AUTH_DB_STATE = ["Alchemy-sandbox1/dev/AuthDb", "Alchemy-sandbox1/dev/BetterAuthMigrate"];
+const LOCAL_STATE = ".alchemy/state";
+/**
+ * The dev stack's records for the auth database, the Better Auth migration Action that runs
+ * against it and the `AuthSeed` Action that runs after that (`alchemy state list
+ * Alchemy-sandbox1/<stage> -r`). All must go: a recreated database needs the migration and the
+ * seed to run again.
+ */
+const authDbState = stage.pipe(
+  Effect.map((name) =>
+    ["AuthDb", "BetterAuthMigrate", "AuthSeed"].map((id) => `Alchemy-sandbox1/${name}/${id}`),
+  ),
+);
 const STOP_TIMEOUT_MS = 20_000;
 
 class DevError extends Schema.TaggedError<DevError>()("DevError", {
@@ -136,8 +156,9 @@ const cwdOf = (pid: number) =>
     Effect.orElseSucceed(() => Option.none<string>()),
   );
 
-/** Processes whose command line runs `alchemy dev` in this checkout (the `dev:alchemy` script's shell and Alchemy's CLI). */
-const serverPids = runCommand("pgrep", ["-f", SERVER_PROCESS]).pipe(
+/** Alchemy's CLI process running this checkout's `alchemy dev`; its exit ends the `dev:alchemy` pipeline. */
+const serverPids = serverProcess.pipe(
+  Effect.flatMap((command) => runCommand("pgrep", ["-f", command])),
   Effect.map(pidsFrom),
   Effect.orElseSucceed((): number[] => []),
   Effect.flatMap((pids) =>
@@ -192,6 +213,7 @@ const answering = (port: number) =>
 const findServerPane = Effect.gen(function* () {
   if (!(yield* Herdr.running)) return Option.none<Herdr.Pane>();
   const panes = yield* Herdr.listPanes;
+  const command = yield* serverProcess;
   const hosting = yield* Effect.forEach(
     panes,
     (pane) =>
@@ -199,7 +221,7 @@ const findServerPane = Effect.gen(function* () {
         Effect.map(({ processes }) =>
           processes.some(
             (process) =>
-              process.argv.join(" ").includes(SERVER_PROCESS) &&
+              process.argv.join(" ").includes(command) &&
               (process.cwd === undefined || process.cwd === ROOT),
           )
             ? [pane]
@@ -487,21 +509,22 @@ const dbResetCommand = Command.make("db:reset", {}, () =>
   Effect.gen(function* () {
     const port = yield* loadPort;
     yield* withLock(step("stop", stopServer(port)));
-    for (const record of AUTH_DB_STATE)
+    for (const record of yield* authDbState)
       yield* step(
         `forget ${record}`,
         runCommand("vp", ["exec", "alchemy", "state", "delete", record, "--no-input"]),
       );
     const fs = yield* FileSystem.FileSystem;
-    yield* step(
-      `remove ${LOCAL_DATA}`,
-      fs.remove(path.join(ROOT, LOCAL_DATA), { recursive: true, force: true }),
-    );
+    for (const dir of [LOCAL_DATA, LOCAL_STATE])
+      yield* step(
+        `remove ${dir}`,
+        fs.remove(path.join(ROOT, dir), { recursive: true, force: true }),
+      );
     yield* startServer;
   }).pipe(Effect.mapError(toUserError)),
 ).pipe(
   Command.withDescription(
-    "Reset the dev database: stop, forget AuthDb in Alchemy's state, remove local data, start.",
+    "Reset the dev database: stop, forget AuthDb in Alchemy's state, remove local data and local state, start.",
   ),
 );
 

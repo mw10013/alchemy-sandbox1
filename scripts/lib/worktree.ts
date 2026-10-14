@@ -130,3 +130,42 @@ export const checkoutPaths = runCommand("git", ["worktree", "list", "--porcelain
       .map((line) => line.slice("worktree ".length)),
   ),
 );
+
+/** `$USER` as a stage part: lowercase letters and digits only, so the stage matches Alchemy's `[a-z0-9]+([-_a-z0-9]+)*` with underscores between parts. */
+const StageUser = Schema.String.check(Schema.isPattern(/^[a-z0-9]+$/u));
+
+/**
+ * The dev stage for a checkout: `dev_<user>` in the main checkout, whatever branch it is on, and
+ * `dev_<user>_wtNN` in a linked worktree on branch `wt-NN`. Fails, rather than falling back to
+ * a guess, when `user` is not lowercase letters and digits or a linked worktree is on another
+ * branch.
+ */
+export const devStageOf = Effect.fn("devStageOf")(function* (
+  user: string | undefined,
+  checkout: { readonly linked: boolean },
+  branch: string,
+) {
+  const part = yield* Schema.decodeUnknownEffect(StageUser)(user).pipe(
+    Effect.mapError(
+      () =>
+        new WorktreeError({
+          message: `$USER must be lowercase letters and digits to name a dev stage, got ${JSON.stringify(user)}`,
+        }),
+    ),
+  );
+  if (!checkout.linked) return `dev_${part}`;
+  const index = yield* Effect.fromOption(worktreeIndex(branch)).pipe(
+    Effect.mapError(
+      () =>
+        new WorktreeError({
+          message: `a linked worktree must be on a wt-NN branch to name a dev stage, got "${branch}"`,
+        }),
+    ),
+  );
+  return `dev_${part}_${worktreeName(index).replace("-", "")}`;
+});
+
+/** This checkout's dev stage, from `$USER` and the checkout; see {@link devStageOf}. */
+export const devStage = Effect.all([checkoutKind, currentBranch]).pipe(
+  Effect.flatMap(([checkout, branch]) => devStageOf(process.env.USER, checkout, branch)),
+);

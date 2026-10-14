@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type { DeliveryMode } from "./src/backend/magic-link-delivery.ts";
 import Backend from "./src/backend/worker.ts";
+import { seedAuth } from "./src/backend/auth-seed.ts";
 import { SHOPIFY_API_KEY } from "./src/backend/shopify.ts";
 
 /**
@@ -56,6 +57,7 @@ export default Alchemy.Stack(
     // already binds the Backend, so its URL is attached as a binding, which may form a
     // cycle, rather than as a Backend prop. Under alchemy dev it is the local dev URL.
     const backend = yield* Backend;
+    yield* seedAuth(backend);
     yield* backend.bind("AuthOrigin", { env: { AUTH_ORIGIN: website.url } });
     const stage = yield* Alchemy.Stage;
     const e2eToken = yield* Config.option(Config.String("E2E_TOKEN"));

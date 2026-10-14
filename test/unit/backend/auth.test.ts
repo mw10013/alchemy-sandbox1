@@ -104,7 +104,7 @@ const signIn = Effect.fn("signIn")(function* (address: typeof member, returnTo =
 });
 
 /**
- * Inserts the operator's user row, as the seed does on a deployed stage. Straight through the
+ * Inserts the operator's user row, as the stage's auth seed does. Straight through the
  * adapter, because Better Auth's create hooks refuse an address with no `Member` row.
  */
 const seedOperator = Effect.gen(function* () {

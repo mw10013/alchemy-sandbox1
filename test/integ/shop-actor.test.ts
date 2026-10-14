@@ -234,7 +234,7 @@ test(
   "the gate: 4401, 4403 and 4404 close a refused upgrade",
   Effect.gen(function* () {
     const { backendUrl, e2eToken } = yield* stack;
-    // The operator's user row comes from ResetData; see `TestData`.
+    // The operator's user row comes from the stage's auth seed; ResetData leaves it.
     yield* control(backendUrl, e2eToken, (c) => c.ResetData());
     const operator = yield* signIn(backendUrl, e2eToken, email("a@a.com"));
     const member2 = yield* signIn(backendUrl, e2eToken, m2);

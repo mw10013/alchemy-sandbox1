@@ -132,6 +132,6 @@ describe("test control", () => {
   );
 
   it.todo(
-    "ResetData clears sessions and @e2e.test users and members, and restores the operator (needs D1: the e2e stage)",
+    "ResetData clears sessions and @e2e.test users and members, and leaves the seeded operator (needs D1: the e2e stage)",
   );
 });

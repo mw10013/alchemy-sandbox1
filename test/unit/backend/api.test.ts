@@ -89,7 +89,7 @@ const signIn = Effect.fn("signIn")(function* (address: typeof member) {
     .join("; ");
 });
 
-/** The operator's user row, as the seed inserts it; Better Auth's hooks refuse it otherwise. */
+/** The operator's user row, as the stage's auth seed inserts it; Better Auth's hooks refuse it otherwise. */
 const seedOperator = Effect.gen(function* () {
   const { auth } = yield* Auth;
   const instance = yield* auth.auth;

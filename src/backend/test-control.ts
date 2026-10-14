@@ -36,17 +36,9 @@ export const TestControlAuthLive = Layer.effect(
 );
 
 /**
- * The operator every test stage signs in as. The seed cannot insert it: `importFiles` runs
- * before `@alchemy.run/better-auth` has created the `user` table on a fresh stage, so
- * {@link TestData} puts it back on every reset instead. Dates are ISO text and booleans 0/1, as
- * Better Auth stores them.
- */
-const OPERATOR = { id: "user-admin", name: "Admin", email: "a@a.com" } as const;
-
-/**
  * Wipes what tests leave behind in `AuthDb`. Sessions, accounts and verifications all go;
  * users and `Member` rows go only for `@e2e.test` addresses (their `TeamMember` edges cascade),
- * so the seeded members and their users stay. The operator's user row is inserted if missing.
+ * so the seeded members and their users, and the operator that `AuthSeed` inserts, stay.
  */
 export class TestData extends Context.Service<
   TestData,
@@ -64,10 +56,6 @@ export class TestData extends Context.Service<
           yield* sql`DELETE FROM verification`;
           yield* sql`DELETE FROM "user" WHERE email LIKE '%@e2e.test'`;
           yield* sql`DELETE FROM Member WHERE email LIKE '%@e2e.test'`;
-          const now = new Date().toISOString();
-          yield* sql`INSERT OR IGNORE INTO "user"
-            (id, name, email, emailVerified, role, banned, createdAt, updatedAt)
-            VALUES (${OPERATOR.id}, ${OPERATOR.name}, ${OPERATOR.email}, 1, 'admin', 0, ${now}, ${now})`;
         }, Effect.orDie),
       });
     }),

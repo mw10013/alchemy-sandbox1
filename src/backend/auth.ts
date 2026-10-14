@@ -185,7 +185,7 @@ export const makeAuth = (options: AuthOptions = {}) =>
 /**
  * Better Auth with magic links, invite-only as Baton is: a new user is created only for an
  * address with a `Member` row in some shop, and always with the role `user`. An operator is a
- * user row whose role is `admin`, put there by seed or test data, never by sign-in. Magic links
+ * user row whose role is `admin`, put there by the stage's auth seed, never by sign-in. Magic links
  * go through {@link MagicLinkDelivery}, which decides whether a caller gets one back.
  *
  * Its database hooks are the revocation triggers: a deleted session closes that session's
