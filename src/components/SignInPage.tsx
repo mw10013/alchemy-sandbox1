@@ -1,31 +1,12 @@
-import { type CSSProperties, useState } from "react";
-import { Banner } from "@astryxdesign/core/Banner";
-import { Button } from "@astryxdesign/core/Button";
-import { Card } from "@astryxdesign/core/Card";
-import { Center } from "@astryxdesign/core/Center";
-import { VStack } from "@astryxdesign/core/Layout";
-import { Heading, Text } from "@astryxdesign/core/Text";
-import { TextInput } from "@astryxdesign/core/TextInput";
+import { useState } from "react";
 import { useForm } from "@tanstack/react-form";
 import * as Match from "effect/Match";
 import * as Schema from "effect/Schema";
 import { type Email, EmailFromInput, type ReturnPath } from "../api/backend.ts";
-import { fieldStatus, schemaForm } from "../form.ts";
+import { fieldError, schemaForm } from "../form.ts";
 import type { MagicLinkResult } from "../server/sign-in.ts";
-
-/**
- * The page paints its own body background: no shell hosts it. The height is the viewport's,
- * not the template's `100%`, because html and body here do not stretch to the viewport.
- */
-const pageStyle: CSSProperties = {
-  minHeight: "100dvh",
-  backgroundColor: "var(--color-background-body)",
-};
-/** Caps the column at 400px and lets it shrink on narrow screens; Stack has no `maxWidth` prop. */
-const contentStyle: CSSProperties = {
-  width: "100%",
-  maxWidth: 400,
-};
+import { Inline } from "./screen/Inline.tsx";
+import { Things } from "./screen/Things.tsx";
 
 const SignInForm = schemaForm(Schema.Struct({ email: EmailFromInput }));
 
@@ -42,11 +23,8 @@ type Outcome =
 
 /**
  * Requests a magic link for an address. The reply is the same whether or not the address is a
- * member, so the page never says which.
- *
- * Adapted from Astryx's `login` page template.
- *
- * @see refs/astryx/packages/cli/assets/templates/pages/login/page.tsx
+ * member, so the page never says which. Under `alchemy dev` the answer carries the link, which
+ * the page shows in place of the email.
  */
 export default function SignInPage({
   returnTo,
@@ -80,79 +58,66 @@ export default function SignInPage({
   });
 
   const signInForm = (failure: string | undefined) => (
-    <form
-      noValidate
-      onSubmit={(event) => {
-        event.preventDefault();
-        void form.handleSubmit();
-      }}
-    >
-      <VStack gap={4} hAlign="stretch">
-        <VStack gap={1} hAlign="center">
-          <Heading level={2}>Sign in</Heading>
-          <Text type="body" color="secondary" size="sm">
-            We'll email you a sign-in link.
-          </Text>
-        </VStack>
+    <s-section accessibilityLabel="Sign in">
+      <Things>
+        <s-paragraph color="subdued">We'll email you a sign-in link.</s-paragraph>
         {error !== undefined && (
-          <Banner
-            status="error"
-            title="That link didn't work. Request a new one."
-            container="card"
-          />
+          <s-banner tone="critical" heading="That link didn't work. Request a new one." />
         )}
-        {failure !== undefined && <Banner status="error" title={failure} container="card" />}
-        <form.Field name="email">
-          {(field) => (
-            <TextInput
-              label="Email"
-              htmlName={field.name}
-              value={field.state.value}
-              onChange={field.handleChange}
-              onBlur={field.handleBlur}
-              type="email"
-              status={fieldStatus(field.state.meta.errors)}
-            />
-          )}
-        </form.Field>
-        <Button
-          label="Send link"
-          type="submit"
-          variant="primary"
-          isLoading={outcome._tag === "Sending"}
-        />
-      </VStack>
-    </form>
+        {failure !== undefined && <s-banner tone="critical" heading={failure} />}
+        <form
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            void form.handleSubmit();
+          }}
+        >
+          <Things>
+            <form.Field name="email">
+              {(field) => (
+                <s-email-field
+                  label="Email"
+                  name={field.name}
+                  value={field.state.value}
+                  error={fieldError(field.state.meta.errors)}
+                  onInput={(event) => field.handleChange(event.currentTarget.value)}
+                  onBlur={field.handleBlur}
+                />
+              )}
+            </form.Field>
+            <Inline>
+              <s-button
+                type="submit"
+                variant="primary"
+                {...(outcome._tag === "Sending" ? { loading: true } : {})}
+              >
+                Send link
+              </s-button>
+            </Inline>
+          </Things>
+        </form>
+      </Things>
+    </s-section>
   );
 
   return (
-    <Center axis="both" padding={6} style={pageStyle}>
-      <VStack gap={4} hAlign="center" style={contentStyle}>
-        <Text type="body" weight="bold" size="lg">
-          Alchemy-sandbox1
-        </Text>
-        <Card padding={8} width="100%">
-          {Match.valueTags(outcome, {
-            Idle: () => signInForm(undefined),
-            Sending: () => signInForm(undefined),
-            Failed: ({ message }) => signInForm(message),
-            Sent: ({ link }) => (
-              <VStack gap={4} hAlign="stretch">
-                <VStack gap={1} hAlign="center">
-                  <Heading level={2}>Check your email</Heading>
-                  <Text type="body" color="secondary" size="sm" role="status">
-                    The link expires in 5 minutes.
-                  </Text>
-                </VStack>
-                {link !== undefined && (
-                  // A plain anchor, not a router link: the verify route is a server route.
-                  <Button label="Open link" variant="primary" href={link} as="a" />
-                )}
-              </VStack>
-            ),
-          })}
-        </Card>
-      </VStack>
-    </Center>
+    <s-page heading="Sign in" inlineSize="small">
+      {Match.valueTags(outcome, {
+        Idle: () => signInForm(undefined),
+        Sending: () => signInForm(undefined),
+        Failed: ({ message }) => signInForm(message),
+        Sent: ({ link }) => (
+          <s-section heading="Check your email">
+            <Things>
+              <s-paragraph color="subdued">The link expires in 5 minutes.</s-paragraph>
+              {link !== undefined && (
+                // A plain link, not a router navigation: the verify route is a server route.
+                <s-link href={link}>Open link</s-link>
+              )}
+            </Things>
+          </s-section>
+        ),
+      })}
+    </s-page>
   );
 }

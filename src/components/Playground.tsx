@@ -1,16 +1,12 @@
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
-import { Button } from "@astryxdesign/core/Button";
-import { Card } from "@astryxdesign/core/Card";
-import { Grid } from "@astryxdesign/core/Grid";
-import { VStack } from "@astryxdesign/core/Layout";
-import { Heading, Text } from "@astryxdesign/core/Text";
-import { TextInput } from "@astryxdesign/core/TextInput";
 import { useForm } from "@tanstack/react-form";
 import * as Match from "effect/Match";
 import * as Schema from "effect/Schema";
 import { type Hello, type Shouted, type ShoutText, ShoutTextFromInput } from "../api/backend.ts";
-import { fieldStatus, schemaForm } from "../form.ts";
+import { fieldError, schemaForm } from "../form.ts";
+import { Inline } from "./screen/Inline.tsx";
+import { Things } from "./screen/Things.tsx";
 
 /**
  * Shout has no typed failure: a payload the server rejects is a defect, and so is a server it
@@ -29,8 +25,9 @@ const ShoutForm = schemaForm(Schema.Struct({ text: ShoutTextFromInput }));
 
 /**
  * The reference page read (`hello`, the route's loader data) and write (`shout`, a server
- * function). After a successful shout the router reloads, which reruns the loader and shows a
- * fresh `hello`.
+ * function), one section each. After a successful shout the router reloads, which reruns the
+ * loader and shows a fresh `hello`. A result is an `<output>`, whose implicit `status` role
+ * announces it; Polaris text elements take no role.
  */
 export default function Playground({
   hello,
@@ -57,66 +54,62 @@ export default function Playground({
   });
 
   return (
-    <VStack gap={4}>
-      <Heading level={2}>Playground</Heading>
-      <Grid columns={{ minWidth: 320, repeat: "fit" }} gap={4}>
-        <Card>
-          <VStack gap={3} hAlign="start">
-            <Heading level={3}>Loader data</Heading>
-            <Text as="p" role="status">
-              {hello.message} — {hello.servedAt}
-            </Text>
-          </VStack>
-        </Card>
-        <Card>
-          <VStack gap={3} hAlign="stretch">
-            <Heading level={3}>Mutation</Heading>
-            <form
-              noValidate
-              onSubmit={(event) => {
-                event.preventDefault();
-                void form.handleSubmit();
-              }}
-            >
-              <VStack gap={4} hAlign="start">
-                <form.Field name="text">
-                  {(field) => (
-                    <TextInput
-                      label="Text"
-                      htmlName={field.name}
-                      value={field.state.value}
-                      onChange={field.handleChange}
-                      onBlur={field.handleBlur}
-                      description="Up to 80 characters."
-                      status={fieldStatus(field.state.meta.errors)}
-                    />
-                  )}
-                </form.Field>
-                <Button
-                  label="Shout"
+    <>
+      <s-section heading="Loader data">
+        <output>
+          <s-paragraph>
+            {hello.message} — {hello.servedAt}
+          </s-paragraph>
+        </output>
+      </s-section>
+      <s-section heading="Mutation">
+        <Things>
+          <form
+            noValidate
+            onSubmit={(event) => {
+              event.preventDefault();
+              void form.handleSubmit();
+            }}
+          >
+            <Things>
+              <form.Field name="text">
+                {(field) => (
+                  <s-text-field
+                    label="Text"
+                    name={field.name}
+                    value={field.state.value}
+                    details="Up to 80 characters."
+                    error={fieldError(field.state.meta.errors)}
+                    onInput={(event) => field.handleChange(event.currentTarget.value)}
+                    onBlur={field.handleBlur}
+                  />
+                )}
+              </form.Field>
+              <Inline>
+                <s-button
                   type="submit"
                   variant="primary"
-                  isLoading={shoutState._tag === "Sending"}
-                />
-              </VStack>
-            </form>
-            {Match.valueTags(shoutState, {
-              Idle: () => null,
-              Sending: () => null,
-              Shouted: ({ value }) => (
-                <Text as="p" role="status" aria-live="polite">
+                  {...(shoutState._tag === "Sending" ? { loading: true } : {})}
+                >
+                  Shout
+                </s-button>
+              </Inline>
+            </Things>
+          </form>
+          {Match.valueTags(shoutState, {
+            Idle: () => null,
+            Sending: () => null,
+            Shouted: ({ value }) => (
+              <output>
+                <s-paragraph>
                   {value.input} → {value.output}
-                </Text>
-              ),
-              Failed: () => (
-                <Text as="p" role="alert">
-                  {SHOUT_FAILED}
-                </Text>
-              ),
-            })}
-          </VStack>
-        </Card>
-      </Grid>
-    </VStack>
+                </s-paragraph>
+              </output>
+            ),
+            Failed: () => <s-banner tone="critical" heading={SHOUT_FAILED} />,
+          })}
+        </Things>
+      </s-section>
+    </>
   );
 }

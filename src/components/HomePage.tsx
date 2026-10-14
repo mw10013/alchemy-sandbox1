@@ -1,22 +1,14 @@
-import { useRouter } from "@tanstack/react-router";
-import { AppShell } from "@astryxdesign/core/AppShell";
-import { Button } from "@astryxdesign/core/Button";
-import { HStack, Layout, LayoutContent, VStack } from "@astryxdesign/core/Layout";
-import { Heading, Text } from "@astryxdesign/core/Text";
-import { TopNav, TopNavHeading, TopNavItem } from "@astryxdesign/core/TopNav";
 import type { Hello, Me, Shouted, ShoutText } from "../api/backend.ts";
+import { useNavigateOnClick } from "../navigate.ts";
 import { homeFor } from "../routes/-guards.ts";
-import { signOut } from "../session.ts";
 import Playground from "./Playground";
+import { Inline } from "./screen/Inline.tsx";
+import { Things } from "./screen/Things.tsx";
+import SignOutButton from "./SignOutButton.tsx";
 
 /**
- * The public landing page. The top nav and hero follow the session: a signed-out visitor is
+ * The public landing page. Its page actions follow the session: a signed-out visitor is
  * offered sign-in, a member their {@link homeFor} dashboard and sign-out.
- *
- * Adapted from Astryx's `shell-top-nav` and `centered-hero` page templates.
- *
- * @see refs/astryx/packages/cli/assets/templates/pages/shell-top-nav/page.tsx
- * @see refs/astryx/packages/cli/assets/templates/pages/centered-hero/page.tsx
  */
 export default function HomePage({
   me,
@@ -27,62 +19,42 @@ export default function HomePage({
   hello: typeof Hello.Type;
   shout: (input: ShoutText) => Promise<typeof Shouted.Type>;
 }) {
-  const router = useRouter();
-
+  const navigate = useNavigateOnClick();
   const dashboard = me && homeFor(me.role);
 
   return (
-    <AppShell
-      variant="surface"
-      contentPadding={0}
-      topNav={
-        <TopNav
-          label="Site navigation"
-          heading={<TopNavHeading heading="Alchemy-sandbox1" headingHref="/" />}
-          endContent={
-            dashboard ? (
-              <HStack gap={2} vAlign="center">
-                <TopNavItem label="Dashboard" href={dashboard} />
-                <Button
-                  label="Sign out"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void signOut(router)}
-                />
-              </HStack>
+    <s-page heading="Alchemy-sandbox1" inlineSize="small">
+      {dashboard ? (
+        <>
+          <s-button slot="secondary-actions" variant="secondary" {...navigate(dashboard)}>
+            Dashboard
+          </s-button>
+          <SignOutButton variant="secondary" slot="secondary-actions" />
+        </>
+      ) : (
+        <s-button slot="secondary-actions" variant="secondary" {...navigate("/sign-in")}>
+          Sign in
+        </s-button>
+      )}
+      <s-section heading="Build on the edge with Effect">
+        <Things>
+          <s-paragraph color="subdued">
+            TanStack Start, Effect and Polaris on Cloudflare Workers.
+          </s-paragraph>
+          <Inline>
+            {dashboard ? (
+              <s-button variant="primary" {...navigate(dashboard)}>
+                Open dashboard
+              </s-button>
             ) : (
-              <TopNavItem label="Sign in" href="/sign-in" />
-            )
-          }
-        />
-      }
-    >
-      <Layout
-        height="auto"
-        contentWidth={960}
-        content={
-          <LayoutContent padding={6}>
-            <VStack gap={10}>
-              <VStack gap={6} hAlign="center">
-                <VStack gap={3} hAlign="center">
-                  <Heading level={1} type="display-2" justify="center" textWrap="balance">
-                    Build on the edge with Effect
-                  </Heading>
-                  <Text type="body" color="secondary" justify="center" textWrap="balance">
-                    TanStack Start, Effect and Astryx on Cloudflare Workers.
-                  </Text>
-                </VStack>
-                {dashboard ? (
-                  <Button label="Open dashboard" variant="primary" href={dashboard} />
-                ) : (
-                  <Button label="Get started" variant="primary" href="/sign-in" />
-                )}
-              </VStack>
-              <Playground hello={hello} shout={shout} />
-            </VStack>
-          </LayoutContent>
-        }
-      />
-    </AppShell>
+              <s-button variant="primary" {...navigate("/sign-in")}>
+                Get started
+              </s-button>
+            )}
+          </Inline>
+        </Things>
+      </s-section>
+      <Playground hello={hello} shout={shout} />
+    </s-page>
   );
 }

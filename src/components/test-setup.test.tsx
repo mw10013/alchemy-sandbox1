@@ -1,4 +1,3 @@
-import { Button } from "@astryxdesign/core/Button";
 import { useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
@@ -8,10 +7,12 @@ import { shopTestRegistry } from "../../test/browser/shop-actor.ts";
 import { countQuery } from "../shop-actor-client.ts";
 
 describe("browser tests", () => {
-  it("render a themed Astryx component and click it", async () => {
+  it("render a Polaris element and click it", async () => {
     let clicks = 0;
     const screen = await renderInApp(
-      <Button label="Go" variant="primary" onClick={() => clicks++} />,
+      <s-button variant="primary" onClick={() => clicks++}>
+        Go
+      </s-button>,
       shopTestRegistry({}),
     );
     const button = screen.getByRole("button", { name: "Go" });
@@ -19,8 +20,9 @@ describe("browser tests", () => {
     await expect.element(button).toBeVisible();
     await button.click();
     expect(clicks).toBe(1);
-    // Astryx's CSS loaded: without it the button falls back to the browser's default font.
-    expect(getComputedStyle(button.element()).fontFamily).toContain("Figtree");
+    // Polaris loaded: without it `s-button` is an unknown element with no shadow root.
+    expect(customElements.get("s-button")).toBeDefined();
+    expect(screen.container.querySelector("s-button")?.shadowRoot).not.toBeNull();
   });
 
   it("read an atom through a hook, backed by test handlers", async () => {

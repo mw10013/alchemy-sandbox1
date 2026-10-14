@@ -1,23 +1,14 @@
 import "../../src/styles.css";
-import { Theme } from "@astryxdesign/core/theme";
-import { neutralTheme } from "@astryxdesign/theme-neutral/built";
 import { RegistryContext } from "@effect/atom-react";
 import type * as AtomRegistry from "effect/reactivity/AtomRegistry";
 import type { ReactNode } from "react";
 import { render, renderHook } from "vitest-browser-react";
 
-/**
- * The providers `RootDocument` gives every page, minus `LinkProvider`: `RouterLink` needs a
- * router, and without it Astryx renders plain anchors.
- */
+/** The atom registry provider the router wraps every page in. Polaris comes from the setup file. */
 const appWrapper =
   (registry: AtomRegistry.AtomRegistry) =>
   ({ children }: { children: ReactNode }) => (
-    <RegistryContext.Provider value={registry}>
-      <Theme theme={neutralTheme} mode="dark">
-        {children}
-      </Theme>
-    </RegistryContext.Provider>
+    <RegistryContext.Provider value={registry}>{children}</RegistryContext.Provider>
   );
 
 /** Renders `ui` as the app would, over `registry` (usually a `testRegistry`). */

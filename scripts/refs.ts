@@ -9,7 +9,10 @@ import * as Schema from "effect/Schema";
 import { Argument, CliError, Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as Yaml from "effect/encoding/Yaml";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
+import * as Stream from "effect/Stream";
 
+import { POLARIS_URL } from "../src/polaris.ts";
 import { checkoutKind } from "./lib/worktree.ts";
 import * as ShopifyDocs from "./refs-shopify-docs.ts";
 
@@ -46,10 +49,24 @@ type Ref =
       readonly repo: string;
       /** A multi-minute site fetch must be requested explicitly rather than through `--all`. */
       readonly optIn: true;
+    }
+  | {
+      /**
+       * A script bundle served from a CDN, saved raw as `<file>.min.js` and formatted as
+       * `<file>.js` for reading, where `<file>` is the URL's file name. The CDN sends no version
+       * header, so the stamp's `version` is the build hash in the bundle's leading comment.
+       */
+      readonly _tag: "Cdn";
+      readonly name: string;
+      /** The CDN's origin. */
+      readonly repo: string;
+      readonly url: string;
     };
 
 const refs: readonly Ref[] = [
   { _tag: "ShopifyDocs", name: "shopify-docs", repo: ShopifyDocs.ORIGIN, optIn: true },
+  // The URL the site loads, so the snapshot follows the channel the pages run on.
+  { _tag: "Cdn", name: "polaris", repo: new URL(POLARIS_URL).origin, url: POLARIS_URL },
   { _tag: "Branch", name: "baton", repo: "mw10013/baton", branch: "main", private: true },
   {
     _tag: "Branch",
@@ -119,13 +136,6 @@ const refs: readonly Ref[] = [
   },
   {
     _tag: "Dependency",
-    name: "astryx",
-    repo: "facebook/astryx",
-    dep: "@astryxdesign/core",
-    tag: "v{v}",
-  },
-  {
-    _tag: "Dependency",
     name: "effect",
     repo: "Effect-TS/effect",
     dep: "effect",
@@ -172,6 +182,12 @@ const Stamp = Schema.fromJsonString(
     fetchedAt: Schema.String,
   }),
   { space: 2 },
+);
+
+/** The first line of a Polaris CDN bundle: a `/*!` comment holding only the build hash. */
+const BuildBanner = Schema.TemplateLiteralParser(["/*!", Schema.String, "*/"]);
+const BuildHash = Schema.String.check(
+  Schema.isPattern(/^[0-9a-f]{8,}$/u, { message: "the bundle's build hash must be hex" }),
 );
 
 export class RefError extends Schema.TaggedError<RefError>()("RefError", {
@@ -244,6 +260,8 @@ const toolchainVersion = Effect.fn("toolchainVersion")(function* (
 const resolve = Effect.fn("resolveRef")(function* (ref: Ref) {
   return yield* Match.valueTags(ref, {
     ShopifyDocs: () => Effect.succeed({ target: ShopifyDocs.API_VERSION, version: undefined }),
+    // The build hash is known only once the bundle is downloaded; `downloadCdn` returns it.
+    Cdn: ({ url }) => Effect.succeed({ target: url, version: undefined }),
     Branch: ({ branch }) => Effect.succeed({ target: branch, version: undefined }),
     Dependency: ({ dep, tag }) =>
       Effect.gen(function* () {
@@ -302,12 +320,59 @@ const downloadArchive = Effect.fn("downloadRefArchive")(function* (
   );
 });
 
+/**
+ * Saves a CDN bundle raw and formatted, and returns its build hash. The raw copy is kept so the
+ * formatted one can be regenerated, or compared by hash. `vp fmt` runs from the project root so
+ * it reads the project's formatter config; the `.js` stdin path picks the JavaScript parser.
+ */
+const downloadCdn = Effect.fn("downloadCdnRef")(function* (url: string, staging: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const client = yield* HttpClient.HttpClient;
+  const raw = yield* client.get(url).pipe(
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.flatMap((response) => response.text),
+    Effect.mapError((error) => new RefError({ message: `${url}: ${error.message}` })),
+  );
+  const hash = yield* Schema.decodeUnknownEffect(BuildBanner)(raw.split("\n", 1)[0]).pipe(
+    Effect.flatMap(([, hash]) => Schema.decodeUnknownEffect(BuildHash)(hash)),
+    Effect.mapError(
+      (error) => new RefError({ message: `${url}: no leading build hash: ${error.message}` }),
+    ),
+  );
+  const file = path.basename(new URL(url).pathname, ".js");
+  yield* fs.writeFileString(path.join(staging, `${file}.min.js`), raw);
+  const formatted = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const handle = yield* spawner.spawn(
+        ChildProcess.make("vp", ["fmt", `--stdin-filepath=${file}.js`], {
+          cwd: yield* root,
+          stdin: Stream.make(new TextEncoder().encode(raw)),
+          stderr: "inherit",
+        }),
+      );
+      const [text, exitCode] = yield* Effect.all(
+        [Stream.mkString(Stream.decodeText(handle.stdout)), handle.exitCode],
+        { concurrency: 2 },
+      );
+      if (exitCode !== 0)
+        return yield* new RefError({ message: `vp fmt failed (${String(exitCode)})` });
+      return text;
+    }),
+  );
+  yield* fs.writeFileString(path.join(staging, `${file}.js`), formatted);
+  return hash;
+}, Effect.provide(FetchHttpClient.layer));
+
+/** Fills `staging`, and returns the version to stamp when only the download can tell it. */
 const download = Effect.fn("downloadRef")((ref: Ref, target: string, staging: string) =>
   Match.valueTags(ref, {
-    ShopifyDocs: () => ShopifyDocs.downloadInto(staging),
-    Branch: (source) => downloadArchive(source, target, staging),
-    Dependency: (source) => downloadArchive(source, target, staging),
-    Toolchain: (source) => downloadArchive(source, target, staging),
+    ShopifyDocs: () => ShopifyDocs.downloadInto(staging).pipe(Effect.as(undefined)),
+    Cdn: ({ url }) => downloadCdn(url, staging),
+    Branch: (source) => downloadArchive(source, target, staging).pipe(Effect.as(undefined)),
+    Dependency: (source) => downloadArchive(source, target, staging).pipe(Effect.as(undefined)),
+    Toolchain: (source) => downloadArchive(source, target, staging).pipe(Effect.as(undefined)),
   }),
 );
 
@@ -326,13 +391,13 @@ const fetchRef = Effect.fn("fetchRef")(function* (ref: Ref) {
       const backup = path.join(staging, "previous");
       const destination = path.join(directory, ref.name);
       yield* fs.makeDirectory(contents);
-      yield* download(ref, target, contents);
+      const downloaded = yield* download(ref, target, contents);
       yield* fs.writeFileString(
         path.join(contents, ".ref.json"),
         `${yield* Schema.encodeEffect(Stamp)({
           repo: ref.repo,
           resolved: target,
-          version,
+          version: downloaded ?? version,
           fetchedAt: DateTime.formatIso(yield* DateTime.now),
         })}\n`,
       );
@@ -367,6 +432,10 @@ const checkRef = Effect.fn("checkRef")(function* (ref: Ref) {
     return yield* new RefError({ message: `STALE (have ${stamp.resolved}, want ${target})` });
   const freshness = Match.valueTags(ref, {
     ShopifyDocs: () => ` (snapshot fetched ${stamp.fetchedAt}; live docs freshness not checked)`,
+    // The CDN's `last-modified` moves daily even when the bytes do not, so the hash is reported
+    // and the live bundle is not compared.
+    Cdn: () =>
+      ` (build ${stamp.version?.slice(0, 8) ?? "unknown"}, fetched ${stamp.fetchedAt}; live bundle not checked)`,
     Branch: () => ` (snapshot fetched ${stamp.fetchedAt}; upstream freshness not checked)`,
     Dependency: () => "",
     Toolchain: () => "",

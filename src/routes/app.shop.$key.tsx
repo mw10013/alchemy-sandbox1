@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { ShopKey } from "../api/shop.ts";
+import { BackLink } from "../components/screen/BackLink.tsx";
 import ShopPage from "../components/ShopPage";
 import { getShopSnapshot } from "../server/shop.ts";
 
@@ -19,12 +20,15 @@ export const Route = createFileRoute("/app/shop/$key")({
   component: function MemberShopRoute() {
     const { key } = Route.useParams();
     return (
-      <ShopPage
-        role="member"
-        shop={key}
-        merchantToken={Option.none()}
-        data={Route.useLoaderData()}
-      />
+      <>
+        <BackLink label="Member area" href="/app" />
+        <ShopPage
+          role="member"
+          shop={key}
+          merchantToken={Option.none()}
+          data={Route.useLoaderData()}
+        />
+      </>
     );
   },
 });

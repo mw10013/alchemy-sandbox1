@@ -30,34 +30,10 @@ Start with `vp run dev`. Open `http://localhost:$(pnpm port)`. Plain `vp dev` is
 Dev logs: `.logs/dev/current`. Rotated archives: `.logs/dev/`.
 Staging logs: use `cf o11y telemetry query` on `cloudflare-workers`, filtering `$metadata.service` to `alchemy-sandbox1-website-staging-a6uwn3bzazl3yzgy`.
 
-<!-- ASTRYX:START -->
-Astryx v0.6.5 · 166 components
-CLI: run every command as `vp exec astryx <cmd>` (shown below as `astryx ...`).
-
-SETUP (once, in your app entry e.g. main.tsx) — without these, components render unstyled:
-  import "@astryxdesign/core/reset.css";
-  import "@astryxdesign/core/astryx.css";
-
-WORKFLOW — start every page from a template. Never lay out a page from scratch:
-1. `astryx build "<idea>"` — START HERE: names the [page] template to start from (always one: the closest match, or the app shell), two other templates, and the [block]s + [component]s for parts it lacks. No args = full playbook.
-2. `astryx template <name> <path>` — scaffold that template into your project. Keep its frame, gap and padding; replace its data, copy and sections; delete sections you do not need.
-3. `astryx template <Block>` for a part the template lacks; `astryx component <Name>` for props + examples before you use or change a component.
-Changing a page you already have? Keep it: skip step 2 and add blocks and components inside its sections.
-
-RULES:
-- No <div> — components do all layout/spacing, page frame included.
-- Frame first: the template you scaffold sets the page frame. Read `astryx docs layout` before you change it — region widths, breakpoint behavior.
-- Dense data = rows (Table, List/Item), never Card-wrapped list items; Card is for standalone widgets. Status = StatusDot/Token; Badge = counts only.
-- Custom styling: component props first; else style/className with tokens — var(--color-*|--spacing-*|--radius-*). No raw hex/px. (No StyleX/Tailwind compiler here — don't use xstyle/utility classes.)
-- Tokens for every value (`astryx docs tokens`). Brand/accent belongs in the theme (`astryx theme list` / `theme add <slug>`, or `astryx theme template` for a custom one) — never override --color-* in :root.
-- SELF-CHECK before you finish: re-read the file and replace any raw <div>/<span> layout, imported .css/@apply, or hardcoded value (#hex, 16px) with the component or a token (var(--color-*|--spacing-*|…)). Confirm the page kept its template's frame, gap and padding. If unsure a component/prop exists, run `astryx component <Name>` / `astryx search "<thing>"`; don't hand-roll CSS.
-
-MORE CLI:
-  search "<query>"   find any component / hook / doc / template / block
-  component --list   166 components by category
-  template --list    page + block recipes
-  docs <topic>       authoring, browser-support, color, elevation, getting-started, icons, illustrations, internationalization, layout, migration, motion, principles, shape, spacing, styling-libraries, styling, theme, tokens, typography, working-with-ai
-  docs cli           commands, API reference, integration authoring (one level at a time)
-  swizzle <Name>     eject component source for deep customization
-  upgrade --from <old version> --apply   run after any Astryx or integration dependency bump
-<!-- ASTRYX:END -->
+## UI: Polaris web components
+- Polaris loads from Shopify's CDN as one `<script>` in `<head>`, from the URL constant `POLARIS_URL`. No App Bridge, no npm runtime package; `@shopify/polaris-types` supplies the JSX types and moves with the script URL.
+- Screens are built from `s-*` elements: `s-page` with `s-section` cards, `s-banner`, `s-button`, `s-link`, fields, `s-table`. No other design system, and no hand-rolled replacement for an element Polaris has.
+- Layout lives only in named parts under `src/components/screen/`. Routes and other components use no `s-stack`, `s-grid` or `s-box`, and no spacing or layout prop (`gap`, `padding`, `direction`, `alignItems`, …). A new shape is a new part.
+- Outside the Shopify admin nothing intercepts Polaris anchors: client-side navigation is a TanStack `<Link>`, or `href` plus an `onClick` that calls the router.
+- Light only. There is no dark mode; do not apply Polaris's internal dark palette class.
+- Custom CSS in `src/styles.css` covers only what Polaris lacks, for the plain boxes the parts draw.

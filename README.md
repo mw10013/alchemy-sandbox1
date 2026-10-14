@@ -1,8 +1,8 @@
 # Alchemy-sandbox1
 
 A minimal TanStack Start app (`Website.Vite`) that calls a private Effect
-backend Worker over a service binding, styled with Astryx's standard neutral
-theme. Both Workers are managed by Alchemy (`alchemy.run.ts`).
+backend Worker over a service binding, styled with Shopify's Polaris web components
+(2.0 release candidate, light only). Both Workers are managed by Alchemy (`alchemy.run.ts`).
 Created with `vp create` in the existing project directory.
 
 Two request paths:
@@ -65,8 +65,10 @@ vp test --project unit     # in-process tests under src/, Better Auth on an in-m
 vp test --project integ    # deploys the Backend into workerd (test/integ) and drives it over HTTP
 vp run test:e2e            # Playwright, Chromium, against the e2e_<user> stage (not part of vp test)
 vp build
-pnpm exec astryx doctor
 ```
+
+Browser tests load Polaris from Shopify's CDN in their setup, as the pages do, so `vp test`
+needs network access to `cdn.shopify.com`.
 
 Tests are Effect tests on `@effect/vitest`; the `integ` project uses `alchemy/Test/Vitest` in
 dev mode, needs no running dev server and keeps its stack under `.alchemy/` on the `test_<user>`
@@ -99,8 +101,8 @@ vp run refs:all
 vp run refs:check
 ```
 
-References include Alchemy, Vite+, TanStack Start/Router/Query/Form, Astryx, Effect,
-Cloudflare docs, Shopify docs, and the private Baton repository. Library tags follow exact `package.json` pins;
+References include Alchemy, Vite+, TanStack Start/Router/Query/Form, Effect, the Polaris
+CDN bundle, Cloudflare docs, Shopify docs, and the private Baton repository. Library tags follow exact `package.json` pins;
 Baton snapshots `main` using your existing `gh` authentication (`gh auth login`).
 Fetching requires `curl` and `tar`, plus `gh` for Baton.
 
@@ -114,11 +116,19 @@ replacement, and a failed download leaves the existing reference intact.
 Cloudflare docs snapshot the upstream `production` branch; refresh them with
 `vp run refs fetch cloudflare-docs`.
 
+`polaris` snapshots the Polaris bundle from the URL the site loads: `refs/polaris/` holds it raw
+(`*.min.js`) and formatted with `vp fmt` (`*.js`, about 32k lines) for reading. The CDN sends no
+version header, so the stamp's version is the build hash from the bundle's first line, and
+`check` reports it with the fetch date rather than comparing against the live bundle. Polaris's
+JSX types are read from `node_modules/@shopify/polaris-types`.
+
 Shopify docs are opt-in: `vp run refs fetch shopify-docs` downloads app build/design/launch
 pages, API guides and selected Admin GraphQL resources into `refs/shopify-docs/docs/`,
 with local images under `_assets/`. This ports Baton's sitemap-driven Markdown fetcher,
-including webhook topics decoded from Shopify's data endpoint. `refs:all` skips this
-multi-minute mirror. No Shopify dependencies are installed.
+including webhook topics decoded from Shopify's data endpoint. The App Home reference is also
+fetched under `v2.0-rc`, the Polaris version the site loads: those pages are missing from the
+sitemap, so each `app-home/latest` page is requested again under `app-home/v2.0-rc`, and a 404
+is skipped. `refs:all` skips this multi-minute mirror.
 
 Webhook topics follow the `API_VERSION` in `scripts/refs-shopify-docs.ts` (currently
 `2026-10`); other API sections follow the site's `latest` pages. The stamp checks that
@@ -150,7 +160,7 @@ before running the deployment script, which auto-approves with `--yes`. Producti
 is reserved for a separate future instance. See
 [environment research](docs/alchemy-stages-and-deployments-research.md) for details.
 
-## Dependencies and Astryx
+## Dependencies and Polaris
 
 ### Changing Node or pnpm versions
 
@@ -188,14 +198,16 @@ One upstream peer warning remains: Alchemy's transitive `capnp-es@0.0.16` declar
 TypeScript 5/6 support, while the requested latest TypeScript is `7.0.2`.
 The build, typecheck, and tests work with this version; the warning is not suppressed.
 
-Astryx's CLI and generated `AGENTS.md` are installed:
+Polaris is not an npm dependency at runtime: the root document loads it from Shopify's CDN
+(`src/polaris.ts`), with no App Bridge. Only its types are installed,
+`@shopify/polaris-types`, pinned exactly to the release that matches the script. Shopify
+publishes a stable release at a new URL rather than updating the release candidate's, so moving
+to stable 2.x changes the script URL and the types package together:
 
 ```sh
-pnpm exec astryx component Button
-pnpm exec astryx template --list
-pnpm exec astryx docs theme
+vp add -D -E @shopify/polaris-types@<version>
 ```
 
 References: [Alchemy + TanStack Start](https://alchemy.run/cloudflare/frontend/tanstack-start),
-[Astryx setup](https://astryx.atmeta.com/docs/getting-started),
+[Polaris web components 2.0 RC](https://shopify.dev/docs/api/app-home/v2.0-rc/web-components),
 [VP scaffolding](https://viteplus.dev/guide/create).

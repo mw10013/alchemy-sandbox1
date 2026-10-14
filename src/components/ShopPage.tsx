@@ -5,12 +5,6 @@ import {
   useAtomSet,
   useAtomValue,
 } from "@effect/atom-react";
-import { Banner } from "@astryxdesign/core/Banner";
-import { Button } from "@astryxdesign/core/Button";
-import { Card } from "@astryxdesign/core/Card";
-import { Layout, LayoutContent } from "@astryxdesign/core/Layout";
-import { VStack } from "@astryxdesign/core/Stack";
-import { Heading, Text } from "@astryxdesign/core/Text";
 import { useHydrated } from "@tanstack/react-router";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
@@ -38,6 +32,9 @@ import {
   seedShop,
   whoAmIAtom,
 } from "../shop-actor-client.ts";
+import { Inline } from "./screen/Inline.tsx";
+import { Lines } from "./screen/Lines.tsx";
+import { Things } from "./screen/Things.tsx";
 
 /** Copy for any failure to reach the actor; follows the copy rules on `RootDocument`. */
 const UNREACHABLE = "Couldn't reach the shop. Try again.";
@@ -75,30 +72,26 @@ const describeCaller = (caller: ConnectionCaller, shop: string) =>
 
 function ShopFrame({ children }: { readonly children: ReactNode }) {
   return (
-    <Layout
-      height="fill"
-      contentWidth={768}
-      content={
-        <LayoutContent padding={6}>
-          <VStack gap={4}>
-            <Heading level={1}>Shop</Heading>
-            {children}
-          </VStack>
-        </LayoutContent>
-      }
-    />
+    <s-page heading="Shop" inlineSize="small">
+      {children}
+    </s-page>
   );
 }
 
+/**
+ * Why the page cannot show the count. The sentence is the banner's `heading`, not its content:
+ * Polaris puts `role="alert"` on an element inside its shadow root, and slotted content is not
+ * part of that element's text, while the heading is rendered inside it.
+ */
 function Refusal({ text }: { readonly text: string }) {
-  return (
-    <Text as="p" role="alert">
-      {text}
-    </Text>
-  );
+  return <s-banner tone="critical" heading={text} />;
 }
 
-/** The count card and the activation line, the same markup before and after hydration. */
+/**
+ * The count section, the same markup before and after hydration. The count is an `<output>`
+ * named by its label: its implicit `status` role announces a new value, and Polaris text
+ * elements take neither a role nor `aria-labelledby`.
+ */
 function ShopCard(props: {
   readonly role: Role;
   readonly shop: ShopKey;
@@ -111,45 +104,46 @@ function ShopCard(props: {
 }) {
   const countLabel = useId();
   return (
-    <>
-      <Card width={380}>
-        <VStack gap={3} hAlign="start">
-          {Option.isSome(props.caller) && (
-            <Text as="p" type="supporting">
-              {describeCaller(props.caller.value, props.shop)}
-            </Text>
-          )}
-          <Text id={countLabel} type="label">
+    <s-section accessibilityLabel="Count">
+      <Things>
+        {Option.isSome(props.caller) && (
+          <s-paragraph color="subdued">
+            {describeCaller(props.caller.value, props.shop)}
+          </s-paragraph>
+        )}
+        <Lines>
+          <s-text id={countLabel} color="subdued">
             Count
-          </Text>
+          </s-text>
           {AsyncResult.match(props.count, {
             onInitial: () => (
-              <Text as="p" role="status">
-                Loading…
-              </Text>
+              <output>
+                <s-text>Loading…</s-text>
+              </output>
             ),
             onSuccess: ({ value }) => (
-              <Text as="p" type="display-2" role="status" aria-labelledby={countLabel}>
-                {value.value}
-              </Text>
+              <output aria-labelledby={countLabel}>
+                <s-heading fontSize="large-400">{value.value}</s-heading>
+              </output>
             ),
             onFailure: () => <Refusal text={UNREACHABLE} />,
           })}
-          <Button
-            label={ROLES[props.role].label}
+        </Lines>
+        <Inline>
+          <s-button
             variant="primary"
-            isLoading={props.writing}
+            {...(props.writing ? { loading: true } : {})}
             onClick={props.onWrite}
-          />
-          {props.writeFailed && <Refusal text={UNREACHABLE} />}
-        </VStack>
-      </Card>
-      {Option.isSome(props.activation) && (
-        <Text as="p" type="supporting">
-          Activation {props.activation.value.id}
-        </Text>
-      )}
-    </>
+          >
+            {ROLES[props.role].label}
+          </s-button>
+        </Inline>
+        {props.writeFailed && <Refusal text={UNREACHABLE} />}
+        {Option.isSome(props.activation) && (
+          <s-paragraph color="subdued">Activation {props.activation.value.id}</s-paragraph>
+        )}
+      </Things>
+    </s-section>
   );
 }
 
@@ -193,15 +187,17 @@ function LiveShop(props: {
   return (
     <>
       {connection === "displaced" && (
-        <Banner
-          status="warning"
-          title="Signed in elsewhere"
-          endContent={
-            <Button label="Reconnect" variant="secondary" onClick={() => reconnect((n) => n + 1)} />
-          }
-        />
+        <s-banner tone="warning" heading="Signed in elsewhere">
+          <s-button
+            slot="secondary-actions"
+            variant="secondary"
+            onClick={() => reconnect((n) => n + 1)}
+          >
+            Reconnect
+          </s-button>
+        </s-banner>
       )}
-      {connection === "lost" && lost && <Banner status="info" title="Reconnecting…" />}
+      {connection === "lost" && lost && <s-banner tone="info" heading="Reconnecting…" />}
       <ShopCard
         role={props.role}
         shop={props.shop}

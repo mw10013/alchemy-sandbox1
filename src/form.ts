@@ -4,7 +4,7 @@ import * as Schema from "effect/Schema";
 
 /**
  * TanStack Form validation from the shared codec: `schema` decides what each field accepts,
- * and its issue messages become the field's error ({@link fieldStatus}). A field validates on
+ * and its issue messages become the field's error ({@link fieldError}). A field validates on
  * submit, then on every change until it is fixed.
  *
  * Validation passes only values that decode, and the form keeps the raw text, so `onSubmit`
@@ -26,9 +26,6 @@ export const schemaForm = <S extends Schema.Codec<any, any>>(schema: S) => ({
   decode: Schema.decodeSync(schema),
 });
 
-/** A field's `status` prop: its first issue as an error, or none while it is valid. */
-export const fieldStatus = (errors: ReadonlyArray<{ readonly message: string } | undefined>) =>
-  Option.match(Option.fromNullishOr(errors[0]), {
-    onNone: () => undefined,
-    onSome: (issue) => ({ type: "error" as const, message: issue.message }),
-  });
+/** A Polaris field's `error` prop: its first issue's message, or none while it is valid. */
+export const fieldError = (errors: ReadonlyArray<{ readonly message: string } | undefined>) =>
+  Option.getOrUndefined(Option.map(Option.fromNullishOr(errors[0]), (issue) => issue.message));

@@ -16,19 +16,15 @@
     "test:e2e:ui": "vp exec playwright test --ui",
     "deploy:staging": "alchemy deploy --stage staging --yes",
     "deploy:production": "alchemy deploy --stage production --yes",
-    "astryx": "node node_modules/@astryxdesign/cli/clients/cli/bin/astryx.mjs",
     "refs": "node scripts/refs.ts",
     "refs:all": "node scripts/refs.ts fetch --all",
     "refs:check": "node scripts/refs.ts check"
   },
   "dependencies": {
     "@alchemy.run/better-auth": "2.0.0-beta.81",
-    "@astryxdesign/core": "0.6.5",
-    "@astryxdesign/theme-neutral": "0.6.5",
     "@effect/atom-react": "4.0.1",
     "@effect/platform-node": "4.0.1",
     "@effect/sql-sqlite-do": "4.0.1",
-    "@stylexjs/stylex": "0.19.1",
     "@tanstack/react-form": "1.33.5",
     "@tanstack/react-query": "5.104.1",
     "@tanstack/react-router": "1.170.41",
@@ -42,9 +38,9 @@
   },
   "devDependencies": {
     "@alchemy.run/cloudflare-runtime": "2.0.0-beta.81",
-    "@astryxdesign/cli": "0.6.5",
     "@cloudflare/workers-types": "5.20261006.1",
     "@effect/vitest": "4.0.1",
+    "@shopify/polaris-types": "2.0.0-rc.3",
     "@types/node": "26.6.4",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
@@ -69,8 +65,5 @@
       "onFail": "download"
     }
   },
-  "packageManager": "pnpm@12.9.1",
-  "astryx": {
-    "theme": "@astryxdesign/theme-neutral"
-  }
+  "packageManager": "pnpm@12.9.1"
 }
