@@ -20,6 +20,16 @@ const stageOf = (environment: "test") =>
     execFileSync("node", ["scripts/stage.ts", environment], { encoding: "utf8" }),
   );
 
+/**
+ * Vite's optimized-deps cache, one per stage. The dev and e2e servers run in one checkout at
+ * once, and a re-optimization by one replaces files the other has loaded, so it answers every
+ * SSR request with 500 (`ERR_FILE_NOT_FOUND_IN_OPTIMIZED_DEP_DIR`). Keyed on `ALCHEMY_STAGE`,
+ * which the e2e server has in its environment; dev passes `--stage` instead and keeps Vite's
+ * default.
+ */
+const viteCacheDir = () =>
+  process.env.ALCHEMY_STAGE ? `node_modules/.vite/${process.env.ALCHEMY_STAGE}` : undefined;
+
 const browserStub = (file: string) =>
   fileURLToPath(new URL(`test/browser/stubs/${file}`, import.meta.url));
 
@@ -88,6 +98,7 @@ export default defineConfig(({ command, mode, isPreview }) => {
             tanstackStart({ srcDirectory: "src/web" }),
             react(),
           ],
+    cacheDir: viteCacheDir(),
     // Alchemy overrides this with an internal port behind its public proxy.
     server: command === "serve" ? { port: websitePort(mode), strictPort: true } : undefined,
     test: {
