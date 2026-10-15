@@ -125,6 +125,13 @@ browser. `vp run test:e2e:ui` opens Playwright's
 UI mode; arguments pass straight through, as in `vp run test:e2e --grep-invert @dev-only` (no
 `--`). Reports, traces and saved sign-ins go to `playwright/`, which is ignored.
 
+The `embedded` project (`test/e2e/embedded/`) opens the app inside the real Shopify admin of the
+e2e store, in real Chrome, headless. It needs your Shopify admin login: `vp run e2e:auth` copies
+the Shopify cookies from Chrome's `Default` profile (`--profile` names another) into
+`playwright/.auth/shopify-admin.json`, and macOS asks you to allow the Keychain read, so a person
+must answer. The project's setup does the same on its own when the export is more than a day old.
+`vp run test:e2e:headed` runs every project with a visible browser.
+
 `vp build` builds client assets and the Cloudflare-compatible server bundle.
 Alchemy loads the same Vite configuration and injects its own runtime plugin on
 deployment. The config's injection guard prevents duplicate plugin instances.

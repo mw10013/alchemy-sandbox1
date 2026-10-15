@@ -20,6 +20,17 @@ export class TestControlAuth extends RpcMiddleware.Service<TestControlAuth>()("T
 }) {}
 
 /**
+ * The part of a stored Shopify session a test may read. It has no field for the access or the
+ * refresh token, so no handler can return one.
+ */
+export const ShopSessionView = Schema.Struct({
+  shopGid: Schema.String,
+  scope: Schema.NullOr(Schema.String),
+  accessTokenExpiresAt: Schema.NullOr(Schema.Number),
+});
+export type ShopSessionView = typeof ShopSessionView.Type;
+
+/**
  * Procedures for a test runner. The Backend serves them only when it has the `E2E_TOKEN`
  * binding, which the stack sets only when the test runner supplies the token.
  *
@@ -28,6 +39,8 @@ export class TestControlAuth extends RpcMiddleware.Service<TestControlAuth>()("T
  *   many it closed.
  * - `IssueMerchantSessionToken` signs a Shopify session token for a shop with the fake app's
  *   secret, as Shopify would; it is how a merchant window exists in dev and e2e.
+ * - `GetShopSession` reads a shop's stored session as {@link ShopSessionView}, or null when the
+ *   shop has none; it is how a test sees what a real token exchange stored.
  * - `IssueMagicLink` is `BackendApi.requestMagicLink` without the rate limit or the non-member
  *   silence; an address that could not sign in, or a stage that mails its links instead of
  *   handing them back, is a defect.
@@ -48,6 +61,10 @@ export const TestControlRpcs = RpcGroup.make(
   Rpc.make("IssueMerchantSessionToken", {
     payload: { shop: ShopKey, expiresInSeconds: Schema.optional(Schema.Int) },
     success: Schema.Struct({ token: Schema.String }),
+  }),
+  Rpc.make("GetShopSession", {
+    payload: { shop: ShopKey },
+    success: Schema.NullOr(ShopSessionView),
   }),
   Rpc.make("IssueMagicLink", {
     payload: { email: Email, returnTo: Schema.optional(ReturnPath) },

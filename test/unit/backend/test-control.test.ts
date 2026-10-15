@@ -10,8 +10,9 @@ import * as RpcTest from "effect/rpc/RpcTest";
 import * as Schema from "effect/Schema";
 import { EmailFromInput } from "../../../src/contract/auth.ts";
 import { type Member } from "../../../src/contract/members.ts";
-import { SANDBOX_SHOP, type ShopKey } from "../../../src/contract/shop.ts";
+import { SANDBOX_SHOP, ShopKey } from "../../../src/contract/shop.ts";
 import { E2eEmail, TestControlRpcs } from "../../../src/contract/test-control.ts";
+import { type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
 import { QuietLogs, testAuth, testShopify } from "./layers.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
@@ -26,6 +27,19 @@ const email = Schema.decodeUnknownSync(EmailFromInput);
 
 const member = email("m1@m.com");
 const stranger = email("nobody@example.com");
+const session: ShopSessionRow = {
+  shop: SANDBOX_SHOP,
+  shopGid: "gid://shopify/Shop/1",
+  shopAgentId: SANDBOX_SHOP,
+  scope: "read_orders,read_products",
+  accessTokenExpiresAt: 1_900_000_000_000,
+  accessToken: "shpat_secret_access",
+  refreshToken: "shprt_secret_refresh",
+  refreshTokenExpiresAt: 1_900_000_000_000,
+  planHandle: null,
+  planHandleExpiresAt: null,
+  planBoundaryAt: null,
+};
 const members: ReadonlyArray<Member> = [
   { id: "mem-1", shop: SANDBOX_SHOP, email: member, createdAt: 1 },
 ];
@@ -44,7 +58,7 @@ const TestBackend = (delivery: "inline" | "mailed" = "inline") =>
         members,
         actors: ShopActors.layerTest(revoked),
         delivery,
-        extra: Layer.mergeAll(testShopify(), Layer.succeed(TestControlToken, TOKEN)),
+        extra: Layer.mergeAll(testShopify([session]), Layer.succeed(TestControlToken, TOKEN)),
       }),
     ),
     Layer.provide(RuntimeContext.phantom),
@@ -120,6 +134,21 @@ describe("test control", () => {
         .RemoveMember({ shop: SANDBOX_SHOP, email: address })
         .pipe(authorized);
       assert.isFalse(gone.removed);
+    }).pipe(Effect.provide(TestBackend())),
+  );
+
+  it.live("GetShopSession returns the non-secret fields, or null for a shop without one", () =>
+    Effect.gen(function* () {
+      const client = yield* RpcTest.makeClient(TestControlRpcs);
+      const found = yield* client.GetShopSession({ shop: SANDBOX_SHOP }).pipe(authorized);
+      assert.deepStrictEqual(found, {
+        shopGid: "gid://shopify/Shop/1",
+        scope: "read_orders,read_products",
+        accessTokenExpiresAt: 1_900_000_000_000,
+      });
+      assert.notInclude(JSON.stringify(found), "secret");
+      const other = Schema.decodeUnknownSync(ShopKey)("other-shop.myshopify.com");
+      assert.isNull(yield* client.GetShopSession({ shop: other }).pipe(authorized));
     }).pipe(Effect.provide(TestBackend())),
   );
 });

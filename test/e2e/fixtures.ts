@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 import { EmailFromInput } from "../../src/contract/auth.ts";
 import { SANDBOX_SHOP, type ShopKey } from "../../src/contract/shop.ts";
 import { E2eEmail, TestControlRpcs } from "../../src/contract/test-control.ts";
-import { e2eToken } from "../../playwright.config.ts";
+import { e2eServerURL, e2eToken } from "../../playwright.config.ts";
 
 type Run = <A, E>(effect: Effect.Effect<A, E, RpcClient.Protocol>) => Promise<A>;
 
@@ -31,9 +31,9 @@ export const awaitHydration = async (page: Page) => {
 
 /**
  * `backend` runs an Effect against the test-control procedures and resolves with its value or
- * rejects with the pretty cause; it is the only place the specs touch Effect. It is
- * worker-scoped, so it reads `baseURL` from the project: a worker fixture cannot depend on the
- * test-scoped `baseURL` option.
+ * rejects with the pretty cause; it is the only place the specs touch Effect. It always talks
+ * to {@link e2eServerURL}, never the project's `baseURL`, which in the `embedded` project is the
+ * Shopify admin.
  *
  * `signIn` signs a seeded or `@e2e.test` user in on the test's `request` context, without a
  * browser: a link from `IssueMagicLink`, fetched with redirects off so the verify response's
@@ -46,10 +46,8 @@ export const test = base.extend<
   backend: [
     // Playwright reads a fixture's dependencies from this pattern, so it must be `{}`, not `_`.
     // oxlint-disable-next-line no-empty-pattern
-    async ({}, use, workerInfo) => {
-      const baseURL = workerInfo.project.use.baseURL;
-      if (baseURL === undefined) throw new Error("use.baseURL is not set");
-      const runtime = ManagedRuntime.make(protocol(baseURL));
+    async ({}, use) => {
+      const runtime = ManagedRuntime.make(protocol(e2eServerURL));
       const run: Run = (effect) =>
         runtime.runPromiseExit(effect).then((exit) => {
           if (exit._tag === "Success") return exit.value;

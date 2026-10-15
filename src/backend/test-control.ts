@@ -14,6 +14,7 @@ import { ShopActors } from "./shop-actors.ts";
 import { Auth } from "./auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { Members } from "./members.ts";
+import { ShopSessions } from "./shop-sessions.ts";
 import { Shopify } from "./shopify.ts";
 
 /** The stage's `E2E_TOKEN`, read once by the Worker, which serves test control only when it has one. */
@@ -39,6 +40,7 @@ export const TestControlHandlers = TestControlRpcs.toLayer(
     const members = yield* Members;
     const actors = yield* ShopActors;
     const shopify = yield* Shopify;
+    const sessions = yield* ShopSessions;
 
     return TestControlRpcs.of({
       AddMember: ({ shop, email }) => members.add(shop, email),
@@ -55,6 +57,19 @@ export const TestControlHandlers = TestControlRpcs.toLayer(
         shopify
           .signSessionToken({ shop, expiresIn: expiresInSeconds })
           .pipe(Effect.map((token) => ({ token }))),
+      GetShopSession: ({ shop }) =>
+        sessions.find(shop).pipe(
+          Effect.map(
+            Option.match({
+              onNone: () => null,
+              onSome: ({ shopGid, scope, accessTokenExpiresAt }) => ({
+                shopGid,
+                scope,
+                accessTokenExpiresAt,
+              }),
+            }),
+          ),
+        ),
       IssueMagicLink: ({ email, returnTo }, { headers }) =>
         Effect.gen(function* () {
           if (!(yield* maySignIn(email)))

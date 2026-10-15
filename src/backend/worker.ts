@@ -190,7 +190,7 @@ export default class Backend extends Cloudflare.Worker<Backend>()(
     const shopAccess = yield* ShopAccess;
     const api = yield* BackendApi;
     const services = yield* Effect.context<
-      Auth | MagicLinkDelivery | Members | Shopify | ShopActors
+      Auth | MagicLinkDelivery | Members | Shopify | ShopActors | ShopSessions
     >();
     const e2eToken = yield* Config.option(Config.String("E2E_TOKEN"));
     // The RPC server is built per request, inside the request's scope (workerd pins I/O to
@@ -273,7 +273,7 @@ export default class Backend extends Cloudflare.Worker<Backend>()(
         Members.layer,
         Mailer.layer,
         signInLimiter,
-        Shopify.layer.pipe(Layer.provide(ShopSessions.layer)),
+        Shopify.layer.pipe(Layer.provideMerge(ShopSessions.layer)),
       ),
     ),
     Effect.provide(CloudflareD1(AuthDb)),
