@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "shopify-dev-mcp": {
+      "command": "vpx",
+      "args": ["@shopify/dev-mcp@latest"]
+    },
+    "chrome-devtools": {
+      "command": "vpx",
+      "args": [
+        "chrome-devtools-mcp@latest",
+        "--autoConnect",
+        "--redactNetworkHeaders",
+        "--usageStatistics=false",
+        "--performanceCrux=false"
+      ]
+    }
+  }
+}
