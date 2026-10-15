@@ -1,33 +1,36 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 #
-# SKELETON -- not deployable yet. client_id and the staging URLs are intentionally
-# blank: `shopify app deploy --config staging` fails fast rather than pushing this
-# at the wrong app. Fill it in when staging gets its own Shopify app.
+# The staging Shopify app, served by the `staging` stage's Website Worker. Shopify CLI sends this
+# file to Shopify with `shopify app deploy --config staging`; it never deploys the Workers, which
+# Workers Builds does on every push to main. Deploy it again only when this file changes.
 #
-# Until then it earns its keep with one line: web_directories.
-# Shopify CLI unions web_directories across EVERY shopify.app*.toml before it globs
-# for shopify.web.toml, so this narrows discovery to the repo root and the app
-# checked out under refs/ (via the refs symlink) is never scanned -- which is what
-# stops "You can only have one web configuration file with the backend role".
-# It must NOT be copied into shopify.app.toml: the ACTIVE config's web_directories
-# are re-matched with minimatch against "shopify.web.toml", "./shopify.web.toml"
-# does not match, and the app silently loads zero webs.
+# web_directories must stay: Shopify CLI unions web_directories across EVERY shopify.app*.toml
+# before it globs for shopify.web.toml, so this narrows discovery to the repo root and the Baton
+# checkout under refs/ (via the refs symlink) is never scanned, which is what stops "You can only
+# have one web configuration file with the backend role". It must NOT be copied into
+# shopify.app.toml: the ACTIVE config's web_directories are re-matched with minimatch against
+# "shopify.web.toml", "./shopify.web.toml" does not match, and the app silently loads zero webs.
 # See refs/baton/docs/shopify-web-toml-conflict-research.md.
+#
+# No `handle`: it sets the App Home's admin URL slug, and changing one later breaks admin links.
 
 client_id = ""
 name = "Baton Staging"
-handle = "baton-staging"
-application_url = ""
+application_url = "https://alchemy-sandbox1-website-staging-a6uwn3bzazl3yzgy.mw10013.workers.dev"
 embedded = true
 web_directories = ["."]
 
 [access_scopes]
-scopes = ""
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_orders,read_products"
 
 [auth]
-redirect_urls = []
+redirect_urls = [
+  "https://alchemy-sandbox1-website-staging-a6uwn3bzazl3yzgy.mw10013.workers.dev/api/auth",
+]
 
 [webhooks]
+# No subscriptions until the app serves /webhooks: Shopify would deliver to routes that 404.
 api_version = "2026-10"
 
 [build]
