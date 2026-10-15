@@ -14,7 +14,7 @@ There is a fixed set of worktrees, `wt-01`, `wt-02`, …, created once and reuse
 - **Folders:** `git worktree list` shows every checkout's folder, with main first. Look them up there; don't assume a path.
 - **Per checkout:** `.env`, `node_modules/`, `.alchemy/` (local data and Alchemy state for every local stage), `.logs/` and `.shopify/` (the CLI's record of the store). `vp run worktree:init` writes `WEBSITE_PORT` and `SHOPIFY_DEV_STORE` into a worktree's `.env` and refuses a port or store another checkout holds: two `shopify app dev` sessions on one store overwrite each other's app URL.
 - **Stages:** each checkout has its own dev, test and e2e stage, `<environment>-<user>` in main and `<environment>-<user>-wt-NN` in a worktree (`dev-mw-wt-01`). `node scripts/stage.ts dev` prints the checkout's dev stage. They are all local, under the checkout's `.alchemy/`.
-- **Shared:** `refs/` exists once, in main. Each worktree has a `refs` symlink to it.
+- **Shared:** `refs/` and each deployed stage's `.env.<stage>` (today `.env.staging`) exist once, in main. `vp run worktree:init` gives each worktree a symlink to each.
 - **herdr:** each checkout's dev server runs in a `dev` tab in that checkout's herdr workspace.
 
 ## Configure the project action (once)

@@ -14,8 +14,8 @@ import { ShopifyApp, stageState, wireBackend } from "./src/backend/stack.ts";
  * instead of silently moving ports.
  *
  * `SHOPIFY_API_KEY` goes into the App Home's page, so it is public; the secret stays on the
- * Backend. Both it and `SHOPIFY_APP_URL` are the CLI's under `shopify app dev` ({@link ShopifyApp})
- * and the fake key and the Website's own URL elsewhere.
+ * Backend. It is the real app's where {@link ShopifyApp} has one and the fake key elsewhere;
+ * `SHOPIFY_APP_URL` is the real app's own URL when it has one and the Website's otherwise.
  */
 export class Website extends Cloudflare.Website.Vite<Website>()(
   "Website",
@@ -33,10 +33,13 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
           onNone: () => SHOPIFY_API_KEY,
           onSome: ({ apiKey }) => apiKey,
         }),
-        SHOPIFY_APP_URL: Option.match(app, {
-          onNone: () => Cloudflare.Worker.URL,
-          onSome: ({ appUrl }) => appUrl,
-        }),
+        SHOPIFY_APP_URL: Option.match(
+          Option.flatMap(app, ({ appUrl }) => appUrl),
+          {
+            onNone: () => Cloudflare.Worker.URL,
+            onSome: (appUrl) => appUrl,
+          },
+        ),
       },
     };
   }).pipe(Effect.orDie),

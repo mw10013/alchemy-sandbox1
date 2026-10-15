@@ -160,17 +160,17 @@ From the main checkout:
 
 ## 9. Verification checklist
 
-- [ ] §2 preconditions all hold.
-- [ ] `vp check` green.
-- [ ] `vp test` green; `vp run test:e2e` green.
-- [ ] `plan --config stacks/stage-config.ts --stage staging`: no resources, key shown, secret redacted.
-- [ ] A non-deployed stage is refused with no record written.
-- [ ] A missing or empty secret fails the stage config plan, naming the variable.
-- [ ] Before Step 5, `plan --stage staging` fails with `InvalidReferenceError`; after it, succeeds with only the expected Shopify binding changes beyond the staging research's list.
-- [ ] Dev under `shopify app dev` still loads embedded, now named Baton Dev.
-- [ ] `worktree:init` links `.env.staging` (or recorded as not run).
-- [ ] No secret value appears in any recorded output.
-- [ ] Nothing committed or pushed; no Shopify-side command run.
+- [x] §2 preconditions all hold.
+- [x] `vp check` green.
+- [x] `vp test` green; `vp run test:e2e` green.
+- [x] `plan --config stacks/stage-config.ts --stage staging`: no resources, key shown, secret redacted.
+- [x] A non-deployed stage is refused with no record written.
+- [x] A missing or empty secret fails the stage config plan, naming the variable.
+- [x] Before Step 5, `plan --stage staging` fails with `InvalidReferenceError`; after it, succeeds with only the expected Shopify binding changes beyond the staging research's list.
+- [x] Dev under `shopify app dev` still loads embedded, now named Baton Dev.
+- [x] `worktree:init` links `.env.staging` (or recorded as not run).
+- [x] No secret value appears in any recorded output.
+- [x] Nothing committed or pushed; no Shopify-side command run.
 
 ## 10. Deviations and issues
 
@@ -178,17 +178,72 @@ For the implementer. Append as you go; keep each entry short and dated, with the
 
 ### Deviations
 
-(none yet)
+- 2026-10-15, Step 1: `Environment` is now written as `Schema.Literals([...PerDeveloper.literals, ...Deployed.literals])`, so no partition test was added. `environmentOf` also uses `Deployed` (`Schema.is`) instead of `stage === "staging"`, so `production` joins in one place.
+- 2026-10-15, Step 2: the record's shape is a named interface `StageConfigValues` (the handle is `Alchemy.Stack<StageConfig, StageConfigValues>`), and the stack's return is `satisfies StageConfigValues`. `StageConfig.make` infers its own `A` and does not check it against the handle's shape, so without `satisfies` a missing field would not fail type checking (research §6.3 assumes it does).
+- 2026-10-15, Step 2: the refusal is a `Schema.TaggedError` (`NotDeployedStage`) turned into a defect with `Effect.orDie`: `make` only admits `ConfigError` in the error channel. It prints `ERROR (#1): NotDeployedStage: stage config is for staging only, not stage "dev-mw"` (plus a stack trace).
+- 2026-10-15, Step 2: empty secret rejected with `Config.schema(Schema.Redacted(Schema.NonEmptyString), "SHOPIFY_API_SECRET")` (what `Config.Redacted` does, over `NonEmptyString`).
+- 2026-10-15, Step 3: `ShopifyApp` is now `Effect<Option<ShopifyAppConfig>, ConfigError, Stage>`; `ShopifyAppConfig.appUrl` is an `Option` (some only for Shopify CLI's tunnel). `wireBackend` falls back to its `appUrl` option and the `Website` to `Cloudflare.Worker.URL` when it is none. The CLI's `Config` became a private `shopifyCliApp`. The stack reference resolved inside the `Website`'s `Effect.gen` without restructuring.
+- 2026-10-15, Step 4: the refs verify-or-create became a shared `linkToMain(root, mainCheckout, name)`, used for `refs` and each `.env.<Deployed>`; the "real directory" case is now "not a link" for both. wt-01 is at `5060ea0` (no Step 4 code), so instead of `vp run worktree:init` there, main's script ran with wt-01 as the working directory: `node <main>/scripts/worktree.ts init`.
+- 2026-10-15, Steps 5 and 6: the command is `vp run stage-config --stage staging`, not `pnpm run stage-config -- --stage staging`. Under pnpm 12 the `--` is passed through, and Alchemy's CLI then takes `--stage` as the `<config>` path (`Invalid value for argument <config>: "--stage"`). `pnpm run stage-config --stage …` also works. README, runbook and module doc use the `vp run` form (AGENTS.md: Vite+).
+- 2026-10-15, Step 6: `docs/glossary.md` gained **Stage config**, since it defines Environment and Stage. README's Shopify paragraph also said staging binds fakes; it now says staging binds the Baton Staging app.
 
 ### Issues
 
-(none yet)
+- 2026-10-15, Step 2: `alchemy plan` does not print a stack's outputs, so the key and `<redacted>` secret were seen only in Step 5's deploy output.
+- 2026-10-15, Step 2: with a non-deployed stage and no `.env.<stage>`, `Secrets.DotEnv` fails first (`SourceError: Failed to read dotenv file .env.dev-mw`); the `NotDeployedStage` refusal is reached only when such a file exists (checked with a temporary empty `.env.dev-mw`, then deleted). Neither writes a record.
+- 2026-10-15, Step 4: the wt-01 run appended `SHOPIFY_DEV_STORE=sandbox-shop-01` to wt-01's `.env` (it predated the key); this is `worktree:init`'s existing catch-up behaviour. wt-01's `git status` stayed clean (`.env.*` is ignored there too).
+- 2026-10-15, Step 5: `vp exec alchemy state list Alchemy-sandbox1-config/staging` fails with `UnknownStage: stage "placeholder"` (the default backend loads `alchemy.run.ts`'s `stageState` without a stage). With `--backend cloudflare`, `Alchemy-sandbox1-config/` is listed at the root, but `Alchemy-sandbox1-config/staging` reports `path does not exist` and `-r` lists nothing: the listing seems not to show a stage holding only an `output` entry. The record does exist: the staging plan resolves the reference.
+- 2026-10-15, Step 3: the main checkout's dev server was already running (herdr pane) and hot-reloaded the change; it was not restarted. The Shopify admin itself was not opened; checked through the tunnel instead.
 
 ### Command results
 
 Record the exact commands and the relevant lines of output for every "Verify" and for Step 5, with secrets hidden.
 
-(none yet)
+**§2 preconditions (2026-10-15), all hold**
+
+1. `grep -nE '^(client_id|name|application_url|handle|web_directories)' shopify.app.staging.toml` → `client_id = "54b4c701f5c568d4cf4a11fd42d6fe7b"`, `name = "Baton Staging"`, `application_url = "https://alchemy-sandbox1-website-staging-a6uwn3bzazl3yzgy.mw10013.workers.dev"`, `web_directories = ["."]`, no `handle`.
+2. Installed on `sandbox-shop-00`: stated by the user.
+3. `grep '^name' shopify.app.toml` → `name = "Baton Dev"`.
+4. `sed -E 's/=.*/=<hidden>/' .env.staging` → `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SCOPES`.
+5. Key compared to `client_id` in a shell without printing the secret → equal (`54b4c701…`).
+6. `.shopify/project.json` → `{ "7c6cceb7f8f9991a543d43648b08e72d": { "dev_store_url": "sandbox-shop-00.myshopify.com" } }` (no default config recorded; `app:dev` passes `--config shopify.app.toml`).
+
+- `git check-ignore -v .env.staging` → `.gitignore:20:.env.*`.
+
+**Step 1**: `vp check --fix` → pass. `vp test test/unit/backend/stage.test.ts` → 17 passed.
+
+**Step 2**
+
+- `vp check --fix` → pass (117 files).
+- `vp exec alchemy plan --config stacks/stage-config.ts --stage staging` → `Plan: no resources`.
+- `vp exec alchemy plan --config stacks/stage-config.ts --stage dev-mw` → `Planning failed`, `SourceError: Failed to read dotenv file .env.dev-mw`. With a temporary empty `.env.dev-mw` → `ERROR (#1): NotDeployedStage: stage config is for staging only, not stage "dev-mw"`.
+- `SHOPIFY_API_SECRET= vp exec alchemy plan --config stacks/stage-config.ts --stage staging` → `SchemaError(Expected a value with a length of at least 1 at ["SHOPIFY_API_SECRET"])`.
+- Missing secret: `.env.staging` copied aside, rewritten without the `SHOPIFY_API_SECRET` line, planned, then restored with `mv` (names re-checked afterwards) → `SchemaError(Expected string at ["SHOPIFY_API_SECRET"])`.
+
+**Step 3**
+
+- `vp check --fix` → pass. `vp test` → 15 files, 115 tests passed. `vp run test:e2e` → 20 passed.
+- `vp exec alchemy plan --stage staging` → `InvalidReferenceError: Reference to stack 'Alchemy-sandbox1-config' at stage 'staging' not found. Have you deployed stage 'staging' of 'Alchemy-sandbox1-config'?`
+- Dev (already running under `shopify app dev`): `.logs/dev/current` → `Reloading stack: changed src/backend/stack.ts` then `Plan: no changes`, with `[Backend/Shopify] noop`, `[ShopifyApiSecret] noop`, `[Website/SHOPIFY_API_KEY] noop`, `[Website/SHOPIFY_APP_URL] noop`. `vp run dev:status` → healthy, store `sandbox-shop-00`. Through the tunnel, `/auth/session-token?shop=sandbox-shop-00.myshopify.com&embedded=1…` → 200 with `<meta name="shopify-api-key" content="7c6cceb7f8f9991a543d43648b08e72d">`, the `client_id` of `shopify.app.toml` (Baton Dev).
+
+**Step 4**
+
+- `vp check --fix` → pass.
+- wt-01 (`/Users/mw/.t3/worktrees/alchemy-sandbox1/wt-01`, clean): first run → `ok .env verified, WEBSITE_PORT=3901`, `ok .env gained SHOPIFY_DEV_STORE=sandbox-shop-01`, `ok refs link verified`, `ok .env.staging -> /Users/mw/Documents/src/alchemy-sandbox1/.env.staging`. Second run → all four verified (`ok .env.staging link verified`).
+
+**Step 5**
+
+1. `vp run stage-config --stage staging` → `Plan: no resources`, `Done: 0 succeeded (146ms)`, `{ SHOPIFY_API_KEY: '54b4c701f5c568d4cf4a11fd42d6fe7b', SHOPIFY_API_SECRET: <redacted> }`.
+2. `vp exec alchemy state list --backend cloudflare Alchemy-sandbox1-config/staging` → `path does not exist` (see Issues); root listing shows `Alchemy-sandbox1-config/`.
+3. `vp exec alchemy plan --stage staging` → `Plan: 2 to update, 3 binding changes, 1 tasks`:
+   - `[Backend/Shopify] update`: expected, the staging app's key (plain) and secret (`secret_text`) replace the fake key and the random.
+   - `[Website/SHOPIFY_API_KEY] create` (`+ SHOPIFY_API_KEY: 54b4c701…`), `[Website/SHOPIFY_APP_URL] create` (`(computed)`): expected Shopify bindings, `create` rather than `update` because staging (`origin/main` = `5060ea0`) predates `2f352e7`, the unpushed commit that gave the Website these bindings.
+   - `[Backend] update`, `[Website] update`: unpushed code (5 commits `2f352e7`..`cad02c0` plus this work); `--detailed` shows only `main` moving from `/opt/buildhome/repo/…` to the laptop path and `(computed)` exports, the usual laptop-vs-Builds noise.
+   - `[Seed] run [action]`: its input includes the Backend's URL, recomputed by the Backend update; the seed is idempotent.
+   - Everything else `noop` (`AuthDb`, `BetterAuthSecret`, `ShopifyApiSecret`, `Backend/ShopActor`, …). Nothing unexplained. The staging research's list (ShopActor, `TicketSecret`, …) is already on staging.
+4. Stopped: not pushed.
+
+**Step 6**: `vp check --fix` → pass.
 
 ## 11. Out of scope
 

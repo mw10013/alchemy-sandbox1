@@ -11,11 +11,30 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
+import type * as Redacted from "effect/Redacted";
 import type { DeliveryMode } from "./magic-link-delivery.ts";
 import { seed } from "./seed.ts";
 import { SHOPIFY_API_KEY } from "./shopify.ts";
 import { environmentOf } from "./stage.ts";
 import type Backend from "./worker.ts";
+
+/** The fields of {@link StageConfig}'s record, named after the bindings they become. */
+export interface StageConfigValues {
+  readonly SHOPIFY_API_KEY: string;
+  readonly SHOPIFY_API_SECRET: Redacted.Redacted<string>;
+}
+
+/**
+ * The values another service issues for a deployed stage, held as the output of their own stack
+ * so that a deploy in Workers Builds, which has no way to receive them as environment variables,
+ * reads them from the state store instead. A secret is `Redacted`, which is what binds it as a
+ * Worker secret. Deployed by hand from a laptop, before any deploy of code that reads a new
+ * field; every deploy writes the whole record. The stack name is a logical id in state: renaming
+ * it orphans every stage's record.
+ */
+export class StageConfig extends Alchemy.Stack<StageConfig, StageConfigValues>()(
+  "Alchemy-sandbox1-config",
+) {}
 
 /**
  * The stack's state store, chosen by the stage's environment. State lives where the resources
@@ -39,28 +58,67 @@ export const stageState = Layer.unwrap(
   }),
 );
 
+/** A real Shopify app's credentials, as {@link ShopifyApp} chooses them. */
+export interface ShopifyAppConfig {
+  readonly apiKey: string | Alchemy.Output<string>;
+  readonly apiSecret: Redacted.Redacted<string> | Alchemy.Output<Redacted.Redacted<string>>;
+  /** The app's public URL when it is not the Website's own: Shopify CLI's tunnel. */
+  readonly appUrl: Option.Option<string>;
+}
+
 /**
- * The Shopify app this run serves, `Some` only when all three variables are present. Shopify CLI
- * injects them into the web command it runs, so they exist only under `shopify app dev`, which
- * runs `alchemy dev` as that command; everywhere else (integ, e2e, a plain `alchemy dev`,
- * staging) they are absent and the fakes in {@link wireBackend} stand in. The process
- * environment wins over `.env`, so `.env` cannot shadow them.
+ * Shopify CLI's app, `Some` only when all three variables are present. The CLI injects them into
+ * the web command it runs, so they exist only under `shopify app dev`, which runs `alchemy dev`
+ * as that command. The process environment wins over `.env`, so `.env` cannot shadow them.
  */
-export const ShopifyApp = Config.all({
+const shopifyCliApp = Config.all({
   appUrl: Config.option(Config.String("APP_URL")),
   apiKey: Config.option(Config.String("SHOPIFY_API_KEY")),
   apiSecret: Config.option(Config.Redacted("SHOPIFY_API_SECRET")),
-}).pipe(Config.map(Option.all));
+}).pipe(
+  Config.map(Option.all),
+  Config.map(Option.map((app): ShopifyAppConfig => ({ ...app, appUrl: Option.some(app.appUrl) }))),
+);
+
+/**
+ * The real Shopify app this stage serves, chosen by the stage's environment; `None` means the
+ * fakes in {@link wireBackend} stand in. `staging` reads its app from {@link StageConfig}'s record
+ * and never from `Config`, so a stray variable in the Workers Builds environment cannot override
+ * it, and a missing record fails the plan rather than falling back to the fakes; its app URL is
+ * the Website's own. `dev` serves Shopify CLI's app under `shopify app dev` and the fakes
+ * otherwise; `test` and `e2e` always use the fakes.
+ */
+export const ShopifyApp: Effect.Effect<
+  Option.Option<ShopifyAppConfig>,
+  Config.ConfigError,
+  Alchemy.Stage
+> = Effect.gen(function* () {
+  const environment = yield* environmentOf(yield* Alchemy.Stage).pipe(Effect.orDie);
+  return yield* Match.value(environment).pipe(
+    Match.when("staging", () =>
+      Effect.map(StageConfig, (record) =>
+        Option.some<ShopifyAppConfig>({
+          apiKey: record.SHOPIFY_API_KEY,
+          apiSecret: record.SHOPIFY_API_SECRET,
+          appUrl: Option.none(),
+        }),
+      ),
+    ),
+    Match.when("dev", () => shopifyCliApp),
+    Match.whenOr("test", "e2e", () => Effect.succeedNone),
+    Match.exhaustive,
+  );
+});
 
 /**
  * Seeds the stage and binds the Backend's configuration. The two stacks differ only in the
  * options; every other binding is here, so a new one is added once. The binding names and the
  * `ShopifyApiSecret` id are logical ids in state: renaming one recreates it on every stage.
  *
- * The Shopify API key and secret are the real app's under `shopify app dev` ({@link ShopifyApp})
- * and fakes elsewhere: a fixed key and a random secret held in state. The random secret is
- * declared on every stage, so its state record does not come and go with the CLI; only the
- * binding's value differs. `appUrl` is the app's public URL, the CLI's tunnel under the CLI.
+ * The Shopify API key and secret are the real app's where {@link ShopifyApp} has one and fakes
+ * elsewhere: a fixed key and a random secret held in state. The random secret is declared on
+ * every stage, so its state record does not come and go with the CLI; only the binding's value
+ * differs. `appUrl` is the Website's URL, used unless the real app has its own.
  * `e2eToken`, when some, turns test control on.
  */
 export const wireBackend = Effect.fn("wireBackend")(function* (
@@ -87,7 +145,7 @@ export const wireBackend = Effect.fn("wireBackend")(function* (
       onSome: ({ apiKey, apiSecret, appUrl }) => ({
         SHOPIFY_API_KEY: apiKey,
         SHOPIFY_API_SECRET: apiSecret,
-        SHOPIFY_APP_URL: appUrl,
+        SHOPIFY_APP_URL: Option.getOrElse(appUrl, () => options.appUrl),
       }),
     }),
   });

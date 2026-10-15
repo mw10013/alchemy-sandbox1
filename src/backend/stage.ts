@@ -12,12 +12,19 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
-export const Environment = Schema.Literals(["dev", "test", "e2e", "staging"]);
-export type Environment = typeof Environment.Type;
-
 /** The environments with one stage per developer and checkout; `staging` is shared. */
 export const PerDeveloper = Schema.Literals(["dev", "test", "e2e"]);
 export type PerDeveloper = typeof PerDeveloper.Type;
+
+/**
+ * The environments deployed to Cloudflare, each a single stage named after the environment.
+ * `production` joins when it is designed.
+ */
+export const Deployed = Schema.Literals(["staging"]);
+export type Deployed = typeof Deployed.Type;
+
+export const Environment = Schema.Literals([...PerDeveloper.literals, ...Deployed.literals]);
+export type Environment = typeof Environment.Type;
 
 /** Lowercase letters and digits, so a user never contains the `-` between a stage's parts. */
 const User = Schema.String.check(Schema.isPattern(/^[a-z0-9]+$/u));
@@ -79,15 +86,17 @@ export class UnknownStage extends Schema.TaggedError<UnknownStage>()("UnknownSta
 
 const decodePerDeveloper = Schema.decodeUnknownOption(PerDeveloperStage);
 
+const isDeployed = Schema.is(Deployed);
+
 /**
- * The environment a stage belongs to: `staging` is its own, a per-developer stage's is its first
- * part. Any other stage fails rather than falling back: an environment not listed in
+ * The environment a stage belongs to: a {@link Deployed} stage is its own, a per-developer
+ * stage's is its first part. Any other stage fails rather than falling back: an environment not listed in
  * {@link Environment} is one nobody has thought through (its seed, its state store, its policy).
  * `live` and `production` are added when they are designed.
  */
 export const environmentOf = (stage: string): Effect.Effect<Environment, UnknownStage> =>
-  stage === "staging"
-    ? Effect.succeed("staging")
+  isDeployed(stage)
+    ? Effect.succeed(stage)
     : Option.match(decodePerDeveloper(stage), {
         onNone: () => Effect.fail(new UnknownStage({ stage })),
         onSome: ({ environment }) => Effect.succeed(environment),

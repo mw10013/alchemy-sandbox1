@@ -34,10 +34,11 @@ in Baton's layout:
 - `/merchant/<shop>?token=<Shopify session token>` is the merchant page without App Bridge,
   which test control mints tokens for.
 
-The Shopify app's key, secret and URL are the real app's (Baton's `baton-local`,
-`shopify.app.toml`) when Shopify CLI runs the server, and fakes everywhere else: integ, e2e and
-staging bind a fixed key, a random secret and the Website's own URL, and the seeded
-`ShopSession` rows stand in for token exchange. Never run `shopify app deploy` from this repo:
+The Shopify app's key, secret and URL are the dev app's ("Baton Dev", `shopify.app.toml`) when
+Shopify CLI runs the server; staging binds the "Baton Staging" app's key and secret
+(`shopify.app.staging.toml`) with the Website's own URL; integ and e2e bind a fixed key, a
+random secret and the Website's own URL, and the seeded `ShopSession` rows stand in for token
+exchange. Never run `shopify app deploy` from this repo:
 the config is Baton's, and deploy would push its webhook subscriptions at Baton's app.
 
 ## Run locally
@@ -180,6 +181,12 @@ vp exec alchemy profile edit --add Cloudflare
 vp exec alchemy plan --stage staging
 vp run deploy:staging
 ```
+
+Staging's externally issued values (the Shopify app's key and secret) come from the main
+checkout's untracked `.env.staging`, saved to the state store by
+`vp run stage-config --stage staging`, which creates no resources; the staging deploy reads
+them from there. Deploy that record before pushing code that needs a new value. See the
+[stage config runbook](docs/stage-config-runbook.md).
 
 Alchemy stores authentication in its profiles; do not put credentials in source
 files. Staging uses Alchemy's shared Cloudflare state store; dev, test and e2e keep theirs

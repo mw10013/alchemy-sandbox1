@@ -3,7 +3,12 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { environmentOf, PerDeveloperStage, UnknownStage } from "../../../src/backend/stage.ts";
+import {
+  Deployed,
+  environmentOf,
+  PerDeveloperStage,
+  UnknownStage,
+} from "../../../src/backend/stage.ts";
 
 const decode = Schema.decodeUnknownSync(PerDeveloperStage);
 const encode = Schema.encodeSync(PerDeveloperStage);
@@ -45,4 +50,13 @@ describe("stage names", () => {
         assert.deepStrictEqual(exit, Exit.fail(new UnknownStage({ stage })));
       }),
     );
+});
+
+describe("deployed environments", () => {
+  const isDeployed = Schema.is(Deployed);
+
+  it("accepts staging", () => assert.isTrue(isDeployed("staging")));
+
+  for (const stage of ["dev", "dev-mw", "production"])
+    it(`rejects ${stage}`, () => assert.isFalse(isDeployed(stage)));
 });

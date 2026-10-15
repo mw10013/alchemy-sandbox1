@@ -20,6 +20,9 @@
  *    no secrets) with `WEBSITE_PORT` and `SHOPIFY_DEV_STORE` set for this
  *    worktree.
  * 3. `refs`: a symlink to the main checkout's `refs/`.
+ * 4. `.env.<environment>` for each {@link Deployed} environment: a symlink to
+ *    the main checkout's, so a deployed stage's values exist once; skipped
+ *    when the main checkout has no such file.
  *
  * It does not start the server; `vp run dev` does.
  */
@@ -32,6 +35,7 @@ import * as Option from "effect/Option";
 import { CliError, Command } from "effect/cli";
 import path from "node:path";
 
+import { Deployed } from "../src/backend/stage.ts";
 import {
   checkoutKind,
   checkoutPaths,
@@ -67,20 +71,47 @@ const checkoutClaims = Effect.fn("checkoutClaims")(function* (checkout: string) 
   });
 });
 
-type RefsLink =
+type LinkState =
   | { readonly _tag: "Symlink"; readonly target: string }
-  | { readonly _tag: "Directory" }
+  | { readonly _tag: "Real" }
   | { readonly _tag: "Absent" };
 
-const refsLinkState = Effect.fn("refsLinkState")(function* (
+const linkState = Effect.fn("linkState")(function* (
   link: string,
-): Effect.fn.Return<RefsLink, never, FileSystem.FileSystem> {
+): Effect.fn.Return<LinkState, never, FileSystem.FileSystem> {
   const fs = yield* FileSystem.FileSystem;
   const target = yield* fs.readLink(link).pipe(Effect.option);
   if (Option.isSome(target)) return { _tag: "Symlink", target: target.value };
   return (yield* fs.exists(link).pipe(Effect.orElseSucceed(() => false)))
-    ? { _tag: "Directory" }
+    ? { _tag: "Real" }
     : { _tag: "Absent" };
+});
+
+/**
+ * Links `name` in the worktree at `root` to the same name in the main checkout: a link to it is
+ * verified, a link elsewhere fails naming both, a real file or directory fails because it would
+ * shadow the main checkout's, and an absent one is created.
+ */
+const linkToMain = Effect.fn("linkToMain")(function* (
+  root: string,
+  mainCheckout: string,
+  name: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const link = path.join(root, name);
+  const target = path.join(mainCheckout, name);
+  yield* Match.valueTags(yield* linkState(link), {
+    Symlink: (have) =>
+      have.target === target
+        ? Console.log(`ok    ${name} link verified`)
+        : fail(`${name} points at ${have.target}, expected ${target}`),
+    Real: () =>
+      fail(
+        `${name} is not a link: remove it; the main checkout's ${name} is shared through a symlink`,
+      ),
+    Absent: () =>
+      fs.symlink(target, link).pipe(Effect.andThen(Console.log(`ok    ${name} -> ${target}`))),
+  });
 });
 
 /**
@@ -175,22 +206,15 @@ const init = Effect.gen(function* () {
       ),
   });
 
-  const refsLink = path.join(root, "refs");
-  const refsTarget = path.join(mainCheckout, "refs");
-  yield* Match.valueTags(yield* refsLinkState(refsLink), {
-    Symlink: ({ target }) =>
-      target === refsTarget
-        ? Console.log("ok    refs link verified")
-        : fail(`refs points at ${target}, expected ${refsTarget}`),
-    Directory: () =>
-      fail(
-        "refs is a real directory: remove it; the main checkout's refs/ is shared through a symlink",
-      ),
-    Absent: () =>
-      fs
-        .symlink(refsTarget, refsLink)
-        .pipe(Effect.andThen(Console.log(`ok    refs -> ${refsTarget}`))),
-  });
+  yield* linkToMain(root, mainCheckout, "refs");
+  yield* Effect.forEach(Deployed.literals, (environment) =>
+    Effect.gen(function* () {
+      const name = `.env.${environment}`;
+      if (yield* fs.exists(path.join(mainCheckout, name)))
+        return yield* linkToMain(root, mainCheckout, name);
+      yield* Console.log(`skip  ${name}: none in the main checkout`);
+    }),
+  );
 
   yield* Console.log(`\n${branch} ready on port ${String(port)}. Next: vp run dev`);
 });
@@ -201,7 +225,7 @@ const toUserError = <E extends { readonly message: string }>(error: E) =>
 
 const initCommand = Command.make("init", {}, () => init.pipe(Effect.mapError(toUserError))).pipe(
   Command.withDescription(
-    "Prepare this wt-NN worktree: .env with its WEBSITE_PORT and SHOPIFY_DEV_STORE, and the refs link. Verifies instead of rewriting on a second run.",
+    "Prepare this wt-NN worktree: .env with its WEBSITE_PORT and SHOPIFY_DEV_STORE, and links to the main checkout's refs and .env.<deployed environment> files. Verifies instead of rewriting on a second run.",
   ),
 );
 
