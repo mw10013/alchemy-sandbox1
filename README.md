@@ -65,7 +65,8 @@ npm.
 
 Each checkout also names an e2e store, `SHOPIFY_E2E_STORE` (`mw10013-e2e-shop-NN`). `vp run
 stores:check` checks that both stores exist; `vp run stores:seed` writes `seed/dev-shop.ts` into
-the dev store.
+the dev store. Store names, the one-time `store auth`, seeding, the e2e admin login and what to do
+when they break: [Shopify stores runbook](docs/shopify-stores-runbook.md).
 
 Open the app at the admin URL `vp run dev` and `vp run dev:status` print, in a browser signed in
 to the Partner organization. For the main checkout it is

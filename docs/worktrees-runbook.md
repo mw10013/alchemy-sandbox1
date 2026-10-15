@@ -64,6 +64,8 @@ This assumes the project action above has been saved. Create each worktree once,
    - `vp run dev:status` reports healthy;
    - herdr shows `wt-NN` under `alchemy-sandbox1`, with a `dev` tab.
 
+Before seeding the new worktree's dev store, a person authorizes it once with `shopify store auth`; see [Shopify stores](./shopify-stores-runbook.md).
+
 `vp run worktree:init` is safe to run again; a second run only checks. If it fails, it says what to fix.
 
 **If the launch fails, stop and tell the user.** Don't work around it, for example by creating the worktree with git: T3 decides where worktrees live, and that can change between T3 releases.
