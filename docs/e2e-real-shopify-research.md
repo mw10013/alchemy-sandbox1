@@ -1,6 +1,6 @@
 # Research: e2e against real Shopify, and a store per checkout per environment
 
-Research date: 2026-10-15 · Alchemy `2.0.0-beta.81`, Shopify CLI `4.9.0`. Status: phase 2 done (§6.4); phase 3 done 2026-10-15 (store names, `stores:check`, `stores:seed`; plan in `stores-plan.md`), except the main checkout's move to `mw10013-dev-shop-00`; every question answered. Stores claimed on 2026-10-15 (§6.5); nothing else implemented. The probes in §6 ran in throwaway directories outside the repository, since deleted, and changed nothing in it.
+Research date: 2026-10-15 · Alchemy `2.0.0-beta.81`, Shopify CLI `4.9.0`. Status: phase 2 done (§6.4); phase 3 done 2026-10-15 (store names, `stores:check`, `stores:seed`; plan in `stores-plan.md`), except the main checkout's move to `mw10013-dev-shop-00`; every question answered. Phase 4 done 2026-10-15 (the e2e server is Shopify CLI on the e2e store; plan in `e2e-server-plan.md`). Stores claimed on 2026-10-15 (§6.5). The probes in §6 ran in throwaway directories outside the repository, since deleted, and changed nothing in it.
 
 ## 1. Summary
 

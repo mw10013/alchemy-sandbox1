@@ -111,9 +111,11 @@ and destroys it afterwards, so every file starts from the seed alone; `NO_DESTRO
 --project integ` keeps the stage for inspecting after a failure.
 
 `vp run test:e2e` runs the Playwright specs under `test/e2e/` in Chromium. It destroys this
-checkout's e2e stage (`e2e-<user>`, or `e2e-<user>-wt-NN`) and then starts `alchemy dev` on it,
-with local state under `.alchemy/`, on `WEBSITE_PORT + 100`, so the dev server on `WEBSITE_PORT`
-keeps running and every run starts from the seed alone. `E2E_REUSE_SERVER=1` reuses a server
+checkout's e2e stage (`e2e-<user>`, or `e2e-<user>-wt-NN`) and then starts the e2e server: Shopify
+CLI (`shopify app dev`) on the checkout's e2e store (`SHOPIFY_E2E_STORE`), which runs `alchemy dev`
+on that stage with Baton Dev's real key and secret and the session's tunnel, with local state under
+`.alchemy/`, on `WEBSITE_PORT + 100`, so the dev server on `WEBSITE_PORT` keeps running and every
+run starts from the seed alone. The server's whole output goes to `.logs/e2e/current`. `E2E_REUSE_SERVER=1` reuses a server
 already on that port, keeping its data, for iterating; a server the run started is stopped at
 the end. Before the specs it signs in once per role through the test-control procedures, which
 the Backend serves only on a stage given an `E2E_TOKEN`. Tests never change seed rows; one that

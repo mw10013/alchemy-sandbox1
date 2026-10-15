@@ -14,8 +14,10 @@
  *
  * 1. A `shopify app dev` or `alchemy dev` already serving this checkout,
  *    wherever it runs, is adopted: `start` leaves it running, `stop` stops
- *    it, whoever started it. It is found by process and working directory,
- *    not by label.
+ *    it, whoever started it. It is found by process, working directory and
+ *    store (`--store <SHOPIFY_DEV_STORE>`), not by label; the e2e server,
+ *    which runs in the same directory on the e2e store, is never adopted,
+ *    reported or stopped.
  * 2. With herdr running, the server belongs to the checkout's workspace,
  *    which is opened if needed: labelled with the project name for the main
  *    checkout, `wt-NN` for a worktree (grouped under the main checkout's
@@ -32,7 +34,7 @@
  * herdr is asked whether it runs (`herdr status`), never `HERDR_ENV`: T3 Code
  * agents run outside herdr but can still drive it over its socket.
  *
- * Alchemy's output always goes to `.logs/dev/current` (the `dev:alchemy` script pipes it
+ * Alchemy's output always goes to `.logs/dev/current` (the `web:dev` script pipes it
  * through `s6-log`), and with the CLI's own output (tunnel, preview URL, status) to the pane or
  * terminal it runs in. `start` and `status` print the tunnel and the app's admin URL.
  *
@@ -73,7 +75,7 @@ const LOG = ".logs/dev/current";
 const LOCK = ".logs/dev.lock";
 const DEV_TAB = "dev";
 /**
- * This checkout's dev stage, resolved on first use and kept. The `dev:alchemy` script passes it
+ * This checkout's dev stage, resolved on first use and kept. The `web:dev` script passes it
  * as `--stage`, so it is also the part of the server's command line that tells this checkout's
  * `alchemy dev` from another checkout's and from an e2e stage's (Playwright's web server, on
  * another port, sets its stage through `ALCHEMY_STAGE` and has no `--stage` to match). The
@@ -88,11 +90,20 @@ const serverProcess = devStage.pipe(Effect.map((name) => ` dev --stage ${name}`)
 /**
  * Shopify CLI's `app dev` process, as `pgrep -f` matches it. Under Vite+'s tool manager the CLI's
  * command line is `node …/@shopify/cli/…/bin/run.js app dev …`, without the word `shopify app
- * dev`; a CLI installed elsewhere shows `shopify app dev`. Both are matched, and the
- * working-directory check that follows every match keeps only this checkout's.
+ * dev`; a CLI installed elsewhere shows `shopify app dev`. Both are matched.
  */
 const CLI_PROCESS = String.raw`shopify app dev|@shopify/cli/.*bin/run\.js app dev`;
-const isCliCommand = Schema.is(Schema.String.check(Schema.isPattern(new RegExp(CLI_PROCESS, "u"))));
+const escapeRegExp = (text: string) => text.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
+/**
+ * The pattern of this checkout's dev server CLI: {@link CLI_PROCESS} on `--store <store>`. The
+ * e2e server is also a `shopify app dev` in this checkout's working directory, on the e2e store,
+ * so the working-directory check that follows every match cannot tell the two apart; the store
+ * does. A store name that is a prefix of another (`…-shop-0` and `…-shop-00`) must end the
+ * argument.
+ */
+const cliPattern = (store: string) => `(${CLI_PROCESS}) .*--store ${escapeRegExp(store)}( |$)`;
+const isCliCommand = (store: string) =>
+  Schema.is(Schema.String.check(Schema.isPattern(new RegExp(cliPattern(store), "u"))));
 const START_TIMEOUT_MS = 180_000;
 const LOCAL_DATA = ".alchemy/local";
 /**
@@ -204,12 +215,12 @@ const checkoutPids = (pattern: string) =>
   );
 
 /**
- * This checkout's server processes: Shopify CLI's `app dev` (see {@link CLI_PROCESS}) and
- * Alchemy's CLI process running `alchemy dev`, whose exit ends the `dev:alchemy` pipeline. Both
- * are listed, because a SIGINT to the CLI alone leaves Alchemy's tree running on the port.
+ * This checkout's server processes: Shopify CLI's `app dev` on the dev store (see
+ * {@link cliPattern}) and Alchemy's CLI process running `alchemy dev`, whose exit ends the
+ * `web:dev` pipeline. Both are listed, because a SIGINT to the CLI alone leaves Alchemy's tree running on the port.
  */
 const serverPids = Effect.all([
-  checkoutPids(CLI_PROCESS),
+  loadStore.pipe(Effect.flatMap((store) => checkoutPids(cliPattern(store)))),
   serverProcess.pipe(Effect.flatMap(checkoutPids)),
 ]).pipe(Effect.map(([cli, alchemy]) => [...cli, ...alchemy]));
 
@@ -289,6 +300,7 @@ const findServerPane = Effect.gen(function* () {
   if (!(yield* Herdr.running)) return Option.none<Herdr.Pane>();
   const panes = yield* Herdr.listPanes;
   const command = yield* serverProcess;
+  const isDevCli = isCliCommand(yield* loadStore);
   const hosting = yield* Effect.forEach(
     panes,
     (pane) =>
@@ -296,7 +308,7 @@ const findServerPane = Effect.gen(function* () {
         Effect.map(({ processes }) =>
           processes.some(
             (process) =>
-              (isCliCommand(process.argv.join(" ")) || process.argv.join(" ").includes(command)) &&
+              (isDevCli(process.argv.join(" ")) || process.argv.join(" ").includes(command)) &&
               (process.cwd === undefined || process.cwd === ROOT),
           )
             ? [pane]

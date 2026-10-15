@@ -85,8 +85,8 @@ const shopifyCliApp = Config.all({
  * fakes in {@link wireBackend} stand in. `staging` reads its app from {@link StageConfig}'s record
  * and never from `Config`, so a stray variable in the Workers Builds environment cannot override
  * it, and a missing record fails the plan rather than falling back to the fakes; its app URL is
- * the Website's own. `dev` serves Shopify CLI's app under `shopify app dev` and the fakes
- * otherwise; `test` and `e2e` always use the fakes.
+ * the Website's own. `dev` and `e2e` serve Shopify CLI's app under `shopify app dev` and the
+ * fakes otherwise (a bare `alchemy destroy` of the e2e stage); `test` always uses the fakes.
  */
 export const ShopifyApp: Effect.Effect<
   Option.Option<ShopifyAppConfig>,
@@ -104,8 +104,8 @@ export const ShopifyApp: Effect.Effect<
         }),
       ),
     ),
-    Match.when("dev", () => shopifyCliApp),
-    Match.whenOr("test", "e2e", () => Effect.succeedNone),
+    Match.whenOr("dev", "e2e", () => shopifyCliApp),
+    Match.when("test", () => Effect.succeedNone),
     Match.exhaustive,
   );
 });

@@ -28,6 +28,7 @@ Start with `vp run dev`. Open `http://localhost:$(pnpm port)`. Plain `vp dev` is
 
 ## Logs
 Dev logs: `.logs/dev/current`. Rotated archives: `.logs/dev/`.
+E2E server logs: `.logs/e2e/current`. Rotated archives: `.logs/e2e/`.
 Staging logs: use `cf o11y telemetry query` on `cloudflare-workers`, filtering `$metadata.service` to `alchemy-sandbox1-website-staging-a6uwn3bzazl3yzgy`.
 
 ## UI: Polaris web components

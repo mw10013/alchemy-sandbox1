@@ -10,4 +10,6 @@ webhooks_path = "/webhooks/app/uninstalled"
 # process that receives the variables it injects (APP_URL, SHOPIFY_API_KEY,
 # SHOPIFY_API_SECRET, PORT); `vp run dev` is the controller, which places or adopts a server
 # and exits. `alchemy dev` passes its environment through to the stack and the Vite child.
+# Every session in the checkout runs this one command; `dev:alchemy` runs `web:dev`, or `web:e2e`
+# when the session's environment sets SANDBOX_ENVIRONMENT=e2e (the e2e server's script does).
 dev = "vp run dev:alchemy"

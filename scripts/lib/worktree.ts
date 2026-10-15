@@ -42,6 +42,16 @@ export const websitePortOf = (envText: string) =>
     ),
   );
 
+/**
+ * How far the e2e server's port is above `WEBSITE_PORT`. Worktrees take `WEBSITE_PORT` + NN with
+ * small NN, so +100 stays clear of every dev server. The one definition: Playwright's config and
+ * the e2e server's script both call {@link e2ePortOf}.
+ */
+const E2E_PORT_OFFSET = 100;
+
+/** The port of this checkout's e2e server, given the checkout's `WEBSITE_PORT`. */
+export const e2ePortOf = (websitePort: number) => websitePort + E2E_PORT_OFFSET;
+
 /** The environments that have a Shopify store, which is not {@link Environment}: `test` has none, and `production` has a store before it has a stage. */
 export const StoreEnvironment = Schema.Literals(["dev", "e2e", "staging", "production"]);
 export type StoreEnvironment = typeof StoreEnvironment.Type;
