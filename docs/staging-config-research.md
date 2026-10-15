@@ -99,7 +99,7 @@ What the draft sets, and why:
 - `embedded = true`, `web_directories = ["."]`, `[build] automatically_update_urls_on_dev = false`: kept from the skeleton, with its header comment rewritten now that the file is real.
 - `[access_scopes]`: the same as `shopify.app.toml` (`read_orders,read_products`).
 - `[auth] redirect_urls`: the dev file's shape (`/api/auth`), on the staging URL. Shopify-managed installation does not use it.
-- `[access_scopes]` and `[webhooks]`: the same as `shopify.app.toml`, which is Baton's, so both apps are configured alike. The order topics carry protected customer data, so the staging app needs protected customer data access before Shopify accepts the version. Until the app serves `/webhooks`, deliveries answer 404.
+- `[access_scopes]` and `[webhooks]`: the same as `shopify.app.toml`, which is Baton's, so both apps are configured alike. The order topics carry protected customer data, so the staging app needs protected customer data access before Shopify accepts the version: Partner Dashboard → the app → API access requests → Protected customer data access, with "Protected customer data" for the reason "Store management" and no protected fields, as the dev app has. Set on 2026-10-15; the staging app then deployed as `baton-staging-3`. Until the app serves `/webhooks`, deliveries answer 404.
 
 Afterwards, `shopify app deploy --config staging` is rerun only when the TOML changes. `shopify app dev` keeps using `shopify.app.toml`: `app:dev` names it with `--config`.
 
