@@ -8,7 +8,7 @@ test.describe("as a member", () => {
 
   test("the admin side sends a member home", async ({ goto, page }) => {
     await goto("/admin");
-    await expect(page).toHaveURL(/\/app$/);
+    await expect(page).toHaveURL(/\/shop$/);
   });
 });
 
@@ -16,8 +16,8 @@ test.describe("signed out", () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
   test("the member side sends to sign-in and back", async ({ goto, page }) => {
-    await goto("/app");
-    await expect(page).toHaveURL(/\/sign-in\?redirect=%2Fapp$/);
+    await goto("/shop");
+    await expect(page).toHaveURL(/\/sign-in\?redirect=%2Fshop$/);
   });
 });
 

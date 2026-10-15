@@ -4,7 +4,6 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcTest from "effect/rpc/RpcTest";
@@ -13,10 +12,9 @@ import { EmailFromInput } from "../../../src/contract/auth.ts";
 import { type Member } from "../../../src/contract/members.ts";
 import { SANDBOX_SHOP, type ShopKey } from "../../../src/contract/shop.ts";
 import { E2eEmail, TestControlRpcs } from "../../../src/contract/test-control.ts";
-import { QuietLogs, testAuth } from "./layers.ts";
+import { QuietLogs, testAuth, testShopify } from "./layers.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
-import { Shopify } from "../../../src/backend/shopify.ts";
 import {
   TestControlAuthLive,
   TestControlHandlers,
@@ -46,10 +44,7 @@ const TestBackend = (delivery: "inline" | "mailed" = "inline") =>
         members,
         actors: ShopActors.layerTest(revoked),
         delivery,
-        extra: Layer.mergeAll(
-          Shopify.layerWith({ apiKey: "fake-api-key", apiSecret: Redacted.make("secret") }),
-          Layer.succeed(TestControlToken, TOKEN),
-        ),
+        extra: Layer.mergeAll(testShopify(), Layer.succeed(TestControlToken, TOKEN)),
       }),
     ),
     Layer.provide(RuntimeContext.phantom),

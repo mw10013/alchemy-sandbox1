@@ -12,6 +12,6 @@ for (const [role, email] of [
       control((c) => c.IssueMagicLink({ email: Schema.decodeUnknownSync(EmailFromInput)(email) })),
     );
     await followMagicLink(page, link);
-    await page.waitForURL(role === "admin" ? /\/admin$/ : /\/app$/);
+    await page.waitForURL(role === "admin" ? /\/admin$/ : /\/shop$/);
     await page.context().storageState({ path: `playwright/.auth/${role}.json` });
   });

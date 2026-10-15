@@ -18,7 +18,7 @@ import { SANDBOX_SHOP, type ShopKey } from "../../../src/contract/shop.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
 import { MagicLinkDelivery } from "../../../src/backend/magic-link-delivery.ts";
-import { QuietLogs, TEST_ORIGIN, testAuth } from "./layers.ts";
+import { QuietLogs, TEST_ORIGIN, testAuth, testShopify } from "./layers.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopAccess } from "../../../src/backend/shop-access.ts";
@@ -66,6 +66,7 @@ const TestBackend = ({
         extra: Layer.mergeAll(
           SignInLimiter.layerTest(allow),
           Layer.succeed(ShopAccess, { resolve: () => Effect.die("ShopAccess needs D1") }),
+          testShopify(),
         ),
       }),
     ),
@@ -88,7 +89,7 @@ const toCookieHeader = (setCookies: ReadonlyArray<string>) =>
   setCookies.map((cookie) => cookie.split(";")[0]).join("; ");
 
 /** Requests a link for `address` and follows it; returns the cookie header of the new session. */
-const signIn = Effect.fn("signIn")(function* (address: typeof member, returnTo = "/app") {
+const signIn = Effect.fn("signIn")(function* (address: typeof member, returnTo = "/shop") {
   const api = yield* BackendApi;
   const { link } = decodeRequested(
     yield* api.requestMagicLink(withCookie(undefined), {
@@ -161,7 +162,10 @@ describe("magic-link sign-in (inline delivery)", () => {
       const { auth } = yield* Auth;
       const { take } = yield* MagicLinkDelivery;
       yield* auth.api
-        .signInMagicLink({ body: { email: stranger, callbackURL: "/app" }, headers: new Headers() })
+        .signInMagicLink({
+          body: { email: stranger, callbackURL: "/shop" },
+          headers: new Headers(),
+        })
         .pipe(Effect.provide(RuntimeContext.phantom));
       const link = yield* take(stranger);
       const response = yield* serve(new Request(Option.getOrThrow(link)));

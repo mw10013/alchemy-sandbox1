@@ -62,7 +62,7 @@ test("a visitor who is not a member sees the not-a-member page, and the gate clo
     `not-a-member-${test.info().workerIndex}`,
   );
   const otherShop = Schema.decodeUnknownSync(ShopKey)("other-shop.myshopify.com");
-  await page.goto(`/app/shop/${otherShop}`);
+  await page.goto(`/shop/${otherShop}`);
   await awaitHydration(page);
   await expect(shop(page).notAMember).toBeVisible();
   await expect(shop(page).count).toHaveCount(0);

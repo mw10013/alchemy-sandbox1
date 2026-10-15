@@ -5,16 +5,20 @@
  * `vp install --frozen-lockfile` in a worktree T3 Code just created; it
  * needs `node_modules` to run.
  *
- * The index comes from the branch name: `wt-01` is index 1 and serves on the
- * main checkout's `WEBSITE_PORT` + 1.
+ * The index comes from the branch name: `wt-01` is index 1, serves on the
+ * main checkout's `WEBSITE_PORT` + 1 and runs `shopify app dev` on dev store
+ * `sandbox-shop-01`.
  *
  * Idempotent: a file that exists is verified, never rewritten, so a second
- * run only checks. Steps, in order:
+ * run only checks; the one exception is a `.env` without `SHOPIFY_DEV_STORE`,
+ * which gets the key appended, so a worktree set up before the key existed
+ * catches up. Steps, in order:
  *
- * 1. Refuse the main checkout, a branch other than `wt-NN`, and a port
- *    another checkout's `.env` already holds.
+ * 1. Refuse the main checkout, a branch other than `wt-NN`, and a port or
+ *    dev store another checkout's `.env` already holds.
  * 2. `.env`: copied from the main checkout's (not `.env.example`, which has
- *    no secrets) with `WEBSITE_PORT` set for this worktree.
+ *    no secrets) with `WEBSITE_PORT` and `SHOPIFY_DEV_STORE` set for this
+ *    worktree.
  * 3. `refs`: a symlink to the main checkout's `refs/`.
  *
  * It does not start the server; `vp run dev` does.
@@ -32,6 +36,8 @@ import {
   checkoutKind,
   checkoutPaths,
   currentBranch,
+  devStoreName,
+  devStoreOf,
   setEnvKey,
   websitePortOf,
   worktreeIndex,
@@ -45,12 +51,19 @@ const readIfExists = Effect.fn("readIfExists")(function* (file: string) {
   return (yield* fs.exists(file)) ? Option.some(yield* fs.readFileString(file)) : Option.none();
 });
 
-/** `WEBSITE_PORT` of the checkout at `checkout`, none without a `.env` or a port in it. */
-const checkoutPort = Effect.fn("checkoutPort")(function* (checkout: string) {
+/**
+ * `WEBSITE_PORT` and `SHOPIFY_DEV_STORE` of the checkout at `checkout`, each none without a `.env`
+ * or the key in it.
+ */
+const checkoutClaims = Effect.fn("checkoutClaims")(function* (checkout: string) {
   const env = yield* readIfExists(path.join(checkout, ".env"));
   return yield* Option.match(env, {
-    onNone: () => Effect.succeedNone,
-    onSome: (text) => websitePortOf(text).pipe(Effect.option),
+    onNone: () => Effect.succeed({ port: Option.none<number>(), store: Option.none<string>() }),
+    onSome: (text) =>
+      Effect.all({
+        port: websitePortOf(text).pipe(Effect.option),
+        store: devStoreOf(text).pipe(Effect.orElseSucceed(Option.none<string>)),
+      }),
   });
 });
 
@@ -68,6 +81,30 @@ const refsLinkState = Effect.fn("refsLinkState")(function* (
   return (yield* fs.exists(link).pipe(Effect.orElseSucceed(() => false)))
     ? { _tag: "Directory" }
     : { _tag: "Absent" };
+});
+
+/**
+ * Verifies `SHOPIFY_DEV_STORE` in an existing `.env`: the expected store passes, another value
+ * fails, and a missing key is appended (the one write to an existing `.env`, see the module doc).
+ */
+const verifyStore = Effect.fn("verifyStore")(function* (
+  envFile: string,
+  text: string,
+  store: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const have = yield* devStoreOf(text).pipe(
+    Effect.mapError((error) => fail(`.env: ${error.message}; expected ${store}, fix it by hand`)),
+  );
+  if (Option.isNone(have)) {
+    yield* fs.writeFileString(envFile, setEnvKey(text, "SHOPIFY_DEV_STORE", store));
+    return yield* Console.log(`ok    .env gained SHOPIFY_DEV_STORE=${store}`);
+  }
+  if (have.value !== store)
+    return yield* fail(
+      `.env has SHOPIFY_DEV_STORE=${have.value}, expected ${store}; fix it by hand`,
+    );
+  yield* Console.log(`ok    .env verified, SHOPIFY_DEV_STORE=${store}`);
 });
 
 const init = Effect.gen(function* () {
@@ -92,13 +129,18 @@ const init = Effect.gen(function* () {
     Effect.mapError((error) => fail(`${mainCheckout}/.env: ${error.message}`)),
   );
   const port = mainPort + index;
+  const store = devStoreName(index);
 
   const others = (yield* checkoutPaths).filter((checkout) => checkout !== root);
   yield* Effect.forEach(others, (checkout) =>
-    checkoutPort(checkout).pipe(
+    checkoutClaims(checkout).pipe(
       Effect.filterOrFail(
-        (used) => !Option.contains(used, port),
+        (used) => !Option.contains(used.port, port),
         () => fail(`WEBSITE_PORT=${String(port)} is already used by ${checkout}`),
+      ),
+      Effect.filterOrFail(
+        (used) => !Option.contains(used.store, store),
+        () => fail(`SHOPIFY_DEV_STORE=${store} is already used by ${checkout}`),
       ),
     ),
   );
@@ -107,10 +149,15 @@ const init = Effect.gen(function* () {
   yield* Option.match(yield* readIfExists(envFile), {
     onNone: () =>
       fs
-        .writeFileString(envFile, setEnvKey(mainEnv, "WEBSITE_PORT", String(port)))
+        .writeFileString(
+          envFile,
+          setEnvKey(setEnvKey(mainEnv, "WEBSITE_PORT", String(port)), "SHOPIFY_DEV_STORE", store),
+        )
         .pipe(
           Effect.andThen(
-            Console.log(`ok    .env copied from the main checkout, WEBSITE_PORT=${String(port)}`),
+            Console.log(
+              `ok    .env copied from the main checkout, WEBSITE_PORT=${String(port)}, SHOPIFY_DEV_STORE=${store}`,
+            ),
           ),
         ),
     onSome: (text) =>
@@ -124,6 +171,7 @@ const init = Effect.gen(function* () {
             ),
         ),
         Effect.andThen(Console.log(`ok    .env verified, WEBSITE_PORT=${String(port)}`)),
+        Effect.andThen(verifyStore(envFile, text, store)),
       ),
   });
 
@@ -153,7 +201,7 @@ const toUserError = <E extends { readonly message: string }>(error: E) =>
 
 const initCommand = Command.make("init", {}, () => init.pipe(Effect.mapError(toUserError))).pipe(
   Command.withDescription(
-    "Prepare this wt-NN worktree: .env with its WEBSITE_PORT, and the refs link. Verifies instead of rewriting on a second run.",
+    "Prepare this wt-NN worktree: .env with its WEBSITE_PORT and SHOPIFY_DEV_STORE, and the refs link. Verifies instead of rewriting on a second run.",
   ),
 );
 

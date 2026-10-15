@@ -32,3 +32,20 @@ export type ShopSnapshotInput = typeof ShopSnapshotInput.Type;
  * operator, someone with no `Member` row for it, or a token for another shop.
  */
 export class NotAShopMember extends Schema.TaggedError<NotAShopMember>()("NotAShopMember", {}) {}
+
+/**
+ * A Shopify session token that is malformed, badly signed, for another app, out of date, or one
+ * Shopify refused to exchange. It crosses the binding as `authenticateAdmin`'s typed failure.
+ */
+export class InvalidSessionToken extends Schema.TaggedError<InvalidSessionToken>()(
+  "InvalidSessionToken",
+  {},
+) {}
+
+/** `authenticateAdmin`'s input: the session token App Bridge issued to the embedded page. */
+export const AuthenticateAdminInput = Schema.Struct({ sessionToken: Schema.NonEmptyString });
+export type AuthenticateAdminInput = typeof AuthenticateAdminInput.Type;
+
+/** What the Website learns about an authenticated admin: its shop and the shop's Admin API id. */
+export const AdminSession = Schema.Struct({ shop: ShopKey, shopGid: Schema.String });
+export type AdminSession = typeof AdminSession.Type;

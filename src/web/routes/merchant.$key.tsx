@@ -15,7 +15,7 @@ const decodeSearch = Schema.decodeUnknownOption(MerchantSearch);
  * A merchant's shop page, without App Bridge: the Shopify session token arrives in the
  * `token` search param (test control mints one) and goes to the Backend with the loader's
  * snapshot request and on the socket URL. No Better Auth session is involved, so this route
- * sits outside `/app`.
+ * sits outside `/shop`.
  */
 export const Route = createFileRoute("/merchant/$key")({
   params: {

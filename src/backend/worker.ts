@@ -30,6 +30,7 @@ import { Members } from "./members.ts";
 import { AuthDb } from "./resources.ts";
 import { ShopAccess, type ShopAccessDenied } from "./shop-access.ts";
 import { Shopify } from "./shopify.ts";
+import { ShopSessions } from "./shop-sessions.ts";
 import ShopActor from "./shop-actor.ts";
 import {
   TestControlAuthLive,
@@ -267,7 +268,14 @@ export default class Backend extends Cloudflare.Worker<Backend>()(
     Effect.provide(Auth.layer),
     Effect.provide(ShopActors.layer),
     Effect.provide(MagicLinkDelivery.layer),
-    Effect.provide(Layer.mergeAll(Members.layer, Mailer.layer, signInLimiter, Shopify.layer)),
+    Effect.provide(
+      Layer.mergeAll(
+        Members.layer,
+        Mailer.layer,
+        signInLimiter,
+        Shopify.layer.pipe(Layer.provide(ShopSessions.layer)),
+      ),
+    ),
     Effect.provide(CloudflareD1(AuthDb)),
     Effect.provide(Cloudflare.Email.SendBinding),
     Effect.provide(Cloudflare.Workers.RateLimitBinding),

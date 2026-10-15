@@ -92,7 +92,7 @@ export const retryPolicy = (onError: (error: Socket.SocketError) => Effect.Effec
 
 const decodeReturnPath = Schema.decodeUnknownOption(ReturnPath);
 
-/** A full page load to sign-in, back here afterwards; the same shape as the `/app` route guard. */
+/** A full page load to sign-in, back here afterwards; the same shape as the `/shop` route guard. */
 export const goToSignIn = Effect.sync(() => {
   const url = new URL("/sign-in", window.location.origin);
   const back = decodeReturnPath(window.location.pathname + window.location.search);

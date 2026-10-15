@@ -1,0 +1,13 @@
+name = "alchemy-sandbox1"
+roles = ["frontend", "backend"]
+webhooks_path = "/webhooks/app/uninstalled"
+# No `port`: the CLI reads BACKEND_PORT from the app:dev script, which sets it to this
+# checkout's WEBSITE_PORT, so .env is the one place the port is written and each checkout
+# runs its own session. A port here would collide between checkouts.
+
+[commands]
+# The raw server, not `vp run dev`: the CLI's web command must be the long-lived foreground
+# process that receives the variables it injects (APP_URL, SHOPIFY_API_KEY,
+# SHOPIFY_API_SECRET, PORT); `vp run dev` is the controller, which places or adopts a server
+# and exits. `alchemy dev` passes its environment through to the stack and the Vite child.
+dev = "vp run dev:alchemy"

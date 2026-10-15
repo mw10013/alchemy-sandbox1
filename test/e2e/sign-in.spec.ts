@@ -9,7 +9,7 @@ test(
     await goto("/sign-in");
     await requestMagicLink(page, "m1@m.com");
     await signIn(page).openLink.click();
-    await page.waitForURL(/\/app$/);
+    await page.waitForURL(/\/shop$/);
     await expect(page.getByRole("heading", { name: "Member area" })).toBeVisible();
   },
 );

@@ -6,6 +6,7 @@ How the local dev server's port is chosen, found and kept unique per checkout.
 
 - Each checkout sets `WEBSITE_PORT` in its own untracked `.env`. `.env.example` is the tracked template. Main uses 3900.
 - `alchemy dev` serves the Website on `WEBSITE_PORT`. Alchemy loads `.env` itself (shell variables win), so no script sources it.
+- `vp run dev` starts Shopify CLI (`vp run app:dev`), which proxies its tunnel to `localhost:$BACKEND_PORT`; the `app:dev` script sets `BACKEND_PORT` to `WEBSITE_PORT`, so the port rule is unchanged and `shopify.web.toml` names no port.
 - There is no default. `vp run dev`, `alchemy dev` and `pnpm port` fail if `WEBSITE_PORT` is not set. Plain `vp dev` is blocked because it bypasses Alchemy.
 - `strictPort: true`: if the port is taken, dev fails with "Could not bind to port … (already in use)". It never moves to another port, so a checkout can't end up talking to another checkout's server.
 - The Backend Worker uses `dev: { port: 0 }`, an ephemeral port. Only the Website reaches it, through the `BACKEND` service binding, so nothing needs to know its port.

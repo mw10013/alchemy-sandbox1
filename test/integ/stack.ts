@@ -22,6 +22,7 @@ export default Alchemy.Stack(
     const backend = yield* Backend;
     yield* wireBackend(backend, {
       authOrigin: backend.url,
+      appUrl: backend.url,
       delivery: "inline",
       e2eToken: Option.some(INTEG_E2E_TOKEN),
     });

@@ -2,7 +2,7 @@ import type { AnyRouter } from "@tanstack/react-router";
 import type { Role } from "../../contract/auth.ts";
 
 /** Each role has its own side of the site. */
-export const homeFor = (role: Role) => (role === "admin" ? "/admin" : "/app");
+export const homeFor = (role: Role) => (role === "admin" ? "/admin" : "/shop");
 
 /**
  * Ends the Better Auth session through the Website's auth proxy, then reruns the current

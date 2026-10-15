@@ -21,14 +21,28 @@ Two request paths:
   upgrade is closed at once with a code the page reads. The shop page's first paint comes from
   its loader, which asks the Backend, which asks the actor.
 
-Shops, members and teams are Baton's tables (`migrations/0002_baton_schema.sql`). The member
-page is `/app/shop/alchemy-sandbox1.myshopify.com`; the merchant page is
-`/merchant/<shop>?token=<Shopify session token>`. The Shopify pieces (the app's key and secret,
-the session tokens, the shops' access tokens) are fakes until the Shopify slice.
+Shops, members and teams are Baton's tables (`migrations/0002_baton_schema.sql`). Three areas,
+in Baton's layout:
+
+- `/app` is the embedded App Home, the page the Shopify admin frames. It is authenticated by
+  Shopify session tokens: its guards bounce the admin until it hands over an `id_token`, the
+  Backend verifies it with the app's secret, exchanges it for the shop's offline access token
+  (`@shopify/shopify-api`, token exchange) and keeps that in `ShopSession`. Server functions
+  called from the embedded page carry App Bridge's bearer token. `/` redirects there when
+  Shopify's `shop=` is in the URL.
+- `/shop` and `/shop/alchemy-sandbox1.myshopify.com` are the member area (Better Auth).
+- `/merchant/<shop>?token=<Shopify session token>` is the merchant page without App Bridge,
+  which test control mints tokens for.
+
+The Shopify app's key, secret and URL are the real app's (Baton's `baton-local`,
+`shopify.app.toml`) when Shopify CLI runs the server, and fakes everywhere else: integ, e2e and
+staging bind a fixed key, a random secret and the Website's own URL, and the seeded
+`ShopSession` rows stand in for token exchange. Never run `shopify app deploy` from this repo:
+the config is Baton's, and deploy would push its webhook subscriptions at Baton's app.
 
 ## Run locally
 
-Copy `.env.example` to `.env` first; it holds this checkout's port.
+Copy `.env.example` to `.env` first; it holds this checkout's port and Shopify dev store.
 
 ```sh
 vp install
@@ -39,7 +53,22 @@ vp run dev:stop
 vp run db:reset    # wipe and reseed the local auth database, then restart
 ```
 
-Open `http://localhost:$(pnpm port)`. The server is `alchemy dev` under this checkout's dev stage
+The server is Shopify CLI: `vp run dev` starts `shopify app dev` (`vp run app:dev`) on this
+checkout's dev store, `SHOPIFY_DEV_STORE` in `.env`, and the CLI opens a Cloudflare quick tunnel
+and runs `alchemy dev` behind it with the app's key, secret and tunnel URL. `vp run dev` fails
+when `SHOPIFY_DEV_STORE` is not set; there is no plain `alchemy dev` fallback. One store per
+checkout: `sandbox-shop-00` in the main checkout, `sandbox-shop-NN` in worktree `wt-NN`
+(`vp run worktree:init` writes it), because two `shopify app dev` sessions on one store overwrite
+each other's app URL. For the same reason, do not run a Baton checkout's dev server on the same
+store at the same time. `shopify` comes from Vite+'s tool manager (`shopify version`), not brew or
+npm.
+
+Open the app at the admin URL `vp run dev` and `vp run dev:status` print, in a browser signed in
+to the Partner organization. For the main checkout it is
+<https://admin.shopify.com/store/sandbox-shop-00/apps/7c6cceb7f8f9991a543d43648b08e72d>
+(`https://admin.shopify.com/store/<store>/apps/<client_id>`; the CLI prints the same URL with
+`?dev-console=show`, which opens its dev console). `http://localhost:$(pnpm port)` still serves the member area and the
+merchant page. `alchemy dev` runs under this checkout's dev stage
 (`dev-<user>`, or `dev-<user>-wt-NN` in a worktree; `node scripts/stage.ts dev` prints it), using
 local implementations where available. Dev's resources and Alchemy's state both live under
 `.alchemy/` in the checkout, so dev needs no cloud access, and `vp run db:reset` removes them

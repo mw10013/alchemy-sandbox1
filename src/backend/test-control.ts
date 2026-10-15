@@ -61,7 +61,7 @@ export const TestControlHandlers = TestControlRpcs.toLayer(
             return yield* Effect.die(new Error(`${email} is neither a user nor a member`));
           yield* auth.api
             .signInMagicLink({
-              body: { email, callbackURL: returnTo ?? "/app", errorCallbackURL: "/sign-in" },
+              body: { email, callbackURL: returnTo ?? "/shop", errorCallbackURL: "/sign-in" },
               headers: new Headers(headers),
             })
             .pipe(Effect.orDie);

@@ -4,15 +4,15 @@ How this repository's long-lived worktrees are laid out, set up and used.
 
 ## Layout
 
-There is a fixed set of worktrees, `wt-01`, `wt-02`, …, created once and reused task after task. Each checkout runs its own dev server on its own port.
+There is a fixed set of worktrees, `wt-01`, `wt-02`, …, created once and reused task after task. Each checkout runs its own dev server (`shopify app dev`, which runs `alchemy dev`) on its own port and its own Shopify dev store.
 
-| Checkout | Branch  | Folder                 | `WEBSITE_PORT`       | herdr workspace                   |
-| -------- | ------- | ---------------------- | -------------------- | --------------------------------- |
-| main     | `main`  | wherever you cloned it | set in `.env` (3900) | `alchemy-sandbox1`                |
-| `wt-NN`  | `wt-NN` | chosen by T3 Code      | main's port + NN     | `wt-NN`, under `alchemy-sandbox1` |
+| Checkout | Branch  | Folder                 | `WEBSITE_PORT`       | `SHOPIFY_DEV_STORE` | herdr workspace                   |
+| -------- | ------- | ---------------------- | -------------------- | ------------------- | --------------------------------- |
+| main     | `main`  | wherever you cloned it | set in `.env` (3900) | `sandbox-shop-00`   | `alchemy-sandbox1`                |
+| `wt-NN`  | `wt-NN` | chosen by T3 Code      | main's port + NN     | `sandbox-shop-NN`   | `wt-NN`, under `alchemy-sandbox1` |
 
 - **Folders:** `git worktree list` shows every checkout's folder, with main first. Look them up there; don't assume a path.
-- **Per checkout:** `.env`, `node_modules/`, `.alchemy/` (local data and Alchemy state for every local stage) and `.logs/`.
+- **Per checkout:** `.env`, `node_modules/`, `.alchemy/` (local data and Alchemy state for every local stage), `.logs/` and `.shopify/` (the CLI's record of the store). `vp run worktree:init` writes `WEBSITE_PORT` and `SHOPIFY_DEV_STORE` into a worktree's `.env` and refuses a port or store another checkout holds: two `shopify app dev` sessions on one store overwrite each other's app URL.
 - **Stages:** each checkout has its own dev, test and e2e stage, `<environment>-<user>` in main and `<environment>-<user>-wt-NN` in a worktree (`dev-mw-wt-01`). `node scripts/stage.ts dev` prints the checkout's dev stage. They are all local, under the checkout's `.alchemy/`.
 - **Shared:** `refs/` exists once, in main. Each worktree has a `refs` symlink to it.
 - **herdr:** each checkout's dev server runs in a `dev` tab in that checkout's herdr workspace.

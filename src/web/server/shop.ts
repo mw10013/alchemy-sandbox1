@@ -27,7 +27,7 @@ const decodeReturnPath = Schema.decodeUnknownOption(ReturnPath);
 
 /**
  * A member who is no longer signed in goes to sign-in and back to this shop afterwards, as the
- * `/app` guard would send them.
+ * `/shop` guard would send them.
  */
 export const getShopSnapshot = createServerFn({ method: "GET" })
   .validator(Schema.toStandardSchemaV1(ShopSnapshotInput))
@@ -43,7 +43,7 @@ export const getShopSnapshot = createServerFn({ method: "GET" })
               throw redirect({
                 to: "/sign-in",
                 search: {
-                  redirect: Option.getOrUndefined(decodeReturnPath(`/app/shop/${data.key}`)),
+                  redirect: Option.getOrUndefined(decodeReturnPath(`/shop/${data.key}`)),
                 },
               });
             },

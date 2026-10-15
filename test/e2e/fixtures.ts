@@ -105,7 +105,7 @@ export const ownMember = async (browser: Browser, backend: Run, name: string) =>
   const page = await context.newPage();
   await page.goto(link);
   await awaitHydration(page);
-  await page.waitForURL(/\/app$/);
+  await page.waitForURL(/\/shop$/);
   return { email, context, page };
 };
 

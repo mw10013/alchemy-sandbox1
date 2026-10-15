@@ -1,16 +1,21 @@
 #!/usr/bin/env node
 /**
  * `vp run dev | dev:stop | dev:status | dev:logs`: one command that an
- * agent and a person both use to get this checkout's dev server (`vp run dev:alchemy`,
- * which runs `alchemy dev`) running, and to find it again. Every checkout,
- * the main one and each `wt-NN` worktree, runs its own server on its own
- * `WEBSITE_PORT` from its `.env`.
+ * agent and a person both use to get this checkout's dev server running, and
+ * to find it again. The server is Shopify CLI (`vp run app:dev`, which runs
+ * `shopify app dev` on this checkout's dev store, `SHOPIFY_DEV_STORE` in
+ * `.env`); the CLI opens a tunnel and runs `vp run dev:alchemy`, which runs
+ * `alchemy dev`, with the app's key, secret and tunnel URL in its environment.
+ * A missing `SHOPIFY_DEV_STORE` is an error: there is no plain `alchemy dev`
+ * fallback. Every checkout, the main one and each `wt-NN` worktree, runs its
+ * own server on its own `WEBSITE_PORT` and its own store.
  *
  * Where the server runs; the first rule that applies wins:
  *
- * 1. An `alchemy dev` already serving this checkout, wherever it runs, is
- *    adopted: `start` leaves it running, `stop` stops it, whoever started it.
- *    It is found by process and working directory, not by label.
+ * 1. A `shopify app dev` or `alchemy dev` already serving this checkout,
+ *    wherever it runs, is adopted: `start` leaves it running, `stop` stops
+ *    it, whoever started it. It is found by process and working directory,
+ *    not by label.
  * 2. With herdr running, the server belongs to the checkout's workspace,
  *    which is opened if needed: labelled with the project name for the main
  *    checkout, `wt-NN` for a worktree (grouped under the main checkout's
@@ -27,8 +32,9 @@
  * herdr is asked whether it runs (`herdr status`), never `HERDR_ENV`: T3 Code
  * agents run outside herdr but can still drive it over its socket.
  *
- * The server's output always goes to `.logs/dev/current` (the `dev:alchemy` script pipes it
- * through `s6-log`), and to the pane or terminal it runs in.
+ * Alchemy's output always goes to `.logs/dev/current` (the `dev:alchemy` script pipes it
+ * through `s6-log`), and with the CLI's own output (tunnel, preview URL, status) to the pane or
+ * terminal it runs in. `start` and `status` print the tunnel and the app's admin URL.
  *
  * `start` and `stop` hold `.logs/dev.lock` so parallel agents in one checkout
  * cannot start two servers.
@@ -79,6 +85,14 @@ const devStage = Effect.runSync(
   Effect.cached(stage("dev").pipe(Effect.provide(NodeServices.layer))),
 );
 const serverProcess = devStage.pipe(Effect.map((name) => ` dev --stage ${name}`));
+/**
+ * Shopify CLI's `app dev` process, as `pgrep -f` matches it. Under Vite+'s tool manager the CLI's
+ * command line is `node …/@shopify/cli/…/bin/run.js app dev …`, without the word `shopify app
+ * dev`; a CLI installed elsewhere shows `shopify app dev`. Both are matched, and the
+ * working-directory check that follows every match keeps only this checkout's.
+ */
+const CLI_PROCESS = String.raw`shopify app dev|@shopify/cli/.*bin/run\.js app dev`;
+const isCliCommand = Schema.is(Schema.String.check(Schema.isPattern(new RegExp(CLI_PROCESS, "u"))));
 const START_TIMEOUT_MS = 180_000;
 const LOCAL_DATA = ".alchemy/local";
 /**
@@ -94,6 +108,34 @@ class DevError extends Schema.TaggedError<DevError>()("DevError", {
 }) {}
 
 const fail = (message: string) => new DevError({ message });
+
+/** This checkout's Shopify dev store from `.env`; see the module JSDoc. */
+const loadStore = Config.NonEmptyString("SHOPIFY_DEV_STORE").pipe(
+  Effect.mapError(() =>
+    fail("SHOPIFY_DEV_STORE is not set: add it to .env (sandbox-shop-NN, NN the worktree index)"),
+  ),
+);
+
+const ClientId = Schema.String.check(Schema.isPattern(/^[0-9a-f]{32}$/u));
+const ClientIdLine = Schema.TemplateLiteralParser(['client_id = "', ClientId, '"']);
+const decodeClientIdLine = Schema.decodeUnknownOption(ClientIdLine);
+
+/** The app's client id, from the `client_id = "…"` line of `shopify.app.toml`. */
+const loadClientId = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const toml = yield* fs
+    .readFileString(path.join(ROOT, "shopify.app.toml"))
+    .pipe(Effect.mapError(() => fail("shopify.app.toml is missing")));
+  return yield* Effect.fromOption(
+    Array.findFirst(toml.split("\n"), (line) =>
+      Option.map(decodeClientIdLine(line.trim()), ([, id]) => id),
+    ),
+  ).pipe(Effect.mapError(() => fail('shopify.app.toml has no client_id = "<32 hex>" line')));
+});
+
+/** The app inside the store's admin, the URL a person opens to see the embedded App Home. */
+const adminUrl = (store: string, clientId: string) =>
+  `https://admin.shopify.com/store/${store}/apps/${clientId}`;
 
 /** The port from `.env`, which the package scripts require with `--env-file`. */
 const loadPort = Config.Port("WEBSITE_PORT").pipe(
@@ -146,18 +188,28 @@ const cwdOf = (pid: number) =>
     Effect.orElseSucceed(() => Option.none<string>()),
   );
 
-/** Alchemy's CLI process running this checkout's `alchemy dev`; its exit ends the `dev:alchemy` pipeline. */
-const serverPids = serverProcess.pipe(
-  Effect.flatMap((command) => runCommand("pgrep", ["-f", command])),
-  Effect.map(pidsFrom),
-  Effect.orElseSucceed((): number[] => []),
-  Effect.flatMap((pids) =>
-    Effect.forEach(pids, (pid) =>
-      cwdOf(pid).pipe(Effect.map((cwd) => (Option.contains(cwd, ROOT) ? [pid] : []))),
+/** The processes `pgrep -f pattern` finds whose working directory is this checkout. */
+const checkoutPids = (pattern: string) =>
+  runCommand("pgrep", ["-f", pattern]).pipe(
+    Effect.map(pidsFrom),
+    Effect.orElseSucceed((): number[] => []),
+    Effect.flatMap((pids) =>
+      Effect.forEach(pids, (pid) =>
+        cwdOf(pid).pipe(Effect.map((cwd) => (Option.contains(cwd, ROOT) ? [pid] : []))),
+      ),
     ),
-  ),
-  Effect.map((pids) => pids.flat()),
-);
+    Effect.map((pids) => pids.flat()),
+  );
+
+/**
+ * This checkout's server processes: Shopify CLI's `app dev` (see {@link CLI_PROCESS}) and
+ * Alchemy's CLI process running `alchemy dev`, whose exit ends the `dev:alchemy` pipeline. Both
+ * are listed, because a SIGINT to the CLI alone leaves Alchemy's tree running on the port.
+ */
+const serverPids = Effect.all([
+  checkoutPids(CLI_PROCESS),
+  serverProcess.pipe(Effect.flatMap(checkoutPids)),
+]).pipe(Effect.map(([cli, alchemy]) => [...cli, ...alchemy]));
 
 const portListeners = (port: number) =>
   runCommand("lsof", ["-t", `-iTCP:${String(port)}`, "-sTCP:LISTEN", "-nP"]).pipe(
@@ -190,6 +242,37 @@ const withDescendants = (pids: readonly number[]) =>
     }),
   );
 
+const AppUrlVariable = Schema.TemplateLiteralParser(["APP_URL=", Schema.String]).pipe(
+  Schema.decodeTo(
+    Schema.Tuple([
+      Schema.Literal("APP_URL="),
+      Schema.String.check(Schema.isPattern(/^https:\/\/\S+$/u)),
+    ]),
+  ),
+);
+const decodeAppUrlVariable = Schema.decodeUnknownOption(AppUrlVariable);
+
+/**
+ * The tunnel the CLI opened, read from the environment it gave the server: whatever listens on the
+ * port (Alchemy's proxy, a child of the CLI's web command) has `APP_URL` in its environment, and
+ * `ps -E` shows another process's environment on macOS for the same user. The CLI's own output is
+ * no source: in a terminal its status panel redraws over the line that printed it. None when the
+ * server does not run under the CLI.
+ */
+const findTunnelUrl = (port: number) =>
+  Effect.gen(function* () {
+    for (const pid of yield* portListeners(port)) {
+      const command = yield* runCommand("ps", ["-wwwE", "-p", String(pid), "-o", "command="]).pipe(
+        Effect.orElseSucceed(() => ""),
+      );
+      const url = Array.findFirst(command.split(/\s+/u), (word) =>
+        Option.map(decodeAppUrlVariable(word), ([, value]) => value),
+      );
+      if (Option.isSome(url)) return url;
+    }
+    return Option.none<string>();
+  });
+
 /** Any HTTP answer counts: the first request after a start waits on Vite's compile. */
 const answering = (port: number) =>
   Effect.tryPromise(() =>
@@ -199,7 +282,7 @@ const answering = (port: number) =>
     }),
   ).pipe(Effect.option, Effect.map(Option.isSome));
 
-/** The herdr pane whose foreground process is this checkout's `alchemy dev`. */
+/** The herdr pane whose foreground process is this checkout's `shopify app dev` or `alchemy dev`. */
 const findServerPane = Effect.gen(function* () {
   if (!(yield* Herdr.running)) return Option.none<Herdr.Pane>();
   const panes = yield* Herdr.listPanes;
@@ -211,7 +294,7 @@ const findServerPane = Effect.gen(function* () {
         Effect.map(({ processes }) =>
           processes.some(
             (process) =>
-              process.argv.join(" ").includes(command) &&
+              (isCliCommand(process.argv.join(" ")) || process.argv.join(" ").includes(command)) &&
               (process.cwd === undefined || process.cwd === ROOT),
           )
             ? [pane]
@@ -272,8 +355,10 @@ const withLock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
  * Stops this checkout's server wherever it runs. In a pane it presses Ctrl-C,
  * as a person would: the whole foreground group exits and the pane is left
  * at its prompt. Otherwise, or when a pane ignores Ctrl-C for
- * {@link STOP_TIMEOUT_MS}, it sends SIGTERM to the server's processes, their
- * descendants and whatever listens on the port.
+ * {@link STOP_TIMEOUT_MS}, it sends SIGTERM to the server's processes (the CLI
+ * and Alchemy's, {@link serverPids}), their descendants (the tunnel's
+ * `cloudflared`, Vite, `workerd`) and whatever listens on the port, then waits
+ * for all of them to be gone.
  */
 const stopServer = Effect.fn("stopServer")(function* (port: number) {
   const server = yield* findServer;
@@ -374,15 +459,16 @@ const placeServer = Effect.gen(function* () {
 const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
 /**
- * The raw server stays separate from the public `dev` script, which calls this launcher,
- * so starting it does not recurse and the public entry point applies adoption and the lock.
+ * Three scripts, so starting does not recurse and the public entry point applies adoption and
+ * the lock: `dev` is this launcher, `app:dev` the CLI it starts, `dev:alchemy` the server the
+ * CLI runs as its web command (`shopify.web.toml`).
  */
 const runDev = (options: ChildProcess.CommandOptions) =>
-  ChildProcess.make("vp", ["run", "dev:alchemy"], { cwd: ROOT, ...options });
+  ChildProcess.make("vp", ["run", "app:dev"], { cwd: ROOT, ...options });
 
 /**
  * Starts the server where {@link placeServer} says. A foreground start returns
- * the handle of `vp run dev:alchemy`, which owns the caller's terminal until it exits;
+ * the handle of `vp run app:dev`, which owns the caller's terminal until it exits;
  * the other placements return once the server is launched and outlive the
  * command.
  */
@@ -396,7 +482,7 @@ const launchServer = Effect.fn("launchServer")(function* (placement: Placement) 
           10_000,
           250,
         );
-        yield* Herdr.runInPane(paneId, `cd ${shellQuote(ROOT)} && vp run dev:alchemy`);
+        yield* Herdr.runInPane(paneId, `cd ${shellQuote(ROOT)} && vp run app:dev`);
         yield* Console.log(`ok    started in herdr tab "${DEV_TAB}" (pane ${paneId})`);
         return Option.none<ChildProcessSpawner.ChildProcessHandle>();
       }),
@@ -431,12 +517,30 @@ const waitAnswering = (port: number) =>
     ),
   );
 
-const summarize = (port: number, where: string) =>
-  Console.log(
-    ["", `server: ${where}`, `dev:    http://localhost:${String(port)}`, `logs:   ${LOG}`].join(
-      "\n",
+/** What `start` and `status` report about the app: its admin URL and the tunnel. */
+const appReport = Effect.fn("appReport")(function* (port: number, store: Option.Option<string>) {
+  const clientId = yield* loadClientId.pipe(Effect.option);
+  return {
+    app: Option.getOrNull(
+      Option.flatMap(store, (name) => Option.map(clientId, (id) => adminUrl(name, id))),
     ),
+    tunnel: Option.getOrNull(yield* findTunnelUrl(port)),
+  };
+});
+
+const summarize = Effect.fn("summarize")(function* (port: number, store: string, where: string) {
+  const { app, tunnel } = yield* appReport(port, Option.some(store));
+  yield* Console.log(
+    [
+      "",
+      `server: ${where}`,
+      `dev:    http://localhost:${String(port)}`,
+      `app:    ${app ?? "(no client_id in shopify.app.toml)"}`,
+      `tunnel: ${tunnel ?? "(none: the server is not running under shopify app dev)"}`,
+      `logs:   ${LOG}`,
+    ].join("\n"),
   );
+});
 
 /** Every failure a command can raise carries a message for the person at the terminal. */
 const toUserError = <E extends { readonly message: string }>(error: E) =>
@@ -445,13 +549,14 @@ const toUserError = <E extends { readonly message: string }>(error: E) =>
 /** Starts the server, or adopts the one running; see the module JSDoc. */
 const startServer = Effect.gen(function* () {
   const port = yield* loadPort;
+  const store = yield* loadStore;
   const foreground = yield* withLock(
     Effect.gen(function* () {
       const server = yield* findServer;
       if (server.pids.length > 0) {
         yield* Console.log(`ok    adopted the running server: ${describeServer(server)}`);
         yield* waitAnswering(port);
-        yield* summarize(port, describeServer(server));
+        yield* summarize(port, store, describeServer(server));
         return Option.none();
       }
       if ((yield* portListeners(port)).length > 0)
@@ -464,6 +569,7 @@ const startServer = Effect.gen(function* () {
       yield* waitAnswering(port);
       yield* summarize(
         port,
+        store,
         Match.valueTags(placement, {
           Pane: ({ paneId }) => `herdr tab "${DEV_TAB}" (pane ${paneId})`,
           Background: () => "background",
@@ -476,7 +582,7 @@ const startServer = Effect.gen(function* () {
   // The lock is released before waiting on a foreground server, so an agent can adopt it.
   if (Option.isSome(foreground)) {
     yield* waitAnswering(port).pipe(
-      Effect.flatMap(() => summarize(port, "this terminal")),
+      Effect.flatMap(() => summarize(port, store, "this terminal")),
       Effect.catch((error) => Console.error(`dev: ${error.message}`)),
       Effect.forkChild,
     );
@@ -528,6 +634,10 @@ const statusCommand = Command.make(
       const listening = (yield* portListeners(port)).length > 0;
       const serving = listening && (yield* answering(port));
       const healthy = server.pids.length > 0 && serving;
+      const store = yield* Config.option(Config.NonEmptyString("SHOPIFY_DEV_STORE")).pipe(
+        Effect.orElseSucceed(() => Option.none<string>()),
+      );
+      const { app, tunnel } = yield* appReport(port, store);
       const report = {
         healthy,
         server: describeServer(server),
@@ -537,6 +647,9 @@ const statusCommand = Command.make(
         url: `http://localhost:${String(port)}`,
         listening,
         answering: serving,
+        store: Option.getOrNull(store),
+        app,
+        tunnel,
       };
       yield* Console.log(
         json
@@ -546,6 +659,9 @@ const statusCommand = Command.make(
               `server:  ${report.server}`,
               `port:    ${String(port)} (${listening ? "listening" : "not listening"}, ${serving ? "answering" : "not answering"})`,
               `url:     ${report.url}`,
+              `store:   ${report.store ?? "(SHOPIFY_DEV_STORE is not set in .env)"}`,
+              `app:     ${app ?? "(unknown)"}`,
+              `tunnel:  ${tunnel ?? "(none)"}`,
             ].join("\n"),
       );
       if (!healthy) yield* Effect.sync(() => (process.exitCode = 1));
@@ -582,7 +698,7 @@ const logsCommand = Command.make(
 Command.make("dev").pipe(
   Command.withDescription(
     [
-      "Run this checkout's dev server (vp run dev:alchemy) for an agent or a person.",
+      "Run this checkout's dev server (vp run app:dev: shopify app dev, which runs alchemy dev) for an agent or a person.",
       "Where it runs, first match wins:",
       "  1. a server already running for this checkout is adopted;",
       `  2. with herdr running: the checkout's workspace, tab "${DEV_TAB}" (opened if needed);`,

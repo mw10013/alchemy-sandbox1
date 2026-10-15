@@ -4,7 +4,9 @@ import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import react from "@vitejs/plugin-react";
 import cloudflare from "@alchemy.run/cloudflare-runtime/vite";
 import { playwright } from "vite-plus/test/browser-playwright";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -29,6 +31,41 @@ const stageOf = (environment: "test") =>
  */
 const viteCacheDir = () =>
   process.env.ALCHEMY_STAGE ? `node_modules/.vite/${process.env.ALCHEMY_STAGE}` : undefined;
+
+const HttpUrl = Schema.String.check(Schema.isPattern(/^https?:\/\//u)).pipe(
+  Schema.decodeTo(Schema.URLFromString),
+);
+
+/** A URL from an `http(s)://` URL or a bare host, which is read as `https://<host>`. */
+const UrlOrHost = Schema.Union([
+  HttpUrl,
+  Schema.String.pipe(
+    Schema.decodeTo(
+      HttpUrl,
+      SchemaTransformation.transform({
+        decode: (host) => `https://${host}`,
+        encode: (url) => url.slice("https://".length),
+      }),
+    ),
+  ),
+]);
+
+/**
+ * Hosts Vite's host check admits. Alchemy's proxy forwards the client's `Host` header untouched,
+ * so a page loaded through Shopify CLI's tunnel arrives with the tunnel's hostname, which changes
+ * every `shopify app dev` run. `APP_URL` is the tunnel the CLI injected into this run's
+ * environment; the CLI may hand it as a URL or a bare host.
+ */
+const allowedHosts = () => [
+  "localhost",
+  "127.0.0.1",
+  ".trycloudflare.com",
+  ...Option.toArray(
+    Schema.decodeUnknownOption(UrlOrHost)(process.env.APP_URL).pipe(
+      Option.map((url) => url.hostname),
+    ),
+  ),
+];
 
 const browserStub = (file: string) =>
   fileURLToPath(new URL(`test/browser/stubs/${file}`, import.meta.url));
@@ -100,7 +137,10 @@ export default defineConfig(({ command, mode, isPreview }) => {
           ],
     cacheDir: viteCacheDir(),
     // Alchemy overrides this with an internal port behind its public proxy.
-    server: command === "serve" ? { port: websitePort(mode), strictPort: true } : undefined,
+    server:
+      command === "serve"
+        ? { port: websitePort(mode), strictPort: true, allowedHosts: allowedHosts() }
+        : undefined,
     test: {
       passWithNoTests: true,
       projects: [

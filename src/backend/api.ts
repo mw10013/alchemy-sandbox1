@@ -14,7 +14,12 @@ import {
   TooManyRequests,
   Unauthorized,
 } from "../contract/auth.ts";
-import { NotAShopMember, ShopSnapshotInput } from "../contract/shop.ts";
+import {
+  AdminSession,
+  AuthenticateAdminInput,
+  NotAShopMember,
+  ShopSnapshotInput,
+} from "../contract/shop.ts";
 import { ShoutInput } from "../contract/playground.ts";
 import { ShopActors } from "./shop-actors.ts";
 import { Auth } from "./auth.ts";
@@ -23,6 +28,7 @@ import { Members } from "./members.ts";
 import { sessionFromCookie } from "./auth.ts";
 import { SignInLimit } from "./resources.ts";
 import { ShopAccess } from "./shop-access.ts";
+import { Shopify } from "./shopify.ts";
 
 /**
  * The {@link SignInLimit} client. Yielding the binding attaches it to the Worker, so the layer
@@ -61,6 +67,8 @@ const decodeRequest = Schema.decodeUnknownEffect(RequestInfo);
 const decodeShout = Schema.decodeUnknownEffect(ShoutInput);
 const decodeMagicLinkInput = Schema.decodeUnknownEffect(MagicLinkInput);
 const decodeSnapshotInput = Schema.decodeUnknownEffect(ShopSnapshotInput);
+const decodeAuthenticateAdminInput = Schema.decodeUnknownEffect(AuthenticateAdminInput);
+const encodeAdminSession = Schema.encodeSync(AdminSession);
 const encodeMagicLinkRequested = Schema.encodeSync(MagicLinkRequested);
 
 const make = Effect.gen(function* () {
@@ -71,6 +79,7 @@ const make = Effect.gen(function* () {
   const limiter = yield* SignInLimiter;
   const shopAccess = yield* ShopAccess;
   const actors = yield* ShopActors;
+  const shopify = yield* Shopify;
 
   /** The signed-in user and session from the request's cookie; see {@link sessionFromCookie}. */
   const session = (request: RequestInfo) =>
@@ -115,7 +124,7 @@ const make = Effect.gen(function* () {
     }
     yield* auth.api
       .signInMagicLink({
-        body: { email, callbackURL: returnTo ?? "/app", errorCallbackURL: "/sign-in" },
+        body: { email, callbackURL: returnTo ?? "/shop", errorCallbackURL: "/sign-in" },
         headers: new Headers(),
       })
       .pipe(Effect.orDie);
@@ -159,7 +168,19 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  return { hello, shout, requestMagicLink, me, listMembers, shopSnapshot };
+  /**
+   * The embedded App Home's admin: the session token is the credential, so the request is
+   * ignored; see `Shopify.authenticateAdmin`.
+   */
+  const authenticateAdmin = Effect.fn("BackendApi.authenticateAdmin")(function* (
+    _request: RequestInfo,
+    payload: AuthenticateAdminInput,
+  ) {
+    const { sessionToken } = yield* decodeAuthenticateAdminInput(payload).pipe(Effect.orDie);
+    return encodeAdminSession(yield* shopify.authenticateAdmin(sessionToken));
+  });
+
+  return { hello, shout, requestMagicLink, me, listMembers, shopSnapshot, authenticateAdmin };
 });
 
 /**

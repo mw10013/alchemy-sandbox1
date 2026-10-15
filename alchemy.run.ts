@@ -4,13 +4,18 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type { DeliveryMode } from "./src/backend/magic-link-delivery.ts";
+import { SHOPIFY_API_KEY } from "./src/backend/shopify.ts";
 import Backend from "./src/backend/worker.ts";
-import { stageState, wireBackend } from "./src/backend/stack.ts";
+import { ShopifyApp, stageState, wireBackend } from "./src/backend/stack.ts";
 
 /**
  * The TanStack Start app. `alchemy dev` serves it on `WEBSITE_PORT` from the checkout's `.env`
  * (Alchemy loads `.env` itself); deploys never read it. `strictPort` makes a collision fail
  * instead of silently moving ports.
+ *
+ * `SHOPIFY_API_KEY` goes into the App Home's page, so it is public; the secret stays on the
+ * Backend. Both it and `SHOPIFY_APP_URL` are the CLI's under `shopify app dev` ({@link ShopifyApp})
+ * and the fake key and the Website's own URL elsewhere.
  */
 export class Website extends Cloudflare.Website.Vite<Website>()(
   "Website",
@@ -18,10 +23,21 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
     const dev = (yield* Alchemy.ALCHEMY_DEV)
       ? { port: yield* Config.Port("WEBSITE_PORT"), strictPort: true }
       : undefined;
+    const app = yield* ShopifyApp;
     return {
       compatibility: { date: "2026-07-01", flags: ["nodejs_compat"] },
       dev,
-      env: { BACKEND: Backend },
+      env: {
+        BACKEND: Backend,
+        SHOPIFY_API_KEY: Option.match(app, {
+          onNone: () => SHOPIFY_API_KEY,
+          onSome: ({ apiKey }) => apiKey,
+        }),
+        SHOPIFY_APP_URL: Option.match(app, {
+          onNone: () => Cloudflare.Worker.URL,
+          onSome: ({ appUrl }) => appUrl,
+        }),
+      },
     };
   }).pipe(Effect.orDie),
 ) {}
@@ -52,6 +68,7 @@ export default Alchemy.Stack(
       // already binds the Backend, so its URL is attached as a binding, which may form a
       // cycle, rather than as a Backend prop. Under alchemy dev it is the local dev URL.
       authOrigin: website.url,
+      appUrl: website.url,
       delivery,
       e2eToken,
     });

@@ -3,7 +3,8 @@
  * the repository, or a long-lived linked worktree on branch `wt-NN`, which T3
  * Code creates under `~/.t3/worktrees/<project>/wt-NN`. Each checkout has its
  * own `.env`, `.alchemy/` and `.logs/`, so each runs its own dev server on its
- * own `WEBSITE_PORT`: the main checkout's port plus `NN`.
+ * own `WEBSITE_PORT`, the main checkout's port plus `NN`, and its own
+ * `shopify app dev` session on its own dev store ({@link DevStore}).
  *
  * `refs/` exists once, in the main checkout; a linked worktree has a symlink
  * named `refs` pointing at it. `.gitignore` lists `/refs` without a trailing
@@ -35,6 +36,39 @@ export const worktreeIndex = Schema.decodeUnknownOption(Checkout);
  */
 export const websitePortOf = (envText: string) =>
   Config.Port("WEBSITE_PORT").pipe(
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromDotEnvContents(envText),
+    ),
+  );
+
+/**
+ * A checkout's Shopify dev store, `sandbox-shop-NN` for index `NN` (the main checkout is `00`), as
+ * a codec: decode the name to its index, encode an index to the name. One store per checkout,
+ * because the CLI rewrites the app's URL per store: two `shopify app dev` sessions on one store
+ * overwrite each other's app URL, and the last one started wins.
+ */
+export const DevStore = Schema.String.check(Schema.isPattern(/^sandbox-shop-\d{2}$/u)).pipe(
+  Schema.decodeTo(
+    Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 99 })),
+    SchemaTransformation.transform({
+      decode: (name) => Number(name.slice("sandbox-shop-".length)),
+      encode: (index) => `sandbox-shop-${String(index).padStart(2, "0")}`,
+    }),
+  ),
+);
+
+/** The {@link DevStore} name of checkout `index`. */
+export const devStoreName = Schema.encodeSync(DevStore);
+
+/**
+ * `SHOPIFY_DEV_STORE` from a `.env`'s text, as written (a {@link DevStore} name); none when the key
+ * is missing. Fails with a `ConfigError` naming the key when it is not a store name.
+ */
+export const devStoreOf = (envText: string) =>
+  Config.schema(DevStore, "SHOPIFY_DEV_STORE").pipe(
+    Config.map(devStoreName),
+    Config.option,
     Effect.provideService(
       ConfigProvider.ConfigProvider,
       ConfigProvider.fromDotEnvContents(envText),

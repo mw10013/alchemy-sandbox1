@@ -18,7 +18,7 @@ test.use({ storageState: "playwright/.auth/member.json" });
 /** Every test here reads or writes the one shop's count, so they take turns. */
 test.describe.configure({ mode: "serial" });
 
-const path = `/app/shop/${SANDBOX_SHOP}`;
+const path = `/shop/${SANDBOX_SHOP}`;
 
 test("an increment in one window updates the count in another", async ({ context, goto, page }) => {
   await goto(path);

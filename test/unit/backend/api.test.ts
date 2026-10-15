@@ -7,6 +7,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import {
@@ -19,10 +20,12 @@ import { SANDBOX_SHOP, type ShopKey } from "../../../src/contract/shop.ts";
 import type { ConnectionCaller } from "../../../src/contract/shop-actor.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
-import { QuietLogs, testAuth } from "./layers.ts";
+import { QuietLogs, TEST_SHOPIFY_APP, testAuth, testShopify } from "./layers.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopAccess, ShopAccessDenied } from "../../../src/backend/shop-access.ts";
+import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
+import { Shopify } from "../../../src/backend/shopify.ts";
 
 const email = Schema.decodeUnknownSync(EmailFromInput);
 const decodeRequested = Schema.decodeSync(MagicLinkRequested);
@@ -34,6 +37,21 @@ const members: ReadonlyArray<Member> = [
   { id: "mem-1", shop: SANDBOX_SHOP, email: member, createdAt: 1 },
 ];
 const merchant: ConnectionCaller = { role: "merchant" };
+
+/** The seed's row for the sandbox shop: a stored token that never expires, so no exchange runs. */
+const sandboxSession: ShopSessionRow = {
+  shop: SANDBOX_SHOP,
+  shopGid: "gid://shopify/Shop/1",
+  shopAgentId: SANDBOX_SHOP,
+  scope: "read_orders,write_orders",
+  accessTokenExpiresAt: 4102444800000,
+  accessToken: "shpat_fake_alchemy_sandbox1",
+  refreshToken: "shprt_fake_alchemy_sandbox1",
+  refreshTokenExpiresAt: 4102444800000,
+  planHandle: "basic",
+  planHandleExpiresAt: 4102444800000,
+  planBoundaryAt: null,
+};
 const snapshot = { count: { value: 3 }, activation: { id: "activation-1" } };
 
 /** A request with only a cookie, as a server function forwards it. */
@@ -61,6 +79,7 @@ const TestBackend = ({
         extra: Layer.mergeAll(
           SignInLimiter.layerTest(allow),
           Layer.succeed(ShopAccess, { resolve: () => gate }),
+          testShopify([sandboxSession]),
         ),
       }),
     ),
@@ -190,5 +209,41 @@ describe("BackendApi.shopSnapshot", () => {
     }).pipe(
       Effect.provide(TestBackend({ gate: Effect.fail(new ShopAccessDenied({ status: 503 })) })),
     ),
+  );
+});
+
+describe("BackendApi.authenticateAdmin", () => {
+  /** A session token for the sandbox shop, signed by the app `options` names. */
+  const tokenFrom = (options: { apiKey: string; apiSecret: string }) =>
+    Effect.flatMap(Shopify, (shopify) => shopify.signSessionToken({ shop: SANDBOX_SHOP })).pipe(
+      Effect.provide(
+        Shopify.layerWith({
+          apiKey: options.apiKey,
+          apiSecret: Redacted.make(options.apiSecret),
+          appUrl: "http://localhost",
+        }).pipe(Layer.provide(ShopSessions.layerTest([]))),
+      ),
+    );
+
+  it.live("a stored, active session is reused: the shop comes back and the row is untouched", () =>
+    Effect.gen(function* () {
+      const api = yield* BackendApi;
+      const sessionToken = yield* tokenFrom(TEST_SHOPIFY_APP);
+      const answer = yield* api.authenticateAdmin(withCookie(undefined), { sessionToken });
+      assert.deepStrictEqual(answer, { shop: SANDBOX_SHOP, shopGid: sandboxSession.shopGid });
+      const row = yield* (yield* ShopSessions).find(SANDBOX_SHOP);
+      assert.deepStrictEqual(row, Option.some(sandboxSession));
+    }).pipe(Effect.provide(TestBackend())),
+  );
+
+  it.live("a token signed with another secret is InvalidSessionToken", () =>
+    Effect.gen(function* () {
+      const api = yield* BackendApi;
+      const sessionToken = yield* tokenFrom({ ...TEST_SHOPIFY_APP, apiSecret: "other-secret" });
+      const error = yield* api
+        .authenticateAdmin(withCookie(undefined), { sessionToken })
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "InvalidSessionToken");
+    }).pipe(Effect.provide(TestBackend())),
   );
 });

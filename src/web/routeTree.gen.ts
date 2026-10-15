@@ -12,15 +12,18 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AppRouteImport } from './routes/app'
+import { Route as ShopRouteImport } from './routes/shop'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminMembersRouteImport } from './routes/admin.members'
 import { Route as ApiTestControlRouteImport } from './routes/api.test-control'
-import { Route as AppIndexRouteImport } from './routes/app.index'
+import { Route as AuthExitIframeRouteImport } from './routes/auth.exit-iframe'
+import { Route as AuthSessionTokenRouteImport } from './routes/auth.session-token'
 import { Route as MerchantKeyRouteImport } from './routes/merchant.$key'
+import { Route as ShopIndexRouteImport } from './routes/shop.index'
+import { Route as ShopKeyRouteImport } from './routes/shop.$key'
 import { Route as ApiActorKeyRouteImport } from './routes/api.actor.$key'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
-import { Route as AppShopKeyRouteImport } from './routes/app.shop.$key'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -35,6 +38,11 @@ const AdminRoute = AdminRouteImport.update({
 const AppRoute = AppRouteImport.update({
   id: '/app',
   path: '/app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ShopRoute = ShopRouteImport.update({
+  id: '/shop',
+  path: '/shop',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignInRoute = SignInRouteImport.update({
@@ -57,15 +65,30 @@ const ApiTestControlRoute = ApiTestControlRouteImport.update({
   path: '/api/test-control',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppIndexRoute = AppIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => AppRoute,
+const AuthExitIframeRoute = AuthExitIframeRouteImport.update({
+  id: '/auth/exit-iframe',
+  path: '/auth/exit-iframe',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthSessionTokenRoute = AuthSessionTokenRouteImport.update({
+  id: '/auth/session-token',
+  path: '/auth/session-token',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const MerchantKeyRoute = MerchantKeyRouteImport.update({
   id: '/merchant/$key',
   path: '/merchant/$key',
   getParentRoute: () => rootRouteImport,
+} as any)
+const ShopIndexRoute = ShopIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ShopRoute,
+} as any)
+const ShopKeyRoute = ShopKeyRouteImport.update({
+  id: '/$key',
+  path: '/$key',
+  getParentRoute: () => ShopRoute,
 } as any)
 const ApiActorKeyRoute = ApiActorKeyRouteImport.update({
   id: '/api/actor/$key',
@@ -77,52 +100,56 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppShopKeyRoute = AppShopKeyRouteImport.update({
-  id: '/shop/$key',
-  path: '/shop/$key',
-  getParentRoute: () => AppRoute,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
-  '/app': typeof AppRouteWithChildren
+  '/app': typeof AppRoute
+  '/shop': typeof ShopRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
   '/api/test-control': typeof ApiTestControlRoute
+  '/auth/exit-iframe': typeof AuthExitIframeRoute
+  '/auth/session-token': typeof AuthSessionTokenRoute
   '/merchant/$key': typeof MerchantKeyRoute
+  '/shop/$key': typeof ShopKeyRoute
   '/admin/': typeof AdminIndexRoute
-  '/app/': typeof AppIndexRoute
+  '/shop/': typeof ShopIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
-  '/app/shop/$key': typeof AppShopKeyRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/app': typeof AppRoute
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
   '/api/test-control': typeof ApiTestControlRoute
+  '/auth/exit-iframe': typeof AuthExitIframeRoute
+  '/auth/session-token': typeof AuthSessionTokenRoute
   '/merchant/$key': typeof MerchantKeyRoute
+  '/shop/$key': typeof ShopKeyRoute
   '/admin': typeof AdminIndexRoute
-  '/app': typeof AppIndexRoute
+  '/shop': typeof ShopIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
-  '/app/shop/$key': typeof AppShopKeyRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
-  '/app': typeof AppRouteWithChildren
+  '/app': typeof AppRoute
+  '/shop': typeof ShopRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
   '/api/test-control': typeof ApiTestControlRoute
+  '/auth/exit-iframe': typeof AuthExitIframeRoute
+  '/auth/session-token': typeof AuthSessionTokenRoute
   '/merchant/$key': typeof MerchantKeyRoute
+  '/shop/$key': typeof ShopKeyRoute
   '/admin/': typeof AdminIndexRoute
-  '/app/': typeof AppIndexRoute
+  '/shop/': typeof ShopIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
-  '/app/shop/$key': typeof AppShopKeyRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -130,49 +157,61 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/app'
+    | '/shop'
     | '/sign-in'
     | '/admin/members'
     | '/api/test-control'
+    | '/auth/exit-iframe'
+    | '/auth/session-token'
     | '/merchant/$key'
+    | '/shop/$key'
     | '/admin/'
-    | '/app/'
+    | '/shop/'
     | '/api/actor/$key'
     | '/api/auth/$'
-    | '/app/shop/$key'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/app'
     | '/sign-in'
     | '/admin/members'
     | '/api/test-control'
+    | '/auth/exit-iframe'
+    | '/auth/session-token'
     | '/merchant/$key'
+    | '/shop/$key'
     | '/admin'
-    | '/app'
+    | '/shop'
     | '/api/actor/$key'
     | '/api/auth/$'
-    | '/app/shop/$key'
   id:
     | '__root__'
     | '/'
     | '/admin'
     | '/app'
+    | '/shop'
     | '/sign-in'
     | '/admin/members'
     | '/api/test-control'
+    | '/auth/exit-iframe'
+    | '/auth/session-token'
     | '/merchant/$key'
+    | '/shop/$key'
     | '/admin/'
-    | '/app/'
+    | '/shop/'
     | '/api/actor/$key'
     | '/api/auth/$'
-    | '/app/shop/$key'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRouteWithChildren
-  AppRoute: typeof AppRouteWithChildren
+  AppRoute: typeof AppRoute
+  ShopRoute: typeof ShopRouteWithChildren
   SignInRoute: typeof SignInRoute
   ApiTestControlRoute: typeof ApiTestControlRoute
+  AuthExitIframeRoute: typeof AuthExitIframeRoute
+  AuthSessionTokenRoute: typeof AuthSessionTokenRoute
   MerchantKeyRoute: typeof MerchantKeyRoute
   ApiActorKeyRoute: typeof ApiActorKeyRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
@@ -199,6 +238,13 @@ declare module '@tanstack/react-router' {
       path: '/app'
       fullPath: '/app'
       preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/shop': {
+      id: '/shop'
+      path: '/shop'
+      fullPath: '/shop'
+      preLoaderRoute: typeof ShopRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sign-in': {
@@ -229,12 +275,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTestControlRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/': {
-      id: '/app/'
-      path: '/'
-      fullPath: '/app/'
-      preLoaderRoute: typeof AppIndexRouteImport
-      parentRoute: typeof AppRoute
+    '/auth/exit-iframe': {
+      id: '/auth/exit-iframe'
+      path: '/auth/exit-iframe'
+      fullPath: '/auth/exit-iframe'
+      preLoaderRoute: typeof AuthExitIframeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth/session-token': {
+      id: '/auth/session-token'
+      path: '/auth/session-token'
+      fullPath: '/auth/session-token'
+      preLoaderRoute: typeof AuthSessionTokenRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/merchant/$key': {
       id: '/merchant/$key'
@@ -242,6 +295,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/merchant/$key'
       preLoaderRoute: typeof MerchantKeyRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/shop/': {
+      id: '/shop/'
+      path: '/'
+      fullPath: '/shop/'
+      preLoaderRoute: typeof ShopIndexRouteImport
+      parentRoute: typeof ShopRoute
+    }
+    '/shop/$key': {
+      id: '/shop/$key'
+      path: '/$key'
+      fullPath: '/shop/$key'
+      preLoaderRoute: typeof ShopKeyRouteImport
+      parentRoute: typeof ShopRoute
     }
     '/api/actor/$key': {
       id: '/api/actor/$key'
@@ -256,13 +323,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/auth/$'
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
-    }
-    '/app/shop/$key': {
-      id: '/app/shop/$key'
-      path: '/shop/$key'
-      fullPath: '/app/shop/$key'
-      preLoaderRoute: typeof AppShopKeyRouteImport
-      parentRoute: typeof AppRoute
     }
   }
 }
@@ -279,24 +339,27 @@ const AdminRouteChildren: AdminRouteChildren = {
 
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
-interface AppRouteChildren {
-  AppIndexRoute: typeof AppIndexRoute
-  AppShopKeyRoute: typeof AppShopKeyRoute
+interface ShopRouteChildren {
+  ShopKeyRoute: typeof ShopKeyRoute
+  ShopIndexRoute: typeof ShopIndexRoute
 }
 
-const AppRouteChildren: AppRouteChildren = {
-  AppIndexRoute: AppIndexRoute,
-  AppShopKeyRoute: AppShopKeyRoute,
+const ShopRouteChildren: ShopRouteChildren = {
+  ShopKeyRoute: ShopKeyRoute,
+  ShopIndexRoute: ShopIndexRoute,
 }
 
-const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
+const ShopRouteWithChildren = ShopRoute._addFileChildren(ShopRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRouteWithChildren,
-  AppRoute: AppRouteWithChildren,
+  AppRoute: AppRoute,
+  ShopRoute: ShopRouteWithChildren,
   SignInRoute: SignInRoute,
   ApiTestControlRoute: ApiTestControlRoute,
+  AuthExitIframeRoute: AuthExitIframeRoute,
+  AuthSessionTokenRoute: AuthSessionTokenRoute,
   MerchantKeyRoute: MerchantKeyRoute,
   ApiActorKeyRoute: ApiActorKeyRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,

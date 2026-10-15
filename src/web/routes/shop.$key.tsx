@@ -10,7 +10,7 @@ import { getShopSnapshot } from "../server/shop.ts";
 const decodeShopKey = Schema.decodeUnknownOption(ShopKey);
 
 /** A member's shop page: the loader asks the Backend for the snapshot, or why not. */
-export const Route = createFileRoute("/app/shop/$key")({
+export const Route = createFileRoute("/shop/$key")({
   params: {
     parse: ({ key }) =>
       Option.match(decodeShopKey(key), { onNone: () => false, onSome: (key) => ({ key }) }),
@@ -21,7 +21,7 @@ export const Route = createFileRoute("/app/shop/$key")({
     const { key } = Route.useParams();
     return (
       <>
-        <BackLink label="Member area" href="/app" />
+        <BackLink label="Member area" href="/shop" />
         <ShopPage
           role="member"
           shop={key}
