@@ -99,7 +99,7 @@ What the draft sets, and why:
 - `embedded = true`, `web_directories = ["."]`, `[build] automatically_update_urls_on_dev = false`: kept from the skeleton, with its header comment rewritten now that the file is real.
 - `[access_scopes]`: the same as `shopify.app.toml` (`read_orders,read_products`).
 - `[auth] redirect_urls`: the dev file's shape (`/api/auth`), on the staging URL. Shopify-managed installation does not use it.
-- `[webhooks]`: `api_version` only, **no subscriptions** until the app serves `/webhooks`.
+- `[access_scopes]` and `[webhooks]`: the same as `shopify.app.toml`, which is Baton's, so both apps are configured alike. The order topics carry protected customer data, so the staging app needs protected customer data access before Shopify accepts the version. Until the app serves `/webhooks`, deliveries answer 404.
 
 Afterwards, `shopify app deploy --config staging` is rerun only when the TOML changes. `shopify app dev` keeps using `shopify.app.toml`: `app:dev` names it with `--config`.
 
@@ -390,16 +390,16 @@ pnpm run stage-config -- --stage staging
 
 Settled across four annotation rounds, and written into the sections above:
 
-| Decision                     | Choice                                                                                                                                |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Route                        | Keep Workers Builds; a stage config stack holds the values as stack outputs                                                           |
-| Where values are entered     | An untracked `.env.<stage>` in the main checkout, read by `Secrets.DotEnv`                                                            |
-| Worktrees                    | `vp run worktree:init` symlinks every `.env.<stage>` of main (§6.4)                                                                   |
-| Allowed stages               | `staging` only, until `production` is designed                                                                                        |
-| Public and secret values     | Together in one stack; secrets typed `Redacted`                                                                                       |
-| Names                        | File `stacks/stage-config.ts`, stack `Alchemy-sandbox1-config`, handle `StageConfig` in `src/backend/stack.ts`, script `stage-config` |
-| Staging's `SHOPIFY_API_KEY`  | From `.env.staging`, written by `shopify app env pull` with the secret                                                                |
-| Staging Shopify app          | New, created with `shopify app config link`, named "Baton Staging", no `handle`                                                       |
-| Store                        | `sandbox-shop-00`, alongside the dev app                                                                                              |
-| Webhooks in the staging TOML | None until the app serves them                                                                                                        |
-| Dev app                      | Renamed "Baton Dev" (§3.6)                                                                                                            |
+| Decision                                | Choice                                                                                                                                |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Route                                   | Keep Workers Builds; a stage config stack holds the values as stack outputs                                                           |
+| Where values are entered                | An untracked `.env.<stage>` in the main checkout, read by `Secrets.DotEnv`                                                            |
+| Worktrees                               | `vp run worktree:init` symlinks every `.env.<stage>` of main (§6.4)                                                                   |
+| Allowed stages                          | `staging` only, until `production` is designed                                                                                        |
+| Public and secret values                | Together in one stack; secrets typed `Redacted`                                                                                       |
+| Names                                   | File `stacks/stage-config.ts`, stack `Alchemy-sandbox1-config`, handle `StageConfig` in `src/backend/stack.ts`, script `stage-config` |
+| Staging's `SHOPIFY_API_KEY`             | From `.env.staging`, written by `shopify app env pull` with the secret                                                                |
+| Staging Shopify app                     | New, created with `shopify app config link`, named "Baton Staging", no `handle`                                                       |
+| Store                                   | `sandbox-shop-00`, alongside the dev app                                                                                              |
+| Webhooks and scopes in the staging TOML | The same as `shopify.app.toml` (Baton's), and Baton's `baton-order-link` extension in `extensions/`                                   |
+| Dev app                                 | Renamed "Baton Dev" (§3.6)                                                                                                            |

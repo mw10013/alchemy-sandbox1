@@ -12,7 +12,8 @@
 # "shopify.web.toml", "./shopify.web.toml" does not match, and the app silently loads zero webs.
 # See refs/baton/docs/shopify-web-toml-conflict-research.md.
 #
-# No `handle`: it sets the App Home's admin URL slug, and changing one later breaks admin links.
+# Everything else mirrors shopify.app.toml (scopes, webhooks); keep the two in step. No `handle`: it
+# sets the App Home's admin URL slug, and changing one later breaks admin links.
 
 client_id = "54b4c701f5c568d4cf4a11fd42d6fe7b"
 name = "Baton Staging"
@@ -30,8 +31,37 @@ redirect_urls = [
 ]
 
 [webhooks]
-# No subscriptions until the app serves /webhooks: Shopify would deliver to routes that 404.
 api_version = "2026-10"
+
+[[webhooks.subscriptions]]
+uri = "/webhooks/compliance"
+compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+
+[[webhooks.subscriptions]]
+uri = "/webhooks/app/scopes_update"
+topics = ["app/scopes_update"]
+
+[[webhooks.subscriptions]]
+uri = "/webhooks/app/uninstalled"
+topics = ["app/uninstalled"]
+
+[[webhooks.subscriptions]]
+uri = "/webhooks/orders"
+# `orders/updated` is not subscribed: it fires on every save of the order, for
+# any reason, and every change Baton acts on already has its own topic here.
+topics = ["orders/create", "orders/paid", "orders/cancelled", "orders/fulfilled"]
+# `updated_at` is load-bearing, not informational: Shopify debounces consecutive
+# identical trimmed payloads, so a subscription whose fields never change would
+# silently drop updates.
+include_fields = ["id", "admin_graphql_api_id", "updated_at"]
+
+[[webhooks.subscriptions]]
+uri = "/webhooks/orders"
+# `orders/edited` carries an `order_edit` object: `order_id`, no `updated_at`,
+# so the stale guard cannot apply and it always fetches. No `include_fields`:
+# the payload differs per edit, so Shopify's identical-payload debounce is not
+# a concern.
+topics = ["orders/edited"]
 
 [build]
 automatically_update_urls_on_dev = false
