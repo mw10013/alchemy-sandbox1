@@ -6,21 +6,24 @@
  * needs `node_modules` to run.
  *
  * The index comes from the branch name: `wt-01` is index 1, serves on the
- * main checkout's `WEBSITE_PORT` + 1 and runs `shopify app dev` on dev store
- * `sandbox-shop-01`.
+ * main checkout's `WEBSITE_PORT` + 1, runs `shopify app dev` on dev store
+ * `mw10013-dev-shop-01` and keeps its e2e store `mw10013-e2e-shop-01`.
  *
  * Idempotent: a file that exists is verified, never rewritten, so a second
- * run only checks; the one exception is a `.env` without `SHOPIFY_DEV_STORE`,
- * which gets the key appended, so a worktree set up before the key existed
- * catches up. Steps, in order:
+ * run only checks; the one exception is a `.env` without `SHOPIFY_DEV_STORE` or
+ * `SHOPIFY_E2E_STORE`, which gets the key appended, so a worktree set up before
+ * the key existed catches up. Steps, in order:
  *
  * 1. Refuse the main checkout, a branch other than `wt-NN`, and a port or
- *    dev store another checkout's `.env` already holds.
+ *    dev or e2e store another checkout's `.env` already holds.
  * 2. `.env`: copied from the main checkout's (not `.env.example`, which has
- *    no secrets) with `WEBSITE_PORT` and `SHOPIFY_DEV_STORE` set for this
- *    worktree.
- * 3. `refs`: a symlink to the main checkout's `refs/`.
- * 4. `.env.<environment>` for each {@link Deployed} environment: a symlink to
+ *    no secrets) with `WEBSITE_PORT`, `SHOPIFY_DEV_STORE` and
+ *    `SHOPIFY_E2E_STORE` set for this worktree. A value of the old
+ *    `sandbox-shop-NN` scheme fails, naming the expected value: fix it by hand.
+ * 3. The worktree's two stores, checked to exist ({@link checkStores}); a missing one fails
+ *    with the command to create it by hand.
+ * 4. `refs`: a symlink to the main checkout's `refs/`.
+ * 5. `.env.<environment>` for each {@link Deployed} environment: a symlink to
  *    the main checkout's, so a deployed stage's values exist once; skipped
  *    when the main checkout has no such file.
  *
@@ -36,12 +39,15 @@ import { CliError, Command } from "effect/cli";
 import path from "node:path";
 
 import { Deployed } from "../src/backend/stage.ts";
+import { checkStores } from "./lib/stores.ts";
 import {
   checkoutKind,
   checkoutPaths,
   currentBranch,
   devStoreName,
   devStoreOf,
+  e2eStoreName,
+  e2eStoreOf,
   setEnvKey,
   websitePortOf,
   worktreeIndex,
@@ -56,17 +62,23 @@ const readIfExists = Effect.fn("readIfExists")(function* (file: string) {
 });
 
 /**
- * `WEBSITE_PORT` and `SHOPIFY_DEV_STORE` of the checkout at `checkout`, each none without a `.env`
- * or the key in it.
+ * `WEBSITE_PORT`, `SHOPIFY_DEV_STORE` and `SHOPIFY_E2E_STORE` of the checkout at `checkout`, each
+ * none without a `.env` or the key in it.
  */
 const checkoutClaims = Effect.fn("checkoutClaims")(function* (checkout: string) {
   const env = yield* readIfExists(path.join(checkout, ".env"));
   return yield* Option.match(env, {
-    onNone: () => Effect.succeed({ port: Option.none<number>(), store: Option.none<string>() }),
+    onNone: () =>
+      Effect.succeed({
+        port: Option.none<number>(),
+        store: Option.none<string>(),
+        e2eStore: Option.none<string>(),
+      }),
     onSome: (text) =>
       Effect.all({
         port: websitePortOf(text).pipe(Effect.option),
         store: devStoreOf(text).pipe(Effect.orElseSucceed(Option.none<string>)),
+        e2eStore: e2eStoreOf(text).pipe(Effect.orElseSucceed(Option.none<string>)),
       }),
   });
 });
@@ -115,27 +127,31 @@ const linkToMain = Effect.fn("linkToMain")(function* (
 });
 
 /**
- * Verifies `SHOPIFY_DEV_STORE` in an existing `.env`: the expected store passes, another value
- * fails, and a missing key is appended (the one write to an existing `.env`, see the module doc).
+ * Verifies the store `key` in an existing `.env`: the expected store passes, another value fails
+ * (a store of the old `sandbox-shop-NN` scheme included), and a missing key is appended (the one
+ * write to an existing `.env`, see the module doc). Returns the text as it stands afterwards.
  */
 const verifyStore = Effect.fn("verifyStore")(function* (
   envFile: string,
   text: string,
+  key: string,
+  read: typeof devStoreOf,
   store: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const have = yield* devStoreOf(text).pipe(
+  const have = yield* read(text).pipe(
     Effect.mapError((error) => fail(`.env: ${error.message}; expected ${store}, fix it by hand`)),
   );
   if (Option.isNone(have)) {
-    yield* fs.writeFileString(envFile, setEnvKey(text, "SHOPIFY_DEV_STORE", store));
-    return yield* Console.log(`ok    .env gained SHOPIFY_DEV_STORE=${store}`);
+    const appended = setEnvKey(text, key, store);
+    yield* fs.writeFileString(envFile, appended);
+    yield* Console.log(`ok    .env gained ${key}=${store}`);
+    return appended;
   }
   if (have.value !== store)
-    return yield* fail(
-      `.env has SHOPIFY_DEV_STORE=${have.value}, expected ${store}; fix it by hand`,
-    );
-  yield* Console.log(`ok    .env verified, SHOPIFY_DEV_STORE=${store}`);
+    return yield* fail(`.env has ${key}=${have.value}, expected ${store}; fix it by hand`);
+  yield* Console.log(`ok    .env verified, ${key}=${store}`);
+  return text;
 });
 
 const init = Effect.gen(function* () {
@@ -161,6 +177,7 @@ const init = Effect.gen(function* () {
   );
   const port = mainPort + index;
   const store = devStoreName(index);
+  const e2eStore = e2eStoreName(index);
 
   const others = (yield* checkoutPaths).filter((checkout) => checkout !== root);
   yield* Effect.forEach(others, (checkout) =>
@@ -173,6 +190,10 @@ const init = Effect.gen(function* () {
         (used) => !Option.contains(used.store, store),
         () => fail(`SHOPIFY_DEV_STORE=${store} is already used by ${checkout}`),
       ),
+      Effect.filterOrFail(
+        (used) => !Option.contains(used.e2eStore, e2eStore),
+        () => fail(`SHOPIFY_E2E_STORE=${e2eStore} is already used by ${checkout}`),
+      ),
     ),
   );
 
@@ -182,12 +203,16 @@ const init = Effect.gen(function* () {
       fs
         .writeFileString(
           envFile,
-          setEnvKey(setEnvKey(mainEnv, "WEBSITE_PORT", String(port)), "SHOPIFY_DEV_STORE", store),
+          setEnvKey(
+            setEnvKey(setEnvKey(mainEnv, "WEBSITE_PORT", String(port)), "SHOPIFY_DEV_STORE", store),
+            "SHOPIFY_E2E_STORE",
+            e2eStore,
+          ),
         )
         .pipe(
           Effect.andThen(
             Console.log(
-              `ok    .env copied from the main checkout, WEBSITE_PORT=${String(port)}, SHOPIFY_DEV_STORE=${store}`,
+              `ok    .env copied from the main checkout, WEBSITE_PORT=${String(port)}, SHOPIFY_DEV_STORE=${store}, SHOPIFY_E2E_STORE=${e2eStore}`,
             ),
           ),
         ),
@@ -202,9 +227,14 @@ const init = Effect.gen(function* () {
             ),
         ),
         Effect.andThen(Console.log(`ok    .env verified, WEBSITE_PORT=${String(port)}`)),
-        Effect.andThen(verifyStore(envFile, text, store)),
+        Effect.andThen(verifyStore(envFile, text, "SHOPIFY_DEV_STORE", devStoreOf, store)),
+        Effect.flatMap((verified) =>
+          verifyStore(envFile, verified, "SHOPIFY_E2E_STORE", e2eStoreOf, e2eStore),
+        ),
       ),
   });
+
+  yield* checkStores({ dev: store, e2e: e2eStore });
 
   yield* linkToMain(root, mainCheckout, "refs");
   yield* Effect.forEach(Deployed.literals, (environment) =>
@@ -225,7 +255,7 @@ const toUserError = <E extends { readonly message: string }>(error: E) =>
 
 const initCommand = Command.make("init", {}, () => init.pipe(Effect.mapError(toUserError))).pipe(
   Command.withDescription(
-    "Prepare this wt-NN worktree: .env with its WEBSITE_PORT and SHOPIFY_DEV_STORE, and links to the main checkout's refs and .env.<deployed environment> files. Verifies instead of rewriting on a second run.",
+    "Prepare this wt-NN worktree: .env with its WEBSITE_PORT, SHOPIFY_DEV_STORE and SHOPIFY_E2E_STORE, its two stores made sure to exist, and links to the main checkout's refs and .env.<deployed environment> files. Verifies instead of rewriting on a second run.",
   ),
 );
 

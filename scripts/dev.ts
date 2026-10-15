@@ -112,7 +112,9 @@ const fail = (message: string) => new DevError({ message });
 /** This checkout's Shopify dev store from `.env`; see the module JSDoc. */
 const loadStore = Config.NonEmptyString("SHOPIFY_DEV_STORE").pipe(
   Effect.mapError(() =>
-    fail("SHOPIFY_DEV_STORE is not set: add it to .env (sandbox-shop-NN, NN the worktree index)"),
+    fail(
+      "SHOPIFY_DEV_STORE is not set: add it to .env (mw10013-dev-shop-NN, NN the worktree index)",
+    ),
   ),
 );
 

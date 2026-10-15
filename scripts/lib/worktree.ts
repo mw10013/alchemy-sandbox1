@@ -4,7 +4,7 @@
  * Code creates under `~/.t3/worktrees/<project>/wt-NN`. Each checkout has its
  * own `.env`, `.alchemy/` and `.logs/`, so each runs its own dev server on its
  * own `WEBSITE_PORT`, the main checkout's port plus `NN`, and its own
- * `shopify app dev` session on its own dev store ({@link DevStore}).
+ * `shopify app dev` session on its own dev store ({@link StoreName}).
  *
  * `refs/` exists once, in the main checkout; a linked worktree has a symlink
  * named `refs` pointing at it. `.gitignore` lists `/refs` without a trailing
@@ -42,38 +42,86 @@ export const websitePortOf = (envText: string) =>
     ),
   );
 
-/**
- * A checkout's Shopify dev store, `sandbox-shop-NN` for index `NN` (the main checkout is `00`), as
- * a codec: decode the name to its index, encode an index to the name. One store per checkout,
- * because the CLI rewrites the app's URL per store: two `shopify app dev` sessions on one store
- * overwrite each other's app URL, and the last one started wins.
- */
-export const DevStore = Schema.String.check(Schema.isPattern(/^sandbox-shop-\d{2}$/u)).pipe(
+/** The environments that have a Shopify store, which is not {@link Environment}: `test` has none, and `production` has a store before it has a stage. */
+export const StoreEnvironment = Schema.Literals(["dev", "e2e", "staging", "production"]);
+export type StoreEnvironment = typeof StoreEnvironment.Type;
+
+const StoreIndex = Schema.String.check(Schema.isPattern(/^\d{2}$/u)).pipe(
   Schema.decodeTo(
     Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 99 })),
     SchemaTransformation.transform({
-      decode: (name) => Number(name.slice("sandbox-shop-".length)),
-      encode: (index) => `sandbox-shop-${String(index).padStart(2, "0")}`,
+      decode: (digits) => Number(digits),
+      encode: (index) => String(index).padStart(2, "0"),
     }),
   ),
 );
 
-/** The {@link DevStore} name of checkout `index`. */
-export const devStoreName = Schema.encodeSync(DevStore);
-
 /**
- * `SHOPIFY_DEV_STORE` from a `.env`'s text, as written (a {@link DevStore} name); none when the key
- * is missing. Fails with a `ConfigError` naming the key when it is not a store name.
+ * A Shopify store's name, `mw10013-<environment>-shop-NN`, as a codec between the name and
+ * `{ environment, index }`. `NN` is two digits: the store's index, which for `dev` and `e2e` is the
+ * checkout's worktree index (`00` for the main checkout), so each checkout has one store per
+ * environment. Store names share one namespace across all of Shopify and a taken name silently
+ * becomes a suffixed domain, so generic names are taken; `mw10013`, the organization's handle,
+ * keeps ours unique. One dev store per checkout also because the CLI rewrites the app's URL per
+ * store: two `shopify app dev` sessions on one store overwrite each other's, and the last wins.
  */
-export const devStoreOf = (envText: string) =>
-  Config.schema(DevStore, "SHOPIFY_DEV_STORE").pipe(
-    Config.map(devStoreName),
+export const StoreName = Schema.TemplateLiteralParser([
+  "mw10013-",
+  StoreEnvironment,
+  "-shop-",
+  StoreIndex,
+]).pipe(
+  Schema.decodeTo(
+    Schema.Struct({ environment: StoreEnvironment, index: Schema.Int }),
+    SchemaTransformation.transform({
+      decode: (parts) => ({ environment: parts[1], index: parts[3] }),
+      encode: ({ environment, index }) => ["mw10013-", environment, "-shop-", index] as const,
+    }),
+  ),
+);
+export type StoreName = typeof StoreName.Type;
+
+const encodeStoreName = Schema.encodeSync(StoreName);
+
+/** The name of `environment`'s store at `index`. */
+export const storeNameOf = (environment: StoreEnvironment, index: number) =>
+  encodeStoreName({ environment, index });
+
+/** The name of checkout `index`'s dev store, the one `shopify app dev` runs on. */
+export const devStoreName = (index: number) => storeNameOf("dev", index);
+
+/** The name of checkout `index`'s e2e store. */
+export const e2eStoreName = (index: number) => storeNameOf("e2e", index);
+
+/** A {@link StoreName} whose environment is `environment`. */
+export const StoreOf = (environment: StoreEnvironment) =>
+  StoreName.pipe(
+    Schema.check(
+      Schema.makeFilter(
+        (store: StoreName) =>
+          store.environment === environment || `expected a ${environment} store`,
+      ),
+    ),
+  );
+
+const storeKeyOf = (key: string, environment: "dev" | "e2e") => (envText: string) =>
+  Config.schema(StoreOf(environment), key).pipe(
+    Config.map(encodeStoreName),
     Config.option,
     Effect.provideService(
       ConfigProvider.ConfigProvider,
       ConfigProvider.fromDotEnvContents(envText),
     ),
   );
+
+/**
+ * `SHOPIFY_DEV_STORE` from a `.env`'s text, as written; none when the key is missing. Fails with a
+ * `ConfigError` naming the key when it is not a {@link StoreName} of a dev store.
+ */
+export const devStoreOf = storeKeyOf("SHOPIFY_DEV_STORE", "dev");
+
+/** `SHOPIFY_E2E_STORE` from a `.env`'s text; see {@link devStoreOf}, with an e2e store. */
+export const e2eStoreOf = storeKeyOf("SHOPIFY_E2E_STORE", "e2e");
 
 const KEY_LINE = /^(?<key>[A-Z][A-Z0-9_]*)=(?<value>.*)$/u;
 

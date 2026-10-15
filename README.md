@@ -58,15 +58,18 @@ The server is Shopify CLI: `vp run dev` starts `shopify app dev` (`vp run app:de
 checkout's dev store, `SHOPIFY_DEV_STORE` in `.env`, and the CLI opens a Cloudflare quick tunnel
 and runs `alchemy dev` behind it with the app's key, secret and tunnel URL. `vp run dev` fails
 when `SHOPIFY_DEV_STORE` is not set; there is no plain `alchemy dev` fallback. One store per
-checkout: `sandbox-shop-00` in the main checkout, `sandbox-shop-NN` in worktree `wt-NN`
+checkout: `mw10013-dev-shop-00` in the main checkout, `mw10013-dev-shop-NN` in worktree `wt-NN`
 (`vp run worktree:init` writes it), because two `shopify app dev` sessions on one store overwrite
-each other's app URL. For the same reason, do not run a Baton checkout's dev server on the same
-store at the same time. `shopify` comes from Vite+'s tool manager (`shopify version`), not brew or
+each other's app URL. `shopify` comes from Vite+'s tool manager (`shopify version`), not brew or
 npm.
+
+Each checkout also names an e2e store, `SHOPIFY_E2E_STORE` (`mw10013-e2e-shop-NN`). `vp run
+stores:check` checks that both stores exist; `vp run stores:seed` writes `seed/dev-shop.ts` into
+the dev store.
 
 Open the app at the admin URL `vp run dev` and `vp run dev:status` print, in a browser signed in
 to the Partner organization. For the main checkout it is
-<https://admin.shopify.com/store/sandbox-shop-00/apps/7c6cceb7f8f9991a543d43648b08e72d>
+<https://admin.shopify.com/store/mw10013-dev-shop-00/apps/7c6cceb7f8f9991a543d43648b08e72d>
 (`https://admin.shopify.com/store/<store>/apps/<client_id>`; the CLI prints the same URL with
 `?dev-console=show`, which opens its dev console). `http://localhost:$(pnpm port)` still serves the member area and the
 merchant page. `alchemy dev` runs under this checkout's dev stage
