@@ -17,6 +17,10 @@
  * The URLs do not change, because deployed Workers have fixed names (`workerNameOf`), so Shopify
  * needs no `shopify app deploy`.
  *
+ * A schema change goes out as: commit, run this from the laptop, then push. Pushed first, Workers
+ * Builds deploys the new code onto the old databases: Alchemy skips a migration it has already
+ * applied, and so does every actor, so both keep the old schema until the reset.
+ *
  * Only for prototyping: once a stage holds data that matters, this script goes, `0001_init` is
  * frozen and the schema moves by additive migrations.
  */

@@ -13,5 +13,13 @@ vp run dev        # start or adopt this checkout's dev server
 vp run dev:status
 vp run dev:logs
 vp run dev:stop
-vp run db:reset    # wipe and reseed the local auth database, then restart
+vp run db:reset    # wipe local D1 and Durable Objects, reseed, restart
+```
+
+## Staging
+
+A push to `main` deploys staging through Workers Builds.
+
+```sh
+vp run cloud:reset --stage staging --confirm staging   # wipe D1 and Durable Objects, redeploy
 ```
