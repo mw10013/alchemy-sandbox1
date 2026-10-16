@@ -81,12 +81,12 @@ The folder move (step 6) is the last thing the thread that started the rename do
 
 4. GitHub: rename `mw10013/baton` → `mw10013/baton-legacy` (Q1), then `mw10013/alchemy-sandbox1` → `mw10013/baton`. GitHub refuses the second rename while the first name is taken. Archive the old repository (Q2).
 5. Old local checkout: `~/Documents/src/baton` → `~/Documents/src/baton-legacy`, `git worktree repair` (its herdr worktrees `~/.herdr/worktrees/baton/wt-01` and `wt-02` point at it), and `git remote set-url`.
-6. This checkout: move `~/Documents/src/alchemy-sandbox1` → `~/Documents/src/baton`, then `git remote set-url origin https://github.com/mw10013/baton.git`. Copy the Claude memory folder (`memory/`) to `-Users-mw-Documents-src-baton`. Create the new T3 project for `~/Documents/src/baton`, add its "Bootstrap worktree" action, and archive the old project (Q7). Close the old herdr workspace.
+6. This checkout: move `~/Documents/src/alchemy-sandbox1` → `~/Documents/src/baton`, then `git remote set-url origin https://github.com/mw10013/baton.git`. Copy the Claude memory folder (`memory/`) to `-Users-mw-Documents-src-baton`. Point the old `baton` T3 project at `~/Documents/src/baton-legacy` (title `baton-legacy`), create a new `baton` project for `~/Documents/src/baton`, and archive the `alchemy-sandbox1` project (Q7). Changing T3 projects needs a full-access thread or the T3 UI. Close the old herdr workspace.
 
 **Phase C: rename in the code** (agent, in `~/Documents/src/baton`)
 
 7. Everything in §2.1 except the staging URLs, which do not exist yet. `scripts/refs.ts`: the old repository's new name and folder (Q3); then `vp run refs fetch <name>` and delete the old `refs/baton`.
-8. Living docs per Q6.
+8. Living docs per Q6. `docs/worktrees-runbook.md` drops the T3 "Bootstrap worktree" project action (decided 2026-10-16: worktrees are rare and the action was easy to forget); instead an agent creates the worktree with `t3_thread_launch` and runs the bootstrap commands (`vp install --frozen-lockfile`, `vp run worktree:init`, `vp run dev`, `vp run dev:status`) in it, following the runbook.
 9. `vp check --fix`, `vp test`, `vp run test:e2e`. These recreate the local stages under the new name, which also verifies that local works.
 
 **Phase D: bring staging back** (laptop, then Workers Builds)
@@ -170,7 +170,7 @@ Recommended: Runbooks, README and AGENTS only
 :::question
 How should the T3 project move?
 
-Settled: a new T3 project for `~/Documents/src/baton`, and the old `alchemy-sandbox1` project is archived. Its worktrees then go under `~/.t3/worktrees/baton/`. The new project needs the "Bootstrap worktree" project action again (worktrees runbook, "Configure the project action"), before wt-01 is recreated in Phase E. Work after Phase B continues in a new thread in the new project.
+Settled: a new T3 project for `~/Documents/src/baton`, and the old `alchemy-sandbox1` project is archived. Its worktrees then go under `~/.t3/worktrees/baton/`. No project action: an agent runs the worktree bootstrap from the runbook (Phase C step 8). Work after Phase B continues in a new thread in the new project.
 
 - [x] Create a new project for ~/Documents/src/baton and archive the old one
 
