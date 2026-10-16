@@ -15,7 +15,7 @@
     "db:reset": "node --env-file=.env scripts/dev.ts db:reset",
     "worktree:init": "node scripts/worktree.ts init",
     "stores:check": "node --env-file=.env scripts/stores.ts check",
-    "stores:seed": "node --env-file=.env scripts/stores.ts seed",
+    "fixture": "node --env-file=.env scripts/fixture.ts",
     "port": "node --env-file=.env -p \"process.env.WEBSITE_PORT ?? (console.error('WEBSITE_PORT is not set'), process.exit(1))\"",
     "test:e2e": "vp exec playwright test",
     "test:e2e:headed": "vp exec playwright test --headed",

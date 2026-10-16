@@ -4,7 +4,7 @@ import { expect } from "playwright/test";
 import { storageStatePath } from "../../../playwright.config.ts";
 
 /**
- * The embedded app's iframe: its `src` carries `embedded=1`; the admin's own chrome is the
+ * The embedded app's iframe: its `src` carries `embedded=1`; the Shopify admin's own chrome is the
  * top-level `page`. Re-resolved on every call on purpose: App Bridge re-renders the iframe during
  * navigation, so a captured `contentFrame()` handle detaches and throws, where a `frameLocator`
  * never does. `embedded=1` alone is not unique: an open `s-app-window` is a second embedded
@@ -28,7 +28,7 @@ export const awaitHydration = (scope: Page | FrameLocator, timeout?: number): Pr
  * overlay over the lower half of the viewport that outranks the app's iframe in the top
  * document's hit test, so a click Playwright finds actionable inside the frame lands on the
  * console instead, and silently: the action reports success and the app never sees the event.
- * Whether it is expanded comes from the admin session the storage state was exported from, so it
+ * Whether it is expanded comes from the Shopify admin session the storage state was exported from, so it
  * varies between machines and runs; it is closed here rather than left to whoever opened it last.
  *
  * Expansion is read from the panel's geometry, not the toggle: the button keeps the name "Close
@@ -51,14 +51,14 @@ export const closeDevConsole = async (page: Page): Promise<void> => {
 /**
  * Lands on the app's home and returns once it is safe to interact inside the iframe.
  *
- * `goto` waits for `"commit"`, not `"load"`: the admin SPA immediately client-redirects the app
+ * `goto` waits for `"commit"`, not `"load"`: the Shopify admin SPA immediately client-redirects the app
  * route to re-run the embed handshake, and under `"load"` that redirect aborts the navigation
  * being awaited (`net::ERR_ABORTED`, intermittently). `"commit"` resolves before the redirect,
  * and the retrying hydration wait is the real gate.
  *
  * Local previews go through a Cloudflare quick tunnel, where a module request can stay pending
  * forever, leaving the server-rendered page visible while the client entry never hydrates. After
- * 15 s the admin document is reloaded once; the second wait is bounded by `actionTimeout`.
+ * 15 s the Shopify admin document is reloaded once; the second wait is bounded by `actionTimeout`.
  */
 export const gotoApp = async (page: Page, path = ""): Promise<FrameLocator> => {
   await page.goto(path, { waitUntil: "commit" });

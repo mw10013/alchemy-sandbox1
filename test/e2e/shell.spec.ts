@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { EmailFromInput } from "../../src/contract/auth.ts";
 import { control, expect, test } from "./fixtures.ts";
 import { followMagicLink, shell } from "./screens.ts";
+import { OTHER_SHOP, SEED_SHOP } from "../seed-shops.ts";
 
 test.describe("as a member", () => {
   test.use({ storageState: "playwright/.auth/member.json" });
@@ -9,6 +10,15 @@ test.describe("as a member", () => {
   test("the admin side sends a member home", async ({ goto, page }) => {
     await goto("/admin");
     await expect(page).toHaveURL(/\/shop$/);
+  });
+
+  test("the member home lists the member's shops and opens one", async ({ goto, page }) => {
+    await goto("/shop");
+    // Polaris renders the link text in a shadow root, so the links are found by accessible name.
+    await expect(page.getByRole("link", { name: /\.myshopify\.com$/ })).toHaveCount(2);
+    await expect(page.getByRole("link", { name: OTHER_SHOP })).toBeVisible();
+    await page.getByRole("link", { name: SEED_SHOP }).click();
+    await expect(page).toHaveURL(new RegExp(`/shop/${SEED_SHOP}$`));
   });
 });
 

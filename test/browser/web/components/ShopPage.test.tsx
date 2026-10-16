@@ -13,7 +13,7 @@ import {
   reconnectAtom,
 } from "../../../../src/web/client/actor-connection.ts";
 import { EmailFromInput } from "../../../../src/contract/auth.ts";
-import { SEED_SHOP } from "../../../../src/contract/shop.ts";
+import { SEED_SHOP } from "../../../seed-shops.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_NOT_A_MEMBER,

@@ -144,6 +144,18 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * The shops the signed-in member has a `Member` row in, for the member's own list. An admin is
+   * never a member, so it is Forbidden.
+   */
+  const myShops = Effect.fn("BackendApi.myShops")(function* (request: RequestInfo) {
+    const { me } = yield* session(request);
+    return yield* Match.value(me.role).pipe(
+      Match.when("user", () => members.listShopsOf(me.email)),
+      Match.orElse(() => Effect.fail(new Forbidden())),
+    );
+  });
+
+  /**
    * The gate, then the actor's snapshot: the shop page's first data and who the socket will
    * say this browser is. The gate's refusal maps to the failure the page renders; an
    * unavailable gate is a defect.
@@ -180,7 +192,16 @@ const make = Effect.gen(function* () {
     return encodeAdminSession(yield* shopify.authenticateAdmin(sessionToken));
   });
 
-  return { hello, shout, requestMagicLink, me, listMembers, shopSnapshot, authenticateAdmin };
+  return {
+    hello,
+    shout,
+    requestMagicLink,
+    me,
+    listMembers,
+    myShops,
+    shopSnapshot,
+    authenticateAdmin,
+  };
 });
 
 /**

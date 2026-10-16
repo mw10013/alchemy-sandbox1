@@ -157,6 +157,15 @@ export const wireBackend = Effect.fn("wireBackend")(function* (
     Match.whenOr("dev", "e2e", "staging", () => Effect.void),
     Match.exhaustive,
   );
+  // The fixture replaces a shop's data, so only the per-developer environments, whose data is
+  // disposable, mount it; staging never does.
+  yield* Match.value(environment).pipe(
+    Match.whenOr("dev", "test", "e2e", () =>
+      backend.bind("Fixture", { env: { FIXTURE_ENDPOINT: "on" } }),
+    ),
+    Match.when("staging", () => Effect.void),
+    Match.exhaustive,
+  );
   if (Option.isSome(options.e2eToken))
     yield* backend.bind("TestControl", { env: { E2E_TOKEN: options.e2eToken.value } });
 });

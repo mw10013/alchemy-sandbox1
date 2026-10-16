@@ -24,6 +24,7 @@ import { Route as ShopIndexRouteImport } from './routes/shop.index'
 import { Route as ShopKeyRouteImport } from './routes/shop.$key'
 import { Route as ApiActorKeyRouteImport } from './routes/api.actor.$key'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
+import { Route as ApiDevFixtureRouteImport } from './routes/api.dev.fixture'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -100,6 +101,11 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDevFixtureRoute = ApiDevFixtureRouteImport.update({
+  id: '/api/dev/fixture',
+  path: '/api/dev/fixture',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -117,6 +123,7 @@ export interface FileRoutesByFullPath {
   '/shop/': typeof ShopIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/dev/fixture': typeof ApiDevFixtureRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -132,6 +139,7 @@ export interface FileRoutesByTo {
   '/shop': typeof ShopIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/dev/fixture': typeof ApiDevFixtureRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -150,6 +158,7 @@ export interface FileRoutesById {
   '/shop/': typeof ShopIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/dev/fixture': typeof ApiDevFixtureRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -169,6 +178,7 @@ export interface FileRouteTypes {
     | '/shop/'
     | '/api/actor/$key'
     | '/api/auth/$'
+    | '/api/dev/fixture'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -184,6 +194,7 @@ export interface FileRouteTypes {
     | '/shop'
     | '/api/actor/$key'
     | '/api/auth/$'
+    | '/api/dev/fixture'
   id:
     | '__root__'
     | '/'
@@ -201,6 +212,7 @@ export interface FileRouteTypes {
     | '/shop/'
     | '/api/actor/$key'
     | '/api/auth/$'
+    | '/api/dev/fixture'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -215,6 +227,7 @@ export interface RootRouteChildren {
   MerchantKeyRoute: typeof MerchantKeyRoute
   ApiActorKeyRoute: typeof ApiActorKeyRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiDevFixtureRoute: typeof ApiDevFixtureRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -324,6 +337,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/dev/fixture': {
+      id: '/api/dev/fixture'
+      path: '/api/dev/fixture'
+      fullPath: '/api/dev/fixture'
+      preLoaderRoute: typeof ApiDevFixtureRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -363,6 +383,7 @@ const rootRouteChildren: RootRouteChildren = {
   MerchantKeyRoute: MerchantKeyRoute,
   ApiActorKeyRoute: ApiActorKeyRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiDevFixtureRoute: ApiDevFixtureRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

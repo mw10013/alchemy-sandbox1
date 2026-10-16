@@ -13,7 +13,7 @@ const inlineScriptString = (value: string) =>
 
 /**
  * Baton's exit-iframe page: App Bridge, then the top window sent to `?exitIframe` (the app's URL
- * when absent), for a destination the admin cannot frame. A destination
+ * when absent), for a destination the Shopify admin cannot frame. A destination
  * {@link exitIframeDestination} refuses is `400`, so the route is never an open redirect.
  */
 export const Route = createFileRoute("/auth/exit-iframe")({

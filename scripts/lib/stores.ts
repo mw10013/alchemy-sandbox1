@@ -1,5 +1,6 @@
 /**
- * A checkout's Shopify dev stores, checked and seeded through Shopify CLI. Every call closes
+ * A checkout's Shopify dev stores, checked and given the dev fixture's store half through Shopify
+ * CLI. Every call closes
  * stdin and passes `--no-input`, so nothing can wait on a prompt or open a browser, and decodes
  * the result with Schema ({@link shopifyJson}).
  *
@@ -10,7 +11,8 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
-import * as DevShop from "../../seed/dev-shop.ts";
+import { fixture, skuOf } from "../../fixture.ts";
+import type { Product, StoreOrder } from "../../src/contract/fixture.ts";
 import { runCommand } from "./command.ts";
 import { StoreOf, storeNameOf, type StoreEnvironment } from "./worktree.ts";
 
@@ -22,7 +24,7 @@ export class StoresError extends Schema.TaggedError<StoresError>()("StoresError"
 /** The id of the `mw10013` organization, which owns the dev stores; `store create` needs it when it cannot prompt. */
 export const ORGANIZATION_ID = "130059740";
 
-/** The Admin API version of the seed's operations; `api_version` in `shopify.app.toml`. */
+/** The Admin API version of the store fixture's operations; `api_version` in `shopify.app.toml`. */
 const API_VERSION = "2026-10";
 
 /** The `myshopify.com` domain of a store named `name`. */
@@ -81,19 +83,17 @@ export const requireStore = (environment: StoreEnvironment, variable: string, va
     ),
   );
 
-const SeedStore = Schema.Union([StoreOf("dev"), StoreOf("staging")]);
-
 /**
- * `store` as a store `stores:seed` may write: a dev store, or a staging store, which gets the same
- * table so staging has realistic data to check by hand. The e2e stores are not seeded, and
- * production's never is; neither is a store outside the scheme, such as `sandbox-shop-NN`.
+ * `store` as a store `vp run fixture` may write: a dev store. The e2e, staging and production
+ * stores never get the store half, and neither does a store outside the scheme, such as
+ * `sandbox-shop-NN`.
  */
-export const requireSeedStore = (store: string) =>
-  Schema.decodeUnknownEffect(SeedStore)(store).pipe(
+export const requireFixtureStore = (store: string) =>
+  Schema.decodeUnknownEffect(StoreOf("dev"))(store).pipe(
     Effect.mapError(
       (error) =>
         new StoresError({
-          message: `${store} is not a dev or staging store of the scheme mw10013-<dev|staging>-shop-NN: stores:seed writes only those`,
+          message: `${store} is not a dev store of the scheme mw10013-dev-shop-NN: the fixture writes only those`,
           cause: error,
         }),
     ),
@@ -148,21 +148,21 @@ export const checkStores = Effect.fn("checkStores")(function* (stores: {
   }
 });
 
-const SEED_RESOURCES = ["products", "orders", "draft_orders"] as const;
+const FIXTURE_RESOURCES = ["products", "orders", "draft_orders"] as const;
 
-/** The scopes the seed needs: read and write of each of {@link SEED_RESOURCES}. */
-export const SEED_SCOPES = SEED_RESOURCES.flatMap((resource) => [
+/** The scopes the store fixture needs: read and write of each of {@link FIXTURE_RESOURCES}. */
+export const FIXTURE_SCOPES = FIXTURE_RESOURCES.flatMap((resource) => [
   `read_${resource}`,
   `write_${resource}`,
 ]);
 
 /**
- * The scopes of {@link SEED_SCOPES} that `granted` lacks. Shopify's `write_X` includes `read_X`,
+ * The scopes of {@link FIXTURE_SCOPES} that `granted` lacks. Shopify's `write_X` includes `read_X`,
  * and the CLI lists only the scopes it was asked for, so a session with `write_products` has
  * `read_products` too.
  */
 export const missingScopes = (granted: readonly string[]): string[] =>
-  SEED_RESOURCES.flatMap((resource) =>
+  FIXTURE_RESOURCES.flatMap((resource) =>
     granted.includes(`write_${resource}`)
       ? []
       : [`read_${resource}`, `write_${resource}`].filter((scope) => !granted.includes(scope)),
@@ -176,7 +176,7 @@ const AuthList = Schema.Struct({
 
 /**
  * Fails, with the exact command to run, unless the CLI has a store auth session for `domain` with
- * every scope the seed needs. Authorizing opens a browser page that a person approves, once per
+ * every scope the store fixture needs. Authorizing opens a browser page that a person approves, once per
  * store (a session renews itself), so no script does it.
  */
 const requireStoreAuth = Effect.fn("requireStoreAuth")(function* (domain: string) {
@@ -184,7 +184,7 @@ const requireStoreAuth = Effect.fn("requireStoreAuth")(function* (domain: string
   const session = sessions.find(({ store }) => store === domain);
   if (session !== undefined && missingScopes(session.scopes).length === 0) return;
   return yield* new StoresError({
-    message: `${domain} has no store auth with the scopes the seed needs. Run: shopify store auth --store ${domain} --scopes ${SEED_SCOPES.join(",")}\nIt opens a browser page that a person approves once per store.`,
+    message: `${domain} has no store auth with the scopes the fixture needs. Run: shopify store auth --store ${domain} --scopes ${FIXTURE_SCOPES.join(",")}\nIt opens a browser page that a person approves once per store.`,
   });
 });
 
@@ -228,7 +228,7 @@ const sameSet = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((entry) => b.includes(entry));
 
 /** True when the store's product already says what the table says; a price compares as a number, since the store writes `68.0` for `68.00`. */
-export const productMatches = (stored: StoredProduct, wanted: DevShop.Product): boolean => {
+export const productMatches = (stored: StoredProduct, wanted: Product): boolean => {
   const [option] = stored.options;
   return (
     stored.title === wanted.title &&
@@ -247,7 +247,7 @@ export const productMatches = (stored: StoredProduct, wanted: DevShop.Product): 
           node.selectedOptions.some(
             ({ name, value }) => name === wanted.option && value === variant.value,
           ) &&
-          (node.sku ?? null) === DevShop.skuOf(wanted, variant.value) &&
+          (node.sku ?? null) === skuOf(wanted, variant.value) &&
           Number(node.price) === Number(variant.price),
       ),
     )
@@ -255,7 +255,7 @@ export const productMatches = (stored: StoredProduct, wanted: DevShop.Product): 
 };
 
 /** The `productSet` input for a table row. */
-const productSetInput = (wanted: DevShop.Product) => ({
+const productSetInput = (wanted: Product) => ({
   title: wanted.title,
   handle: wanted.handle,
   status: "ACTIVE",
@@ -264,7 +264,7 @@ const productSetInput = (wanted: DevShop.Product) => ({
     { name: wanted.option, values: wanted.variants.map(({ value }) => ({ name: value })) },
   ],
   variants: wanted.variants.map(({ value, price }) => {
-    const sku = DevShop.skuOf(wanted, value);
+    const sku = skuOf(wanted, value);
     return {
       optionValues: [{ optionName: wanted.option, name: value }],
       price,
@@ -274,17 +274,20 @@ const productSetInput = (wanted: DevShop.Product) => ({
 });
 
 /** The table's orders that have no open order carrying their tag. */
-export const missingOrders = (orders: readonly StoredOrder[]): readonly DevShop.Order[] =>
-  DevShop.orders.filter(
+export const missingOrders = (orders: readonly StoredOrder[]): readonly StoreOrder[] =>
+  fixture.storeOrders.filter(
     (wanted) =>
       !orders.some((order) => order.cancelledAt === null && order.tags.includes(wanted.tag)),
   );
 
-/** Marks every open order the seed created, beside the order's own tag. */
-const SEED_ORDER_TAG = "seed";
+/**
+ * Marks every open order the store fixture created, beside the order's own tag. It reads "seed"
+ * because the dev stores already hold orders tagged so, and a new marker would cancel them.
+ */
+const FIXTURE_ORDER_TAG = "seed";
 
 const PRODUCTS_QUERY = /* GraphQL */ `
-  query SeedProducts {
+  query FixtureProducts {
     products(first: 100) {
       pageInfo {
         hasNextPage
@@ -318,7 +321,7 @@ const PRODUCTS_QUERY = /* GraphQL */ `
 `;
 
 const ORDERS_QUERY = /* GraphQL */ `
-  query SeedOrders {
+  query FixtureOrders {
     orders(first: 100) {
       pageInfo {
         hasNextPage
@@ -334,7 +337,7 @@ const ORDERS_QUERY = /* GraphQL */ `
 `;
 
 const PRODUCT_SET = /* GraphQL */ `
-  mutation SeedProductSet($input: ProductSetInput!, $identifier: ProductSetIdentifiers) {
+  mutation FixtureProductSet($input: ProductSetInput!, $identifier: ProductSetIdentifiers) {
     productSet(input: $input, identifier: $identifier, synchronous: true) {
       product {
         id
@@ -347,7 +350,7 @@ const PRODUCT_SET = /* GraphQL */ `
 `;
 
 const PRODUCT_ARCHIVE = /* GraphQL */ `
-  mutation SeedProductArchive($product: ProductUpdateInput!) {
+  mutation FixtureProductArchive($product: ProductUpdateInput!) {
     productUpdate(product: $product) {
       product {
         id
@@ -360,13 +363,13 @@ const PRODUCT_ARCHIVE = /* GraphQL */ `
 `;
 
 const ORDER_CANCEL = /* GraphQL */ `
-  mutation SeedOrderCancel($orderId: ID!) {
+  mutation FixtureOrderCancel($orderId: ID!) {
     orderCancel(
       orderId: $orderId
       reason: OTHER
       restock: false
       notifyCustomer: false
-      staffNote: "Closed by stores:seed"
+      staffNote: "Closed by vp run fixture"
     ) {
       orderCancelUserErrors {
         message
@@ -376,7 +379,7 @@ const ORDER_CANCEL = /* GraphQL */ `
 `;
 
 const DRAFT_ORDER_CREATE = /* GraphQL */ `
-  mutation SeedDraftOrderCreate($input: DraftOrderInput!) {
+  mutation FixtureDraftOrderCreate($input: DraftOrderInput!) {
     draftOrderCreate(input: $input) {
       draftOrder {
         id
@@ -389,7 +392,7 @@ const DRAFT_ORDER_CREATE = /* GraphQL */ `
 `;
 
 const DRAFT_ORDER_COMPLETE = /* GraphQL */ `
-  mutation SeedDraftOrderComplete($id: ID!) {
+  mutation FixtureDraftOrderComplete($id: ID!) {
     draftOrderComplete(id: $id) {
       draftOrder {
         order {
@@ -487,28 +490,28 @@ const waitForOrders = Effect.fn("waitForOrders")(function* (domain: string) {
 });
 
 /**
- * Brings dev or staging store `store` to the table in `seed/dev-shop.ts`, printing one line
- * per product and order. Every step reads before it writes, so a second run changes nothing. The
- * store must be one {@link requireSeedStore} accepts and must have store auth with the needed scopes
+ * Brings dev store `store` to the dev fixture's store half (`products` and `storeOrders` in
+ * `fixture.ts`), printing one line per product and order. Every step reads before it writes, so a second run changes nothing. The
+ * store must be one {@link requireFixtureStore} accepts and must have store auth with the needed scopes
  * ({@link requireStoreAuth}); both are checked before any mutation.
  *
  * 1. `productSet` each product that is missing or differs, by handle. No images.
  * 2. Archive every product the table does not name; archived, not deleted.
- * 3. Cancel every open order without the `seed` tag, with no refund, restock or notice: the
- *    seeded orders are the store's only open orders. Matched by tag, never by order number, since
- *    a new store numbers its first seeded order #1001.
+ * 3. Cancel every open order without the `seed` tag ({@link FIXTURE_ORDER_TAG}), with no refund,
+ *    restock or notice: the fixture's orders are the store's only open orders. Matched by tag,
+ *    never by order number, since a new store numbers its first such order #1001.
  * 4. Create each of the table's orders that has no open order with its tag, paid, with no customer or
  *    notice. Through a draft order that is completed, not `orderCreate`: that needs an offline
  *    token, and the CLI's store auth is an online one.
  */
-export const seedStore = Effect.fn("seedStore")(function* (store: string) {
-  const { environment, index } = yield* requireSeedStore(store);
+export const applyStoreFixture = Effect.fn("applyStoreFixture")(function* (store: string) {
+  const { environment, index } = yield* requireFixtureStore(store);
   const domain = domainOf(storeNameOf(environment, index));
   yield* requireStoreAuth(domain);
 
   const stored = yield* readProducts(domain);
-  const named = new Set(DevShop.products.map(({ handle }) => handle));
-  for (const wanted of DevShop.products) {
+  const named = new Set(fixture.products.map(({ handle }) => handle));
+  for (const wanted of fixture.products) {
     const existing = stored.find(({ handle }) => handle === wanted.handle);
     if (existing !== undefined && productMatches(existing, wanted)) {
       yield* Console.log(`ok    product ${wanted.handle}: already as the table says`);
@@ -547,7 +550,7 @@ export const seedStore = Effect.fn("seedStore")(function* (store: string) {
 
   const orders = yield* readOrders(domain);
   const leftovers = orders.filter(
-    ({ tags, cancelledAt }) => cancelledAt === null && !tags.includes(SEED_ORDER_TAG),
+    ({ tags, cancelledAt }) => cancelledAt === null && !tags.includes(FIXTURE_ORDER_TAG),
   );
   if (leftovers.length === 0) yield* Console.log("ok    orders: no open order outside the table");
   for (const leftover of leftovers) {
@@ -564,7 +567,7 @@ export const seedStore = Effect.fn("seedStore")(function* (store: string) {
   }
 
   const missing = missingOrders(orders);
-  for (const wanted of DevShop.orders)
+  for (const wanted of fixture.storeOrders)
     if (!missing.includes(wanted)) yield* Console.log(`ok    order ${wanted.tag}: already open`);
   if (missing.length === 0) return;
 
@@ -603,7 +606,7 @@ export const seedStore = Effect.fn("seedStore")(function* (store: string) {
       }),
       DRAFT_ORDER_CREATE,
       {
-        variables: { input: { lineItems, tags: [SEED_ORDER_TAG, wanted.tag] } },
+        variables: { input: { lineItems, tags: [FIXTURE_ORDER_TAG, wanted.tag] } },
         mutation: true,
       },
     );

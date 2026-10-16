@@ -26,7 +26,7 @@ const UnpaddedBase64 = Schema.String.pipe(
 );
 
 /**
- * Shopify's `host` search param: base64 of the admin the app is embedded in,
+ * Shopify's `host` search param: base64 of the Shopify admin the app is embedded in,
  * `admin.shopify.com/store/<store>`, or the legacy `<shop>.myshopify.com/admin`.
  */
 const AdminHost = UnpaddedBase64.pipe(
@@ -41,7 +41,7 @@ const AdminHost = UnpaddedBase64.pipe(
 const decodeAdminHost = Schema.decodeUnknownOption(AdminHost);
 
 /**
- * The app inside the admin, `https://<admin>/apps/<apiKey>`, where `host` names the admin (the
+ * The app inside the Shopify admin, `https://<admin>/apps/<apiKey>`, where `host` names the Shopify admin (the
  * library's `auth.getEmbeddedAppUrl` builds the same). None when `host` is not an admin host.
  */
 export const embeddedAppUrl = (host: string, apiKey: string): Option.Option<string> =>
@@ -52,7 +52,7 @@ export const embeddedAppUrl = (host: string, apiKey: string): Option.Option<stri
  * `/auth/session-token` with the request's search minus `id_token`, plus `shopify-reload`, the
  * page to reload with a fresh token. App Bridge on the bounce page reads `shopify-reload` and
  * loads it with a new `id_token`. `appUrl` is the app's public URL from the binding, because
- * behind the dev proxies the request's own URL is not the one the admin loaded.
+ * behind the dev proxies the request's own URL is not the one the Shopify admin loaded.
  */
 export const sessionTokenBounce = (appUrl: string, path: string, search: string): string => {
   const params = new URLSearchParams(search);
@@ -108,9 +108,9 @@ export const exitIframeDestination = (appUrl: string, candidate: string): Option
 const decodeShop = Schema.decodeUnknownOption(ShopKey);
 
 /**
- * The CSP that lets the admin frame a page: Baton's `frame-ancestors`, the shop's own admin and
- * Shopify's admin hosts. None unless `shop` is a {@link ShopKey}, so a page without one cannot be
- * framed by an admin.
+ * The CSP that lets the Shopify admin frame a page: Baton's `frame-ancestors`, the shop's own
+ * Shopify admin and the Shopify admin hosts. None unless `shop` is a {@link ShopKey}, so a page
+ * without one cannot be framed by the Shopify admin.
  */
 export const frameAncestors = (shop: unknown): Option.Option<string> =>
   Option.map(

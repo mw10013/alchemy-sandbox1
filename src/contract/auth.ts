@@ -28,7 +28,7 @@ export const ReturnPath = Schema.String.check(Schema.isPattern(/^\/(?![/\\])\S*$
 );
 export type ReturnPath = typeof ReturnPath.Type;
 
-/** Better Auth's `user.role`: `admin` is an operator, anyone else is `user`. */
+/** Better Auth's `user.role`: `admin` is the site's admin, never a member; anyone else is `user`. */
 export const Role = Schema.Literals(["admin", "user"]);
 export type Role = typeof Role.Type;
 

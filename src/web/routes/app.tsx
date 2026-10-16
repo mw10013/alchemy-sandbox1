@@ -23,11 +23,11 @@ const appSearch = (searchStr: string): typeof AppSearch.Type =>
   Option.getOrElse(decodeSearch(Object.fromEntries(new URLSearchParams(searchStr))), () => ({}));
 
 /**
- * The embedded App Home, the page the admin frames. `beforeLoad` runs Baton's document guards,
+ * The embedded App Home, the page the Shopify admin frames. `beforeLoad` runs Baton's document guards,
  * first match wins, each a redirect: no `shop` or `host` goes to the App Bridge-only page, which
- * re-embeds; `embedded !== "1"` goes to the app inside the admin; no `id_token` goes to the
+ * re-embeds; `embedded !== "1"` goes to the app inside the Shopify admin; no `id_token` goes to the
  * session-token bounce; otherwise the token is authenticated (`authenticateApp`). App Bridge is
- * the document's first script, which the admin requires; the root document places
+ * the document's first script, which the Shopify admin requires; the root document places
  * `HeadContent` ahead of Polaris for it.
  */
 export const Route = createFileRoute("/app")({

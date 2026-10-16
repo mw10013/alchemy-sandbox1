@@ -8,7 +8,8 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { RpcClient, type RpcClientError, type RpcGroup, RpcSerialization } from "effect/rpc";
 import * as Schema from "effect/Schema";
 import { EmailFromInput } from "../../src/contract/auth.ts";
-import { SEED_SHOP, type ShopKey } from "../../src/contract/shop.ts";
+import { type ShopKey } from "../../src/contract/shop.ts";
+import { SEED_SHOP } from "../seed-shops.ts";
 import { E2eEmail, TestControlRpcs } from "../../src/contract/test-control.ts";
 import { e2eServerURL, e2eToken } from "../../playwright.config.ts";
 

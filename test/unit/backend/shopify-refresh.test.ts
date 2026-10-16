@@ -6,7 +6,7 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { TestClock } from "effect/testing";
-import { SEED_SHOP } from "../../../src/contract/shop.ts";
+import { SEED_SHOP } from "../../seed-shops.ts";
 import {
   ShopSessions,
   ShopSessionUpsert,

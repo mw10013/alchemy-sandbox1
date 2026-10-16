@@ -5,7 +5,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { SEED_SHOP } from "../../../src/contract/shop.ts";
+import { SEED_SHOP } from "../../seed-shops.ts";
 import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
 import { ShopifyAdmin } from "../../../src/backend/shopify-admin.ts";
 import { QuietLogs, testShopify } from "./layers.ts";

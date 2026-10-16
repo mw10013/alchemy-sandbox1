@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import http from "node:http";
-import { SEED_SHOP, ShopKey } from "../../src/contract/shop.ts";
+import { ShopKey } from "../../src/contract/shop.ts";
+import { SEED_SHOP } from "../seed-shops.ts";
 import { CONNECTION_CLOSE_NOT_A_MEMBER } from "../../src/contract/shop-actor.ts";
 import { awaitHydration, expect, ownMember, test } from "./fixtures.ts";
 import { shop } from "./screens.ts";

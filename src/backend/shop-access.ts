@@ -105,8 +105,8 @@ const make = Effect.gen(function* () {
  *
  * - A Shopify session token selects the merchant branch: a bad token is 401, a token for
  *   another shop 403, a shop with no `ShopSession` row 404; otherwise a merchant.
- * - Otherwise the member branch, on the Better Auth cookie: no session is 401, an operator 403
- *   (the operator role is never a member), no `Member` row for this shop 404, the same answer
+ * - Otherwise the member branch, on the Better Auth cookie: no session is 401, an admin 403
+ *   (the admin role is never a member), no `Member` row for this shop 404, the same answer
  *   as a shop that does not exist; otherwise a member, with its teams and session.
  * - A failure that is not an answer (D1 unreachable) is 503.
  */

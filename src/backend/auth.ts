@@ -160,7 +160,7 @@ export const makeAuth = (options: AuthOptions = {}) =>
 
     /**
      * Whether Better Auth has a user for the address. An existing user signs in by magic link
-     * without the member check, which is how the operator (a user row with no `Member` row)
+     * without the member check, which is how the admin (a user row with no `Member` row)
      * gets in.
      */
     const userExists = Effect.fn("Auth.userExists")(function* (email: Email) {
@@ -184,12 +184,12 @@ export const makeAuth = (options: AuthOptions = {}) =>
 
 /**
  * Better Auth with magic links, invite-only as Baton is: a new user is created only for an
- * address with a `Member` row in some shop, and always with the role `user`. An operator is a
+ * address with a `Member` row in some shop, and always with the role `user`. An admin is a
  * user row whose role is `admin`, put there by the stage's auth seed, never by sign-in. Magic links
  * go through {@link MagicLinkDelivery}, which decides whether a caller gets one back.
  *
  * Its database hooks are the revocation triggers: a deleted session closes that session's
- * sockets, and a user who becomes banned or an operator loses its member sockets, on every
+ * sockets, and a user who becomes banned or an admin loses its member sockets, on every
  * shop the user is a member of.
  */
 export class Auth extends Context.Service<Auth, Effect.Success<ReturnType<typeof makeAuth>>>()(

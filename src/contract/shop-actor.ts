@@ -96,7 +96,7 @@ export const CONNECTION_CLOSE_REVOKED = 3401;
 
 /**
  * Close code for a socket that may not open this shop (Baton's): sent by the gate for a 403 (an
- * operator, or a Shopify token for another shop), and by the actor for a socket whose
+ * admin, or a Shopify token for another shop), and by the actor for a socket whose
  * {@link CONNECTION_HEADER} does not decode. Terminal to the browser.
  */
 export const CONNECTION_CLOSE_FORBIDDEN = 4403;

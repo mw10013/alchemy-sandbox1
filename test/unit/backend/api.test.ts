@@ -16,7 +16,8 @@ import {
   type RequestInfo,
 } from "../../../src/contract/auth.ts";
 import { type Member } from "../../../src/contract/members.ts";
-import { SEED_SHOP, type ShopKey } from "../../../src/contract/shop.ts";
+import { type ShopKey } from "../../../src/contract/shop.ts";
+import { SEED_SHOP } from "../../seed-shops.ts";
 import type { ConnectionCaller } from "../../../src/contract/shop-actor.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
@@ -109,8 +110,8 @@ const signIn = Effect.fn("signIn")(function* (address: typeof member) {
     .join("; ");
 });
 
-/** The operator's user row, as the stage's auth seed inserts it; Better Auth's hooks refuse it otherwise. */
-const seedOperator = Effect.gen(function* () {
+/** The admin's user row, as the stage's auth seed inserts it; Better Auth's hooks refuse it otherwise. */
+const seedAdmin = Effect.gen(function* () {
   const { auth } = yield* Auth;
   const instance = yield* auth.auth;
   const context = yield* Effect.promise(() => instance.$context);
@@ -140,19 +141,33 @@ describe("BackendApi sessions", () => {
     }).pipe(Effect.provide(TestBackend())),
   );
 
-  it.live("listMembers is Forbidden to a user and answers an operator", () =>
+  it.live("listMembers is Forbidden to a user and answers an admin", () =>
     Effect.gen(function* () {
       const api = yield* BackendApi;
       const asMember = yield* signIn(member);
       const error = yield* api.listMembers(withCookie(asMember)).pipe(Effect.flip);
       assert.strictEqual(error._tag, "Forbidden");
-      yield* seedOperator;
+      yield* seedAdmin;
       const asAdmin = yield* signIn(admin);
       const list = yield* api.listMembers(withCookie(asAdmin));
       assert.deepStrictEqual(
         list.map((row) => row.email),
         [member],
       );
+    }).pipe(Effect.provide(TestBackend())),
+  );
+});
+
+describe("BackendApi.myShops", () => {
+  it.live("answers a member's shops and is Forbidden to an admin", () =>
+    Effect.gen(function* () {
+      const api = yield* BackendApi;
+      const asMember = yield* signIn(member);
+      assert.deepStrictEqual(yield* api.myShops(withCookie(asMember)), [SEED_SHOP]);
+      yield* seedAdmin;
+      const asAdmin = yield* signIn(admin);
+      const error = yield* api.myShops(withCookie(asAdmin)).pipe(Effect.flip);
+      assert.strictEqual(error._tag, "Forbidden");
     }).pipe(Effect.provide(TestBackend())),
   );
 });

@@ -14,7 +14,8 @@ import {
   type RequestInfo,
 } from "../../../src/contract/auth.ts";
 import { type Member } from "../../../src/contract/members.ts";
-import { SEED_SHOP, type ShopKey } from "../../../src/contract/shop.ts";
+import { type ShopKey } from "../../../src/contract/shop.ts";
+import { SEED_SHOP } from "../../seed-shops.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
 import { MagicLinkDelivery } from "../../../src/backend/magic-link-delivery.ts";
@@ -35,7 +36,7 @@ const admin = email("a@a.com");
 const member = email("m1@m.com");
 const stranger = email("nobody@example.com");
 const member2 = email("m2@m.com");
-/** Baton's `Member` rows. The operator has none: it is a user row with the role `admin`. */
+/** Baton's `Member` rows. The admin has none: it is a user row with the role `admin`. */
 const members: ReadonlyArray<Member> = [
   { id: "mem-1", shop: SEED_SHOP, email: member, createdAt: 1 },
   { id: "mem-2", shop: SEED_SHOP, email: member2, createdAt: 2 },
@@ -105,10 +106,10 @@ const signIn = Effect.fn("signIn")(function* (address: typeof member, returnTo =
 });
 
 /**
- * Inserts the operator's user row, as the stage's auth seed does. Straight through the
+ * Inserts the admin's user row, as the stage's auth seed does. Straight through the
  * adapter, because Better Auth's create hooks refuse an address with no `Member` row.
  */
-const seedOperator = Effect.gen(function* () {
+const seedAdmin = Effect.gen(function* () {
   const { auth } = yield* Auth;
   const instance = yield* auth.auth.pipe(Effect.provide(RuntimeContext.phantom));
   const context = yield* Effect.promise(() => instance.$context);
@@ -133,17 +134,15 @@ describe("magic-link sign-in (inline delivery)", () => {
   it.live.each([
     { address: member, role: "user" },
     { address: admin, role: "admin" },
-  ])(
-    "a member signs in as a new user; the seeded operator keeps its role (%#)",
-    ({ address, role }) =>
-      Effect.gen(function* () {
-        yield* seedOperator;
-        const cookie = yield* signIn(address);
-        const api = yield* BackendApi;
-        const me = yield* api.me(withCookie(cookie));
-        assert.strictEqual(me.email, address);
-        assert.strictEqual(me.role, role);
-      }).pipe(Effect.provide(TestBackend({ delivery: "inline" }))),
+  ])("a member signs in as a new user; the seeded admin keeps its role (%#)", ({ address, role }) =>
+    Effect.gen(function* () {
+      yield* seedAdmin;
+      const cookie = yield* signIn(address);
+      const api = yield* BackendApi;
+      const me = yield* api.me(withCookie(cookie));
+      assert.strictEqual(me.email, address);
+      assert.strictEqual(me.role, role);
+    }).pipe(Effect.provide(TestBackend({ delivery: "inline" }))),
   );
 
   it.live("a non-member gets no link and no mail", () =>

@@ -28,6 +28,7 @@
     "scripts",
     "stacks",
     "alchemy.run.ts",
+    "fixture.ts",
     "vite.config.ts",
     "playwright.config.ts"
   ],

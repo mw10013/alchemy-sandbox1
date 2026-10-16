@@ -15,7 +15,7 @@ export const POLARIS_URL = "https://cdn.shopify.com/shopifycloud/polaris-2.0-rc.
 export const CDN_URL = "https://cdn.shopify.com";
 
 /**
- * App Bridge, which the embedded App Home loads as its document's first script, as the admin
+ * App Bridge, which the embedded App Home loads as its document's first script, as the Shopify admin
  * requires. Unversioned: Shopify serves the current App Bridge at this one URL.
  *
  * @see https://shopify.dev/docs/api/app-home/latest/app-bridge-web-components

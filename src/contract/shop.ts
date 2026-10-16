@@ -12,9 +12,6 @@ export const ShopKey = Schema.String.check(
 ).pipe(Schema.brand("ShopKey"));
 export type ShopKey = typeof ShopKey.Type;
 
-/** The seed data's shop: a placeholder, not a real store. The member navigation links to it. */
-export const SEED_SHOP: ShopKey = Schema.decodeUnknownSync(ShopKey)("seed-shop.myshopify.com");
-
 /**
  * `shopSnapshot`'s input, shared by both sides of the binding; see `ShoutInput`. `sessionToken`
  * is a merchant's Shopify session token; its absence makes the caller a member.
@@ -27,7 +24,7 @@ export type ShopSnapshotInput = typeof ShopSnapshotInput.Type;
 
 /**
  * The caller is signed in, or holds a valid Shopify token, but may not open this shop: an
- * operator, someone with no `Member` row for it, or a token for another shop.
+ * admin, someone with no `Member` row for it, or a token for another shop.
  */
 export class NotAShopMember extends Schema.TaggedError<NotAShopMember>()("NotAShopMember", {}) {}
 

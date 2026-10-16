@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { SEED_SHOP } from "../../../src/contract/shop.ts";
+import { SEED_SHOP } from "../../seed-shops.ts";
 import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
 
 const row: ShopSessionRow = {

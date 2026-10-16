@@ -7,8 +7,10 @@ import { AuthDb } from "./resources.ts";
 import { environmentOf, type Environment } from "./stage.ts";
 
 /**
- * The one seed file of an environment. Exhaustive, so a new {@link Environment} does not compile
- * until its seed is chosen. `test` and `e2e` share theirs.
+ * The one seed file of an environment: its admin user, and for `test` and `e2e`, which share
+ * theirs, the integration tests' fake shops too. A real shop's rows cannot be seeded: they need
+ * the shop's `ShopSession`, which only its first embedded load writes. Exhaustive, so a new
+ * {@link Environment} does not compile until its seed is chosen.
  */
 export const seedFileFor = Match.type<Environment>().pipe(
   Match.when("dev", () => "./seed/dev.sql"),

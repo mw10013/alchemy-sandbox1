@@ -21,10 +21,12 @@ import {
   CONNECTION_HEADER,
   ConnectionCaller,
 } from "../contract/shop-actor.ts";
+import { FixtureRpcs } from "../contract/fixture.ts";
 import { TestControlRpcs } from "../contract/test-control.ts";
 import { ShopActors } from "./shop-actors.ts";
 import { BackendApi, SignInLimiter } from "./api.ts";
 import { Auth } from "./auth.ts";
+import { FixtureHandlers, Fixtures } from "./fixture.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { Mailer } from "./mailer.ts";
 import { Members } from "./members.ts";
@@ -177,6 +179,9 @@ const upgradeRequired = HttpServerResponse.empty({
  *
  * Test control exists only with the `E2E_TOKEN` binding, which the stack sets only when the test
  * runner supplies the token; without it `/api/test-control` and its upgrade route are 404.
+ * `FixtureRpcs` on `/api/dev/fixture` exists only with the `FIXTURE_ENDPOINT` binding, which the
+ * stack sets on the per-developer environments; without it the path is 404, the answer for an
+ * unknown path.
  */
 export default class Backend extends Cloudflare.Worker<Backend>()(
   "Backend",
@@ -205,6 +210,7 @@ export default class Backend extends Cloudflare.Worker<Backend>()(
       | ShopSessions
     >();
     const e2eToken = yield* Config.option(Config.String("E2E_TOKEN"));
+    const fixtureEndpoint = Option.isSome(yield* Config.option(Config.String("FIXTURE_ENDPOINT")));
     // The RPC server is built per request, inside the request's scope (workerd pins I/O to
     // the request that created it).
     const testControl = Option.map(e2eToken, (token) =>
@@ -221,6 +227,19 @@ export default class Backend extends Cloudflare.Worker<Backend>()(
         ),
       ),
     );
+
+    const fixture = fixtureEndpoint
+      ? Option.some(
+          RpcServer.toHttpEffect(FixtureRpcs).pipe(
+            Effect.provide(
+              Layer.mergeAll(FixtureHandlers, RpcSerialization.layerNdjson).pipe(
+                Layer.provide(Fixtures.layer),
+                Layer.provide(Layer.succeedContext(services)),
+              ),
+            ),
+          ),
+        )
+      : Option.none();
 
     /**
      * The actor branch: the gate on the upgrade, then the upgrade forwarded as the caller it
@@ -270,6 +289,10 @@ export default class Backend extends Cloudflare.Worker<Backend>()(
       if (pathname === "/api/test-control" || pathname === "/api/test-control/")
         return Option.isSome(testControl)
           ? yield* yield* testControl.value
+          : HttpServerResponse.empty({ status: 404 });
+      if (pathname === "/api/dev/fixture" || pathname === "/api/dev/fixture/")
+        return Option.isSome(fixture)
+          ? yield* yield* fixture.value
           : HttpServerResponse.empty({ status: 404 });
       return HttpServerResponse.empty({ status: 404 });
     });

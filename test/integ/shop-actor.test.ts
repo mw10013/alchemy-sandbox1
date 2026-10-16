@@ -9,7 +9,8 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
-import { SEED_SHOP, ShopKey } from "../../src/contract/shop.ts";
+import { ShopKey } from "../../src/contract/shop.ts";
+import { SEED_SHOP } from "../seed-shops.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_FORBIDDEN,
@@ -232,7 +233,7 @@ test(
   "the gate: 4401, 4403 and 4404 close a refused upgrade",
   Effect.gen(function* () {
     const { backendUrl, e2eToken } = yield* stack;
-    const operator = yield* signIn(backendUrl, e2eToken, email("a@a.com"));
+    const admin = yield* signIn(backendUrl, e2eToken, email("a@a.com"));
     const member2 = yield* signIn(backendUrl, e2eToken, m2);
     const otherShopToken = yield* merchantToken(backendUrl, e2eToken, otherShop);
     const closeCode = (shop: ShopKey, credential?: Credential) =>
@@ -246,9 +247,9 @@ test(
 
     assert.strictEqual(yield* closeCode(key), CONNECTION_CLOSE_UNAUTHENTICATED, "no session");
     assert.strictEqual(
-      yield* closeCode(key, { cookie: operator }),
+      yield* closeCode(key, { cookie: admin }),
       CONNECTION_CLOSE_FORBIDDEN,
-      "operator",
+      "admin",
     );
     assert.strictEqual(
       yield* closeCode(otherShop, { cookie: member2 }),

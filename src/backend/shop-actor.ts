@@ -12,7 +12,9 @@ import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Forbidden } from "../contract/auth.ts";
 import { ShopKey } from "../contract/shop.ts";
@@ -34,12 +36,23 @@ import {
   type ShopSnapshot,
 } from "../contract/shop-actor.ts";
 import * as ActorSocket from "./actor-socket.ts";
+import type { ActorFixtureRows } from "./fixture.ts";
 
 const encodeNotice = Schema.encodeSync(NoticeFrame);
 const decodeConnectionHeader = Schema.decodeUnknownOption(Schema.fromJsonString(ConnectionCaller));
 const decodeShopKey = Schema.decodeUnknownOption(ShopKey);
 const decodeIdentity = Schema.decodeUnknownOption(
   Schema.Struct({ shopActor: ActorSocket.SocketIdentity }),
+);
+
+/** A `SELECT count(*) AS n` result, as the number. */
+const decodeCount = Schema.decodeUnknownEffect(
+  Schema.Tuple([Schema.Struct({ n: Schema.Number })]).pipe(
+    Schema.decodeTo(
+      Schema.Number,
+      SchemaTransformation.transform({ decode: ([{ n }]) => n, encode: (n) => [{ n }] as const }),
+    ),
+  ),
 );
 
 /** The close reasons, Baton's. A reason must stay under 123 bytes. */
@@ -275,7 +288,7 @@ const tagsOf = (caller: ConnectionCaller) =>
  *
  * It has two surfaces that never overlap. Browsers call `ShopActorRpcs` with Effect RPC over a
  * hibernating WebSocket; there is no HTTP RPC into the actor. The Backend calls the schemaless
- * methods `revoke` and `snapshot` on its stub, which no browser can reach.
+ * methods `revoke`, `snapshot` and `loadFixture` on its stub, which no browser can reach.
  *
  * Who is on a socket is fixed when the socket is accepted: the Backend's gate resolves the
  * browser and names it in {@link CONNECTION_HEADER} on the upgrade it forwards, and the actor
@@ -295,9 +308,9 @@ const tagsOf = (caller: ConnectionCaller) =>
  * inside the `blockConcurrencyWhile` Alchemy wraps construction in, so no request sees a
  * half-migrated store. The client is built on the ambient scope, as Alchemy's
  * `Drizzle.DurableObject` does: it wraps the object's local storage, so nothing behind it needs
- * releasing. A single-statement write needs no transaction; a multi-statement one will need
- * `withTransaction` and Alchemy's `MixedScheduler("sync")` workaround from its
- * `Drizzle.DurableObject`.
+ * releasing. A single-statement write needs no transaction; a multi-statement one goes through
+ * `transaction`, the client's `withTransaction` with the workaround Alchemy's
+ * `Drizzle.DurableObject` uses.
  */
 export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
   "ShopActor",
@@ -315,6 +328,23 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
         Effect.orDie,
       );
       const activationId = yield* Effect.sync(() => crypto.randomUUID());
+
+      /**
+       * Built once per activation for {@link transaction}; a `"sync"` scheduler yields through
+       * microtasks rather than timers.
+       */
+      const syncScheduler = new Scheduler.MixedScheduler("sync");
+
+      /**
+       * `body` in one storage transaction (`storage.transaction`, rolled back on failure). The
+       * transaction closes the object's input gate, behind which a timer never fires, so a fiber
+       * yield scheduled on a timer inside it could wait forever; the body runs on
+       * {@link syncScheduler} instead, as Alchemy's `Drizzle.DurableObject` does.
+       *
+       * @see refs/alchemy/packages/alchemy/src/Drizzle/Cloudflare.ts (`DurableObject`)
+       */
+      const transaction = <A, E, R>(body: Effect.Effect<A, E, R>) =>
+        sql.withTransaction(body).pipe(Effect.provideService(Scheduler.Scheduler, syncScheduler));
 
       /**
        * The count the shop page shows, in memory: an example of the socket's reads, writes and
@@ -456,6 +486,53 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
         return result;
       });
 
+      /**
+       * Replaces the shop's work with a fixture's rows, in one {@link transaction}: every order,
+       * line item, workflow, run, run task and usage event goes, `SyncState` and `ShopUsage` go
+       * back to the single rows the migration inserts, and `rows` are written. Not
+       * `storage.deleteAll`, which would also drop the migrator's record of the schema. Each row
+       * is its own insert, because a statement binds at most 100 parameters. Answers the counts
+       * read back inside the transaction.
+       */
+      const loadFixture = Effect.fn("ShopActor.loadFixture")(
+        function* (rows: ActorFixtureRows) {
+          const counts = yield* transaction(
+            Effect.gen(function* () {
+              yield* sql`DELETE FROM RunTask`;
+              yield* sql`DELETE FROM Run`;
+              yield* sql`DELETE FROM OrderLineItem`;
+              yield* sql`DELETE FROM ShopOrder`;
+              yield* sql`DELETE FROM Workflow`;
+              yield* sql`DELETE FROM UsageEvent`;
+              yield* sql`DELETE FROM SyncState`;
+              yield* sql`INSERT INTO SyncState (id) VALUES (1)`;
+              yield* sql`DELETE FROM ShopUsage`;
+              yield* sql`INSERT INTO ShopUsage (id) VALUES (1)`;
+              for (const w of rows.workflows)
+                yield* sql`INSERT INTO Workflow (id, name, tag, state, updatedAt, tasks, draftTasks)
+                  VALUES (${w.id}, ${w.name}, ${w.tag}, ${w.state}, ${w.updatedAt}, ${w.tasks}, ${w.draftTasks})`;
+              for (const o of rows.orders)
+                yield* sql`INSERT INTO ShopOrder (id, legacyId, name, processedAt, updatedAt, cancelledAt, fulfillmentStatus, fullyPaid, note, syncedAt, countedAt)
+                  VALUES (${o.id}, ${o.legacyId}, ${o.name}, ${o.processedAt}, ${o.updatedAt}, ${o.cancelledAt}, ${o.fulfillmentStatus}, ${o.fullyPaid}, ${o.note}, ${o.syncedAt}, ${o.countedAt})`;
+              for (const i of rows.lineItems)
+                yield* sql`INSERT INTO OrderLineItem (id, orderId, title, variantTitle, sku, quantity, currentQuantity, productTags, properties)
+                  VALUES (${i.id}, ${i.orderId}, ${i.title}, ${i.variantTitle}, ${i.sku}, ${i.quantity}, ${i.currentQuantity}, ${i.productTags}, ${i.properties})`;
+              return {
+                workflows: yield* decodeCount(yield* sql`SELECT count(*) AS n FROM Workflow`),
+                orders: yield* decodeCount(yield* sql`SELECT count(*) AS n FROM ShopOrder`),
+                lineItems: yield* decodeCount(yield* sql`SELECT count(*) AS n FROM OrderLineItem`),
+              };
+            }),
+          );
+          yield* Effect.logInfo(
+            `ShopActor.loadFixture: shop=${shop} workflows=${counts.workflows} orders=${counts.orders} lineItems=${counts.lineItems}`,
+          );
+          return counts;
+        },
+        Effect.orDie,
+        Effect.provide(runtime),
+      );
+
       return {
         fetch,
         webSocketMessage: socket.webSocketMessage,
@@ -463,6 +540,7 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
         webSocketError: socket.webSocketError,
         revoke,
         snapshot,
+        loadFixture,
       };
     });
   }),

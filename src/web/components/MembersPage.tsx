@@ -5,7 +5,7 @@ import { IndexSection } from "./screen/IndexSection.tsx";
 import SignOutButton from "./SignOutButton.tsx";
 
 /**
- * Every shop's members: one row per `Member`, so an email in two shops is two rows. An operator
+ * Every shop's members: one row per `Member`, so an email in two shops is two rows. An admin
  * sub-page: the Admin breadcrumb back and Sign out as the page's action, with no bar.
  */
 export default function MembersPage({ members }: { members: ReadonlyArray<Member> }) {

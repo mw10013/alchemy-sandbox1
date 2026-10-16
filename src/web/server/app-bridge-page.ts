@@ -14,7 +14,7 @@ import { frameAncestors } from "./shopify-urls.ts";
 /**
  * Baton's App Bridge-only document: App Bridge and nothing else, plus `script` when given. On
  * `/auth/session-token` App Bridge reads `shopify-reload` from the URL and reloads the app with a
- * fresh `id_token`; with neither, it re-embeds a page the admin lost. With a valid `shop` it
+ * fresh `id_token`; with neither, it re-embeds a page the Shopify admin lost. With a valid `shop` it
  * carries the frame CSP and Baton's preconnect and preload `Link` header.
  */
 export const appBridgePage = (shop: unknown, script = ""): Response => {

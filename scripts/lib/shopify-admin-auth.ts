@@ -39,7 +39,7 @@ export const ChromeProfile = Schema.String.check(
 );
 
 /**
- * The profile the admin session is read from. Chrome names its first profile `Default`; another
+ * The profile the Shopify admin session is read from. Chrome names its first profile `Default`; another
  * (`Profile 1`, shown at chrome://version as Profile Path) is passed with `--profile`.
  */
 export const CHROME_PROFILE: typeof ChromeProfile.Type = "Default";
@@ -68,7 +68,7 @@ export interface StorageCookie {
 /**
  * A local freshness check, not proof that Shopify accepts a session.
  *
- * Two cookies count, because Shopify changed which one carries the admin session. Until
+ * Two cookies count, because Shopify changed which one carries the Shopify admin session. Until
  * September 2026 it was `koa.sid` on `admin.shopify.com`, a 24-hour cookie whose expiry was the
  * check (more than 5 minutes left). Since then an admin load sets no cookie on that host and
  * re-issues `_merchant_essential` on `.shopify.com` instead, judged by `issuedAt` (when Chrome
@@ -203,7 +203,7 @@ const decodeRows = Schema.decodeUnknownSync(Schema.Array(CookieRow));
 
 /**
  * The Shopify cookies in a copied database, decrypted, and `issuedAt`: when Chrome last created
- * `_merchant_essential`. The admin re-issues it on every load, so that is when the admin was
+ * `_merchant_essential`. The Shopify admin re-issues it on every load, so that is when the Shopify admin was
  * last open in Chrome.
  */
 export const readShopifyCookies = Effect.fn("readShopifyCookies")(function* (
@@ -251,7 +251,7 @@ export const readShopifyCookies = Effect.fn("readShopifyCookies")(function* (
  *
  * Refuses a session that is not fresh. The check reads Chrome's cookie database on disk, not the
  * cookies Chrome holds in memory, and a Chrome that has run for days can stop writing that file
- * while the admin keeps working, so the check fails with the admin open. Quitting Chrome (Cmd-Q,
+ * while the Shopify admin keeps working, so the check fails with the Shopify admin open. Quitting Chrome (Cmd-Q,
  * not closing the window) writes the cookies out.
  */
 export const writeStorageState = Effect.fn("writeStorageState")(function* (

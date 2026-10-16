@@ -156,6 +156,12 @@ const protocol = createIsomorphicFn()
     ),
   );
 
+/** A socket atom read before `seedShop` named the shop: a broken invariant. */
+const unnamedShop = Layer.effect(
+  RpcClient.Protocol,
+  Effect.die(new Error("a socket atom was read before seedShop named the shop")),
+);
+
 /**
  * The actor's procedures as atoms. The protocol reads {@link shopKeyAtom}, `merchantTokenAtom`
  * and `reconnectAtom`, so a change to any of them rebuilds the client and, in the browser,
@@ -165,11 +171,15 @@ export class ShopActorClient extends AtomRpc.Service<ShopActorClient>()("ShopAct
   group: ShopActorRpcs,
   protocol: (get) => {
     get(reconnectAtom);
-    return protocol({
-      registry: get.registry,
-      notices: get(noticeBus),
-      key: get(shopKeyAtom),
-      merchantToken: get(merchantTokenAtom),
+    return Option.match(get(shopKeyAtom), {
+      onNone: () => unnamedShop,
+      onSome: (key) =>
+        protocol({
+          registry: get.registry,
+          notices: get(noticeBus),
+          key,
+          merchantToken: get(merchantTokenAtom),
+        }),
     });
   },
   makeEffect: RpcClient.make(ShopActorRpcs, { flatten: true }),
@@ -248,7 +258,7 @@ export const seedShop = (
     readonly snapshot: ShopSnapshot;
   },
 ) => {
-  registry.set(shopKeyAtom, input.key);
+  registry.set(shopKeyAtom, Option.some(input.key));
   registry.set(merchantTokenAtom, input.merchantToken);
   registry.set(notAMemberAtom, false);
   registry.set(merchantExpiredAtom, false);

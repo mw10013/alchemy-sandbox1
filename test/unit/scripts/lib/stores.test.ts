@@ -2,13 +2,12 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import * as DevShop from "../../../../seed/dev-shop.ts";
 import {
   CliResult,
+  FIXTURE_SCOPES,
   missingScopes,
-  requireSeedStore,
+  requireFixtureStore,
   resultText,
-  SEED_SCOPES,
 } from "../../../../scripts/lib/stores.ts";
 
 describe("CLI --json output", () => {
@@ -43,7 +42,7 @@ describe("CLI --json output", () => {
 
 describe("missingScopes", () => {
   it("wants every scope when none is granted", () => {
-    assert.deepStrictEqual(missingScopes([]), SEED_SCOPES);
+    assert.deepStrictEqual(missingScopes([]), FIXTURE_SCOPES);
   });
 
   it("counts write_X as read_X", () => {
@@ -60,58 +59,26 @@ describe("missingScopes", () => {
   });
 });
 
-describe("the dev shop table", () => {
-  it("has unique handles", () => {
-    const handles = DevShop.products.map(({ handle }) => handle);
-    assert.strictEqual(new Set(handles).size, handles.length);
-  });
-
-  it("has unique SKUs", () => {
-    const skus = DevShop.products.flatMap((product) =>
-      product.variants.flatMap(({ value }) => DevShop.skuOf(product, value) ?? []),
-    );
-    assert.strictEqual(new Set(skus).size, skus.length);
-  });
-
-  it("gives a product with a stem a SKU per variant, and one without none", () => {
-    assert.strictEqual(DevShop.skuOf(DevShop.products[0]!, "Maple"), "CB-MAPLE");
-    assert.strictEqual(DevShop.skuOf(DevShop.products[5]!, "5×7"), "PF-5X7");
-    assert.strictEqual(DevShop.skuOf(DevShop.products.at(-1)!, "$25"), null);
-  });
-
-  it("has orders with unique tags whose lines name a product and one of its variants", () => {
-    const tags = DevShop.orders.map(({ tag }) => tag);
-    assert.strictEqual(new Set(tags).size, tags.length);
-    for (const line of DevShop.orders.flatMap(({ lines }) => lines)) {
-      const product = DevShop.products.find(({ handle }) => handle === line.handle);
-      assert.isTrue(product?.variants.some(({ value }) => value === line.value) ?? false);
-    }
-  });
-});
-
-describe("requireSeedStore", () => {
-  it.effect("accepts dev and staging stores", () =>
+describe("requireFixtureStore", () => {
+  it.effect("accepts a dev store", () =>
     Effect.gen(function* () {
-      assert.deepStrictEqual(yield* requireSeedStore("mw10013-dev-shop-03"), {
+      assert.deepStrictEqual(yield* requireFixtureStore("mw10013-dev-shop-03"), {
         environment: "dev",
         index: 3,
-      });
-      assert.deepStrictEqual(yield* requireSeedStore("mw10013-staging-shop-00"), {
-        environment: "staging",
-        index: 0,
       });
     }),
   );
 
-  it.effect("refuses e2e, production and stores outside the scheme", () =>
+  it.effect("refuses e2e, staging, production and stores outside the scheme", () =>
     Effect.gen(function* () {
       for (const store of [
         "mw10013-e2e-shop-00",
+        "mw10013-staging-shop-00",
         "mw10013-production-shop-00",
         "sandbox-shop-00",
         "mw10013-staging-shop-00.myshopify.com",
       ]) {
-        const exit = yield* Effect.exit(requireSeedStore(store));
+        const exit = yield* Effect.exit(requireFixtureStore(store));
         assert.isTrue(exit._tag === "Failure", store);
       }
     }),

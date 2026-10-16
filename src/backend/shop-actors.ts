@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { ShopKey } from "../contract/shop.ts";
 import type { ShopSnapshot } from "../contract/shop-actor.ts";
+import type { ActorFixtureRows } from "./fixture.ts";
 import ShopActor from "./shop-actor.ts";
 
 const make = Effect.gen(function* () {
@@ -34,7 +35,15 @@ const make = Effect.gen(function* () {
     return yield* actors.getByName(key).snapshot();
   });
 
-  return { revoke, snapshot };
+  /** Replaces the shop's work with `rows`; see `loadFixture` on {@link ShopActor}. */
+  const loadFixture = Effect.fn("ShopActors.loadFixture")(function* (
+    key: ShopKey,
+    rows: ActorFixtureRows,
+  ) {
+    return yield* actors.getByName(key).loadFixture(rows);
+  });
+
+  return { revoke, snapshot, loadFixture };
 });
 
 /**
@@ -46,10 +55,14 @@ export class ShopActors extends Context.Service<ShopActors, Effect.Success<typeo
 ) {
   static readonly layer = Layer.effect(ShopActors, make);
 
-  /** Records each revoke and closes nothing, and answers every snapshot with `snapshot`. */
+  /**
+   * Records each revoke and closes nothing, answers every snapshot with `snapshot`, and records
+   * each fixture load in `loaded`, answering the counts of its rows.
+   */
   static readonly layerTest = (
     revoked: Array<{ key: ShopKey; by: "member" | "session"; id: string }>,
     snapshot: ShopSnapshot = { count: { value: 0 }, activation: { id: "test" } },
+    loaded: Array<{ key: ShopKey; rows: ActorFixtureRows }> = [],
   ) =>
     Layer.succeed(ShopActors, {
       revoke: (key, by, id) =>
@@ -58,5 +71,14 @@ export class ShopActors extends Context.Service<ShopActors, Effect.Success<typeo
           return { closed: 0 };
         }),
       snapshot: () => Effect.succeed(snapshot),
+      loadFixture: (key, rows) =>
+        Effect.sync(() => {
+          loaded.push({ key, rows });
+          return {
+            workflows: rows.workflows.length,
+            orders: rows.orders.length,
+            lineItems: rows.lineItems.length,
+          };
+        }),
     });
 }

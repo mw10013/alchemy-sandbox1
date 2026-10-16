@@ -1,7 +1,7 @@
 /*
  * Only what Polaris lacks. Polaris styles its own elements inside their shadow roots and brings
  * its own fonts; these rules cover the plain boxes the parts under `src/web/components/screen/` draw
- * around it. The site is light only: Polaris applies no dark palette outside the admin.
+ * around it. The site is light only: Polaris applies no dark palette outside the Shopify admin.
  */
 
 /*

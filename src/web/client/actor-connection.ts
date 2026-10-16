@@ -7,7 +7,7 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type * as Socket from "effect/socket/Socket";
 import { ReturnPath } from "../../contract/auth.ts";
-import { SEED_SHOP, type ShopKey } from "../../contract/shop.ts";
+import type { ShopKey } from "../../contract/shop.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_FORBIDDEN,
@@ -16,11 +16,12 @@ import {
 } from "../../contract/shop-actor.ts";
 
 /**
- * The shop whose actor this registry's client talks to. `seedShop` sets it before the page
- * reads any socket atom. This and the other plain state atoms here are kept alive: they are
- * set while nothing on the page reads them yet, and an unread atom would drop the value.
+ * The shop whose actor this registry's client talks to; None until `seedShop` names it, which it
+ * does before the page reads any socket atom. There is no default shop: a member may belong to
+ * any number. This and the other plain state atoms here are kept alive: they are set while
+ * nothing on the page reads them yet, and an unread atom would drop the value.
  */
-export const shopKeyAtom = Atom.make<ShopKey>(SEED_SHOP).pipe(Atom.keepAlive);
+export const shopKeyAtom = Atom.make<Option.Option<ShopKey>>(Option.none()).pipe(Atom.keepAlive);
 
 /**
  * The merchant's Shopify session token, set by the merchant route from its `token` search

@@ -13,7 +13,7 @@ const MEMBERS_PATH = Option.getOrUndefined(
 );
 
 /**
- * Every shop's members, for an operator. Signed out goes to sign-in and back here afterwards;
+ * Every shop's members, for an admin. Signed out goes to sign-in and back here afterwards;
  * anyone else, who can only be a `user`, goes to their own home.
  */
 export const listMembers = createServerFn({ method: "GET" }).handler(() =>
