@@ -67,7 +67,7 @@ Losing the Website Worker also removes the Workers Builds connection (§2.3). It
 
 Each phase ends in a checkable state. The user does the steps marked (you); the agent does the rest.
 
-**Phase A: tear down under the old name** (main checkout, old code)
+**Phase A: tear down under the old name** (main checkout, old code). Done 2026-10-16: wt-01 removed; staging and the `Alchemy-sandbox1-config/staging` record destroyed; account checked clean; main's `.alchemy/` deleted.
 
 1. Remove wt-01 (Q4): stop its dev server, `git worktree remove`, delete branch `wt-01`, close its herdr workspace.
 2. Staging: `vp exec alchemy destroy --stage staging` (Workers, D1, state rows). Then the config record: `vp exec alchemy destroy --config stacks/stage-config.ts --stage staging`. Check: the account lists no `alchemy-sandbox1-*` Workers and no `Alchemy-sandbox1-*` D1.
@@ -75,11 +75,13 @@ Each phase ends in a checkable state. The user does the steps marked (you); the 
 
 From here until Phase D, staging is down. Its Workers Builds connection is gone with its Worker, so a push during this window deploys nothing.
 
-**Phase B: rename outside the code** (you)
+**Phase B: rename outside the code** (you). Progress 2026-10-16: both GitHub renames done and `baton-legacy` archived; the old checkout is renamed (step 5).
+
+The folder move (step 6) is the last thing the thread that started the rename does, because its own working folder moves out from under it. T3 records a project by path, so the old project then points at a missing folder: archive it and continue in a new thread in a new project on `~/Documents/src/baton`. Copy, do not move, the Claude memory folder: the running session keeps writing its transcript under the old path. A fresh clone is not an option: `.env`, `.env.staging`, `.shopify/` and `refs/` are untracked and would have to be rebuilt.
 
 4. GitHub: rename `mw10013/baton` → `mw10013/baton-legacy` (Q1), then `mw10013/alchemy-sandbox1` → `mw10013/baton`. GitHub refuses the second rename while the first name is taken. Archive the old repository (Q2).
-5. Old local checkout: `~/Documents/src/baton` → `~/Documents/src/baton-legacy`, and `git remote set-url`.
-6. This checkout: move `~/Documents/src/alchemy-sandbox1` → `~/Documents/src/baton`, then `git remote set-url origin https://github.com/mw10013/baton.git`. Move the Claude memory folder to `-Users-mw-Documents-src-baton`. Create the new T3 project for `~/Documents/src/baton`, add its "Bootstrap worktree" action, and archive the old project (Q7). Close the old herdr workspace.
+5. Old local checkout: `~/Documents/src/baton` → `~/Documents/src/baton-legacy`, `git worktree repair` (its herdr worktrees `~/.herdr/worktrees/baton/wt-01` and `wt-02` point at it), and `git remote set-url`.
+6. This checkout: move `~/Documents/src/alchemy-sandbox1` → `~/Documents/src/baton`, then `git remote set-url origin https://github.com/mw10013/baton.git`. Copy the Claude memory folder (`memory/`) to `-Users-mw-Documents-src-baton`. Create the new T3 project for `~/Documents/src/baton`, add its "Bootstrap worktree" action, and archive the old project (Q7). Close the old herdr workspace.
 
 **Phase C: rename in the code** (agent, in `~/Documents/src/baton`)
 
