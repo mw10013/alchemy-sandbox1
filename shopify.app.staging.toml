@@ -17,7 +17,7 @@
 
 client_id = "54b4c701f5c568d4cf4a11fd42d6fe7b"
 name = "Baton Staging"
-application_url = "https://baton-website-staging-xyv5yq2naedqkzgg.mw10013.workers.dev"
+application_url = "https://baton-website-staging.mw10013.workers.dev"
 embedded = true
 web_directories = ["."]
 
@@ -26,7 +26,7 @@ web_directories = ["."]
 scopes = "read_orders,read_products"
 
 [auth]
-redirect_urls = ["https://baton-website-staging-xyv5yq2naedqkzgg.mw10013.workers.dev/api/auth"]
+redirect_urls = ["https://baton-website-staging.mw10013.workers.dev/api/auth"]
 
 [webhooks]
 api_version = "2026-10"

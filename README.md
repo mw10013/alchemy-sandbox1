@@ -1,8 +1,7 @@
 # Baton
 
 - https://admin.shopify.com/store/mw10013-dev-shop-01/apps/baton-local/app
-- https://baton-website-staging-xyv5yq2naedqkzgg.mw10013.workers.dev
-
+- https://baton-website-staging.mw10013.workers.dev
 
 ## Run locally
 

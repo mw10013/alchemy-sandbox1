@@ -1,6 +1,7 @@
 import { CloudflareD1 } from "@alchemy.run/better-auth/CloudflareD1";
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
+import * as Output from "alchemy/Output";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as HttpBody from "effect/http/HttpBody";
@@ -31,6 +32,7 @@ import { AuthDb } from "./resources.ts";
 import { ShopAccess, type ShopAccessDenied } from "./shop-access.ts";
 import { Shopify } from "./shopify.ts";
 import { ShopSessions } from "./shop-sessions.ts";
+import { workerNameOf } from "./stage.ts";
 import ShopActor from "./shop-actor.ts";
 import {
   TestControlAuthLive,
@@ -177,6 +179,7 @@ const upgradeRequired = HttpServerResponse.empty({
 export default class Backend extends Cloudflare.Worker<Backend>()(
   "Backend",
   {
+    name: Output.fromEffect(Effect.map(Alchemy.Stage, (stage) => workerNameOf(stage, "backend"))),
     main: import.meta.filename,
     workersDev: false,
     // Only reached through the service binding, so any free port will do.

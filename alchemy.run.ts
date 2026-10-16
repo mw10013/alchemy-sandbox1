@@ -7,6 +7,7 @@ import type { DeliveryMode } from "./src/backend/magic-link-delivery.ts";
 import { SHOPIFY_API_KEY } from "./src/backend/shopify.ts";
 import Backend from "./src/backend/worker.ts";
 import { ShopifyApp, stageState, wireBackend } from "./src/backend/stack.ts";
+import { workerNameOf } from "./src/backend/stage.ts";
 
 /**
  * The TanStack Start app. `alchemy dev` serves it on `WEBSITE_PORT` from the checkout's `.env`
@@ -25,6 +26,7 @@ export class Website extends Cloudflare.Website.Vite<Website>()(
       : undefined;
     const app = yield* ShopifyApp;
     return {
+      name: workerNameOf(yield* Alchemy.Stage, "website"),
       compatibility: { date: "2026-07-01", flags: ["nodejs_compat"] },
       dev,
       env: {

@@ -101,3 +101,14 @@ export const environmentOf = (stage: string): Effect.Effect<Environment, Unknown
         onNone: () => Effect.fail(new UnknownStage({ stage })),
         onSome: ({ environment }) => Effect.succeed(environment),
       });
+
+/**
+ * A Worker's name on a {@link Deployed} stage, `baton-<worker>-<stage>`: fixed, so its
+ * `workers.dev` URL and its log service name survive a destroy and redeploy. A per-developer
+ * stage gets `undefined`, which keeps Alchemy's generated name: the integ files deploy the same
+ * stack on the same stage side by side, and a fixed name would collide.
+ *
+ * Changing a deployed Worker's name replaces it, Durable Object storage included.
+ */
+export const workerNameOf = (stage: string, worker: "website" | "backend"): string | undefined =>
+  isDeployed(stage) ? `baton-${worker}-${stage}` : undefined;
