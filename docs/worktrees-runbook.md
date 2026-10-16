@@ -12,7 +12,7 @@ There is a fixed set of worktrees, `wt-01`, `wt-02`, …, created once and reuse
 | `wt-NN`  | `wt-NN` | chosen by T3 Code      | main's port + NN     | `mw10013-dev-shop-NN` | `mw10013-e2e-shop-NN` | `wt-NN`, under `baton` |
 
 - **Folders:** `git worktree list` shows every checkout's folder, with main first. Look them up there; don't assume a path.
-- **Per checkout:** `.env`, `node_modules/`, `.alchemy/` (local data and Alchemy state for every local stage), `.logs/` and `.shopify/` (the CLI's record of the store). `vp run worktree:init` writes `WEBSITE_PORT`, `SHOPIFY_DEV_STORE` and `SHOPIFY_E2E_STORE` into a worktree's `.env`, makes sure both stores exist (`vp run stores:setup`) and refuses a port or store another checkout holds: two `shopify app dev` sessions on one store overwrite each other's app URL.
+- **Per checkout:** `.env`, `node_modules/`, `.alchemy/` (local data and Alchemy state for every local stage), `.logs/` and `.shopify/` (the CLI's record of the store). `vp run worktree:init` writes `WEBSITE_PORT`, `SHOPIFY_DEV_STORE` and `SHOPIFY_E2E_STORE` into a worktree's `.env`, checks both stores exist (also available as `vp run stores:check`) and refuses a port or store another checkout holds: two `shopify app dev` sessions on one store overwrite each other's app URL. Missing stores must be created by hand; see [Shopify stores](./shopify-stores-runbook.md).
 - **Stages:** each checkout has its own dev, test and e2e stage, `<environment>-<user>` in main and `<environment>-<user>-wt-NN` in a worktree (`dev-mw-wt-01`). `node scripts/stage.ts dev` prints the checkout's dev stage. They are all local, under the checkout's `.alchemy/`.
 - **Shared:** `refs/` and each deployed stage's `.env.<stage>` (today `.env.staging`) exist once, in main. `vp run worktree:init` gives each worktree a symlink to each.
 - **herdr:** each checkout's dev server runs in a `dev` tab in that checkout's herdr workspace.
@@ -86,6 +86,28 @@ vp run dev:stop
 - Logs are always in `.logs/dev/current`.
 - Don't start or stop another checkout's server unless asked.
 
+## End-to-end tests
+
+E2E uses the checkout's `.env`; there is no separate `.env.e2e`. It derives its port as `WEBSITE_PORT + 100` (`4001` in `wt-01`) and uses `SHOPIFY_E2E_STORE`, separate from the dev server's store. The stage is `e2e-<user>-wt-NN` in a worktree.
+
+```sh
+vp run test:e2e             # start the E2E server, run every project, stop the server
+vp run test:e2e:headed      # same suite with visible browsers
+vp run test:e2e:ui          # Playwright UI
+```
+
+The server starts Shopify CLI and its tunnel, destroys the checkout's E2E stage before rebuilding it, and writes logs to `.logs/e2e/current`. Playwright supplies `E2E_TOKEN`; no token needs adding to `.env`. The embedded project uses installed Google Chrome and a Shopify admin login; see [the E2E admin login](./shopify-stores-runbook.md#the-e2e-admin-login) for cookie export and Keychain access. The other browser project uses Playwright Chromium (`vp exec playwright install chromium` if missing).
+
+For iteration, start a server in its own terminal, then opt into reusing it:
+
+```sh
+E2E_TOKEN=e2e vp run test:e2e:server
+# In another terminal in the same checkout:
+E2E_REUSE_SERVER=1 vp run test:e2e
+```
+
+Stop a manually started server with Ctrl-C. Reuse keeps its data; omit `E2E_REUSE_SERVER` for a fresh server and stage. Auth exports, results and reports live under ignored `playwright/`.
+
 ## Working across checkouts
 
 Every checkout shares one git repository, so every branch is visible everywhere at once, with no fetch.
@@ -118,6 +140,8 @@ History stays linear: worktree branches are rebased, and `main` only moves by fa
   - If `pnpm-lock.yaml` changed, run `vp install` and restart the server.
   - If `alchemy.run.ts` or config changed, restart the server.
   - Other worktrees pick up the landed work when they next rebase.
+
+If a sync replaces the initial database schema and the dev logs report missing columns, back up the checkout's `.alchemy/local` and `.alchemy/state`, then run `vp run db:reset`. This removes local data and state for **every** stage in this checkout and restarts dev, so stop E2E first. It does not reset Shopify store data or deployed stages.
 
 ## Retire a worktree (rare)
 
