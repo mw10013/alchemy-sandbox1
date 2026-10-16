@@ -58,7 +58,7 @@ All five spikes from the research held (2026-10-16, code reverted):
 - `src/backend/stage.ts`: a second codec, `TestFileStage`, `test-<user>[-wt-NN]-<suffix>` with `suffix` matching `^[a-z][a-z0-9]*$` (so it cannot be read as `wt-NN`). `environmentOf` accepts it as `test`. Leave `PerDeveloperStage` as it is. Add rows to `test/unit/backend/stage.test.ts` for the new shape, including a suffix that must be refused (`wt`, a leading digit).
 - `test/integ/file-stage.ts` (or a function beside the codec): `fileStage(name)` = `${ALCHEMY_TEST_STAGE}-${name}`. Every integ file passes `Test.make({ providers, stage: fileStage("<name>") })`. Say on `fileStage`'s JSDoc that a file without it shares the default stage and collides with another file.
 - `vite.config.ts` integ project: `fileParallelism: true`; keep `pool: "forks"`, `sequence.hooks: "list"`; update its comment.
-- Verify: integ green twice in a row; record serial and parallel wall-clock in §5.
+- Verify: integ green twice in a row; record serial and parallel wall-clock in §7.
 
 ### Step 4: `DevRpcs`
 
@@ -103,7 +103,7 @@ All five spikes from the research held (2026-10-16, code reverted):
   - `shop.spec`'s merchant cases ("the merchant resets the count", "a merchant whose Shopify session expired") move to integ (`test/integ/shop-actor.test.ts`, tokens from the test helper), until the App Home renders the shop page (Q5).
   - `embedded/app.spec` and `embedded/refresh.spec` call `GetShopSession`, `ExpireShopSession`, `PingAdmin` through `DevRpcs`.
 - Q16's several-shops case: confirm `test/unit/backend/api.test.ts` covers a member of two shops (add the case if not). Extract `MemberHome`'s list from `src/web/routes/shop.index.tsx` into a component under `src/web/components/` and give it a browser test with two shops. (integ cannot call `BackendApi`: its methods cross the service binding, not HTTP.)
-- Verify: `vp run test:e2e` green twice; once with `E2E_REUSE_SERVER=1` on a reused server. Record in §5 how long the chromium project takes and whether it ran in parallel.
+- Verify: `vp run test:e2e` green twice; once with `E2E_REUSE_SERVER=1` on a reused server. Record in §7 how long the chromium project takes and whether it ran in parallel.
 
 ### Step 7: Delete test control and the forged merchant
 
