@@ -30,7 +30,7 @@ const stranger = email("nobody@example.com");
 const session: ShopSessionRow = {
   shop: SEED_SHOP,
   shopGid: "gid://shopify/Shop/1",
-  shopAgentId: SEED_SHOP,
+  shopActorId: SEED_SHOP,
   scope: "read_orders,read_products",
   accessTokenExpiresAt: 1_900_000_000_000,
   accessToken: "shpat_secret_access",

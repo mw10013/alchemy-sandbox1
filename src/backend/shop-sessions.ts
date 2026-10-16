@@ -11,14 +11,14 @@ import { AuthDb } from "./resources.ts";
 
 /**
  * A `ShopSession` row: Baton's `ShopSession`, one shop's offline Admin API session. Times are
- * epoch ms. `shopAgentId` names the shop's actor; here it is the shop domain, because the actor
+ * epoch ms. `shopActorId` names the shop's actor; here it is the shop domain, because the actor
  * is addressed by name (`ShopActors.getByName(shop)`), where Baton stored the Agents SDK's id.
  * The three plan columns are a cache that only a plan check writes.
  */
 export const ShopSessionRow = Schema.Struct({
   shop: ShopKey,
   shopGid: Schema.String,
-  shopAgentId: Schema.String,
+  shopActorId: Schema.String,
   scope: Schema.NullOr(Schema.String),
   accessTokenExpiresAt: Schema.NullOr(Schema.Number),
   accessToken: Schema.NullOr(Schema.String),
@@ -58,14 +58,14 @@ const make = Effect.gen(function* () {
   }, Effect.orDie);
 
   /**
-   * Baton's `upsertShopSession`. The conflict branch leaves `shopAgentId` out of the `SET` list:
+   * Baton's `upsertShopSession`. The conflict branch leaves `shopActorId` out of the `SET` list:
    * it never changes after insert, and SQLite rewrites an index for every column named in `SET`,
    * whether its value changed or not, so naming it would rewrite its unique index on every
    * re-exchange, which D1 bills as a written row.
    */
   const upsert = Effect.fn("ShopSessions.upsert")(function* (row: ShopSessionUpsert) {
-    yield* sql`INSERT INTO ShopSession (shop, shopGid, shopAgentId, scope, accessTokenExpiresAt, accessToken, refreshToken, refreshTokenExpiresAt)
-      VALUES (${row.shop}, ${row.shopGid}, ${row.shopAgentId}, ${row.scope}, ${row.accessTokenExpiresAt}, ${row.accessToken}, ${row.refreshToken}, ${row.refreshTokenExpiresAt})
+    yield* sql`INSERT INTO ShopSession (shop, shopGid, shopActorId, scope, accessTokenExpiresAt, accessToken, refreshToken, refreshTokenExpiresAt)
+      VALUES (${row.shop}, ${row.shopGid}, ${row.shopActorId}, ${row.scope}, ${row.accessTokenExpiresAt}, ${row.accessToken}, ${row.refreshToken}, ${row.refreshTokenExpiresAt})
       ON CONFLICT (shop) DO UPDATE SET
         shopGid = excluded.shopGid,
         scope = excluded.scope,
@@ -131,7 +131,7 @@ export class ShopSessions extends Context.Service<ShopSessions, Effect.Success<t
               row.shop,
               existing === undefined
                 ? { ...row, planHandle: null, planHandleExpiresAt: null, planBoundaryAt: null }
-                : { ...existing, ...row, shopAgentId: existing.shopAgentId },
+                : { ...existing, ...row, shopActorId: existing.shopActorId },
             );
           }),
         clearAccessToken: (shop: ShopKey) => edit(shop, { accessToken: null }),

@@ -42,7 +42,7 @@ const merchant: ConnectionCaller = { role: "merchant" };
 const seedSession: ShopSessionRow = {
   shop: SEED_SHOP,
   shopGid: "gid://shopify/Shop/1",
-  shopAgentId: SEED_SHOP,
+  shopActorId: SEED_SHOP,
   scope: "read_orders,write_orders",
   accessTokenExpiresAt: 4102444800000,
   accessToken: "shpat_fake_seed_shop",

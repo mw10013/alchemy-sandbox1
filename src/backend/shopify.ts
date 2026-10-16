@@ -252,7 +252,7 @@ const make = (options: {
         const row = yield* decodeUpsert({
           shop,
           shopGid,
-          shopAgentId: shop,
+          shopActorId: shop,
           scope: session.scope ?? null,
           accessTokenExpiresAt: yield* encodeExpiry(session.expires ?? null),
           accessToken: session.accessToken ?? null,

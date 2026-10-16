@@ -11,6 +11,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Forbidden } from "../contract/auth.ts";
@@ -34,8 +35,6 @@ import {
 } from "../contract/shop-actor.ts";
 import * as ActorSocket from "./actor-socket.ts";
 
-/** A row of the `count` table. A row that does not decode is a broken invariant, so it dies. */
-const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Count));
 const encodeNotice = Schema.encodeSync(NoticeFrame);
 const decodeConnectionHeader = Schema.decodeUnknownOption(Schema.fromJsonString(ConnectionCaller));
 const decodeShopKey = Schema.decodeUnknownOption(ShopKey);
@@ -49,12 +48,178 @@ const DISPLACED_REASON = "signed in elsewhere";
 const EXPIRED_REASON = "session expired";
 const UNIDENTIFIED_REASON = "unidentified connection";
 
-/** The schema of one actor's storage, applied on every activation; see {@link ShopActor}. */
+/**
+ * One shop's work: its synced orders, its workflows and the runs applied to order items. Identity
+ * (shops, members, teams) lives in D1; this store points into it by id, never the reverse, and no
+ * foreign key crosses the two.
+ *
+ * While prototyping `0001_init` is the only migration and is edited in place; a schema change is
+ * applied by resetting (`vp run db:reset`, `vp run cloud:reset`), which deletes every actor's
+ * storage, never by a second migration.
+ */
 const migrations = SqliteMigrator.fromRecord({
-  "0001_count": Effect.gen(function* () {
+  "0001_init": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* sql`CREATE TABLE count (id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL)`;
-    yield* sql`INSERT INTO count (id, value) VALUES (1, 0)`;
+    yield* sql`
+      -- Times are epoch-ms integers.
+      --
+      -- ShopOrder, not Order, which is an SQL keyword. Shopify's numeric ids are text: they
+      -- exceed the 52-bit integers SqlStorage.exec round-trips losslessly, and a truncated id
+      -- would silently mismatch the webhook payload it correlates with.
+      create table if not exists ShopOrder (
+        id text primary key,
+        legacyId text not null,
+        name text not null,
+        processedAt integer not null,
+        updatedAt integer not null,
+        cancelledAt integer,
+        fulfillmentStatus text not null,
+        fullyPaid integer not null,
+        -- Unbounded because Shopify bounds an order note at 5,000 characters.
+        note text,
+        syncedAt integer not null,
+        -- Null until the first run is created for the order: the billing meter's per-order mark.
+        countedAt integer
+      );
+      -- The keyset the orders page pages on, id desc included because a shop can place several
+      -- orders in one millisecond. The retention sweep reads the same index as a range scan.
+      create index if not exists ShopOrder_processedAt
+        on ShopOrder (processedAt desc, id desc);
+      create index if not exists ShopOrder_open_idx
+        on ShopOrder (processedAt desc, id desc)
+        where fulfillmentStatus <> 'FULFILLED' and cancelledAt is null;
+      create table if not exists OrderLineItem (
+        id text primary key,
+        orderId text not null references ShopOrder(id) on delete cascade,
+        title text not null,
+        variantTitle text,
+        sku text,
+        quantity integer not null,
+        currentQuantity integer not null,
+        productTags text not null,
+        properties text not null
+      );
+      create index if not exists OrderLineItem_orderId on OrderLineItem (orderId);
+      -- The last sync's error, if any. Seeded so every read is a select and every write an update.
+      create table if not exists SyncState (
+        id integer primary key check (id = 1),
+        lastError text
+      );
+      insert or ignore into SyncState (id) values (1);
+      -- The usage counters of the current billing cycle, independent of the plan.
+      create table if not exists ShopUsage (
+        id integer primary key check (id = 1),
+        shopGid text,
+        cycleStartAt integer,
+        cycleEndAt integer,
+        ordersThisCycle integer not null default 0,
+        ordersLimitedAt integer,
+        lastSweepAt integer,
+        seatsThisCycle integer not null default 0
+      );
+      insert or ignore into ShopUsage (id) values (1);
+      -- The outbox of usage events still to report to Shopify.
+      create table if not exists UsageEvent (
+        idempotencyKey text primary key,
+        eventHandle text not null,
+        orderId text,
+        value integer not null,
+        occurredAt integer not null,
+        attempts integer not null default 0,
+        lastError text
+      );
+      -- A workflow is the definition a merchant configures. Its tasks are one JSON document, read
+      -- and written whole by every reader and editor and short by limit, so a row per task would
+      -- buy nothing but renumbering on every reorder; a task's position is its index. The draft
+      -- is a second document of the same shape: null until the first edit, null again after it
+      -- is applied or discarded. A task's teamId is a D1 Team.id: it is checked before a write,
+      -- and deleting the team clears it.
+      create table if not exists Workflow (
+        id text primary key,
+        name text not null unique check (name = trim(name) and length(name) > 0),
+        tag text not null unique check (tag = trim(tag) and length(tag) > 0),
+        state text not null check (state in ('active', 'inactive')),
+        updatedAt integer not null,
+        tasks text not null default '[]',
+        draftTasks text
+      );
+      -- A run is one workflow applied to one order item, its tasks copied in. A run is for the
+      -- whole item (five chairs on one line are one run of quantity 5), so lineItemId is unique
+      -- over every state, not only open runs. Order, item and workflow facts are snapshots: no
+      -- foreign key, and they survive the rows they came from.
+      create table if not exists Run (
+        id text primary key,
+        workflowId text not null,
+        workflowName text not null,
+        orderId text not null,
+        orderName text not null,
+        orderProcessedAt integer not null,
+        lineItemId text not null unique,
+        lineItemTitle text not null,
+        variantTitle text,
+        sku text,
+        quantity integer not null,
+        lineItemProperties text not null,
+        -- Derived from the tasks and stored, for the lists that filter on it.
+        state text not null check (state in ('open', 'done', 'closed')),
+        -- The earliest task start, null until a task starts; derived and stored like state.
+        startedAt integer,
+        -- The one hold a person sets. blockedBy is who, as JSON (role and email, no id);
+        -- blockReason is optional, so only blockedAt and blockedBy move together.
+        blockedAt integer,
+        blockReason text,
+        blockedBy text,
+        note text,
+        createdAt integer not null,
+        updatedAt integer not null,
+        closedAt integer,
+        closedReason text check (closedReason in ('fulfilled', 'order_cancelled', 'item_removed', 'merchant_cancelled')),
+        -- SQLite checks each statement, not the transaction, so a close sets state, closedAt
+        -- and closedReason and clears the block in one update.
+        check ((state = 'closed') = (closedAt is not null)),
+        check ((closedAt is null) = (closedReason is null)),
+        check (blockedAt is null or state = 'open'),
+        check ((blockedAt is null) = (blockedBy is null)),
+        check (state <> 'done' or startedAt is not null)
+      );
+      -- The orders index asks per order for runs in a state. With no sqlite_stat1 the planner
+      -- picked a single-column index on state and read every open run per open order; the
+      -- composite serves both terms, and its prefix every orderId-only probe.
+      create index if not exists Run_orderId_state_idx on Run (orderId, state);
+      create index if not exists Run_open_age_idx
+        on Run (orderProcessedAt, lineItemId, id) where state = 'open';
+      create index if not exists Run_closed_idx
+        on Run (closedAt) where state = 'closed';
+      -- Who started or finished a task is a snapshot: a role, and an email for a member. A
+      -- merchant acts from the order page and has no Member row, so no email. Each time and its
+      -- role are set together, and done implies started. "is 'member'" rather than "=", so a
+      -- null role compares false and an email without a role is refused.
+      create table if not exists RunTask (
+        id text primary key,
+        runId text not null references Run (id) on delete cascade,
+        position integer not null check (position >= 1),
+        step integer not null check (step >= 1),
+        name text not null,
+        -- A D1 Team.id, cleared when the team is deleted.
+        teamId text,
+        teamName text not null,
+        instructions text,
+        startedAt integer,
+        startedByEmail text,
+        doneAt integer,
+        doneByEmail text,
+        startedByRole text check (startedByRole in ('merchant', 'member')),
+        doneByRole text check (doneByRole in ('merchant', 'member')),
+        unique (runId, position),
+        check ((startedAt is null) = (startedByRole is null)),
+        check ((doneAt is null) = (doneByRole is null)),
+        check ((startedByRole is 'member') = (startedByEmail is not null)),
+        check ((doneByRole is 'member') = (doneByEmail is not null)),
+        check (doneAt is null or startedAt is not null)
+      );
+      -- A member's open tasks by team.
+      create index if not exists RunTask_teamId_idx on RunTask (teamId, doneAt);
+    `;
   }),
 });
 
@@ -104,8 +269,9 @@ const tagsOf = (caller: ConnectionCaller) =>
   );
 
 /**
- * One shop's actor, named by its {@link ShopKey}: a `count` in private SQLite. After a write it
- * pushes a `Notice` to every socket so each browser refetches; it never pushes the value.
+ * One shop's actor, named by its {@link ShopKey}, holding the shop's work in private SQLite
+ * ({@link migrations}). After a write it pushes a `Notice` to every socket so each browser
+ * refetches; it never pushes the value.
  *
  * It has two surfaces that never overlap. Browsers call `ShopActorRpcs` with Effect RPC over a
  * hibernating WebSocket; there is no HTTP RPC into the actor. The Backend calls the schemaless
@@ -150,24 +316,16 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
       );
       const activationId = yield* Effect.sync(() => crypto.randomUUID());
 
-      const readCount = Effect.fn("ShopActor.readCount")(function* () {
-        const [row] = yield* decodeRows(yield* sql`SELECT value FROM count WHERE id = 1`);
-        return yield* Effect.fromNullishOr(row);
-      }, Effect.orDie);
-
-      const increment = Effect.fn("ShopActor.increment")(function* () {
-        const [row] = yield* decodeRows(
-          yield* sql`UPDATE count SET value = value + 1 WHERE id = 1 RETURNING value`,
-        );
-        return yield* Effect.fromNullishOr(row);
-      }, Effect.orDie);
-
-      const resetCount = Effect.fn("ShopActor.resetCount")(function* () {
-        const [row] = yield* decodeRows(
-          yield* sql`UPDATE count SET value = 0 WHERE id = 1 RETURNING value`,
-        );
-        return yield* Effect.fromNullishOr(row);
-      }, Effect.orDie);
+      /**
+       * The count the shop page shows, in memory: an example of the socket's reads, writes and
+       * notices, not shop data. It starts at 0 on every activation, so a hibernation resets it.
+       */
+      const count = yield* Ref.make(0);
+      const readCount = Ref.get(count).pipe(Effect.map((value): Count => ({ value })));
+      const increment = Ref.updateAndGet(count, (value) => value + 1).pipe(
+        Effect.map((value): Count => ({ value })),
+      );
+      const resetCount = Ref.setAndGet(count, 0).pipe(Effect.map((value): Count => ({ value })));
 
       const notify = Effect.fn("ShopActor.notify")(function* (invalidated: ReadonlyArray<string>) {
         const frame = encodeNotice({ _tag: "ShopActorNotice", invalidated });
@@ -213,10 +371,10 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
       );
 
       const handlers = ShopActorRpcs.toLayer({
-        MemberGetCount: () => readCount(),
-        MerchantGetCount: () => readCount(),
-        MemberIncrement: () => increment().pipe(Effect.tap(() => notify([COUNT_KEY]))),
-        MerchantResetCount: () => resetCount().pipe(Effect.tap(() => notify([COUNT_KEY]))),
+        MemberGetCount: () => readCount,
+        MerchantGetCount: () => readCount,
+        MemberIncrement: () => increment.pipe(Effect.tap(() => notify([COUNT_KEY]))),
+        MerchantResetCount: () => resetCount.pipe(Effect.tap(() => notify([COUNT_KEY]))),
         MemberActivation: () => Effect.succeed({ id: activationId }),
         MemberWhoAmI: () => Effect.service(CurrentCaller),
         MerchantWhoAmI: () => Effect.service(CurrentCaller),
@@ -292,7 +450,7 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
       /** The page's first data, for the Backend's server-rendering read. */
       const snapshot = Effect.fn("ShopActor.snapshot")(function* () {
         const result: ShopSnapshot = {
-          count: yield* readCount(),
+          count: yield* readCount,
           activation: { id: activationId },
         };
         return result;
