@@ -23,6 +23,7 @@
     "test:e2e:ui": "vp exec playwright test --ui",
     "test:e2e:server": "node --env-file=.env scripts/e2e-server.ts",
     "deploy:staging": "alchemy deploy --stage staging --yes",
+    "cloud:reset": "node scripts/cloud-reset.ts",
     "stage-config": "alchemy deploy --config stacks/stage-config.ts",
     "refs": "node scripts/refs.ts",
     "refs:all": "node scripts/refs.ts fetch --all",
