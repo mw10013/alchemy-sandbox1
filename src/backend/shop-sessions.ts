@@ -13,7 +13,9 @@ import { AuthDb } from "./resources.ts";
  * A `ShopSession` row: Baton's `ShopSession`, one shop's offline Admin API session. Times are
  * epoch ms. `shopActorId` names the shop's actor; here it is the shop domain, because the actor
  * is addressed by name (`ShopActors.getByName(shop)`), where Baton stored the Agents SDK's id.
- * The three plan columns are a cache that only a plan check writes.
+ * The three plan columns are a cache that only a plan check writes. `refreshLeaseUntil` is the
+ * lease that serializes refresh-token grants for the shop: while it is in the future, one caller
+ * is refreshing and the rest wait.
  */
 export const ShopSessionRow = Schema.Struct({
   shop: ShopKey,
@@ -24,6 +26,7 @@ export const ShopSessionRow = Schema.Struct({
   accessToken: Schema.NullOr(Schema.String),
   refreshToken: Schema.NullOr(Schema.String),
   refreshTokenExpiresAt: Schema.NullOr(Schema.Number),
+  refreshLeaseUntil: Schema.NullOr(Schema.Number),
   planHandle: Schema.NullOr(Schema.String),
   planHandleExpiresAt: Schema.NullOr(Schema.Number),
   planBoundaryAt: Schema.NullOr(Schema.Number),
@@ -31,19 +34,28 @@ export const ShopSessionRow = Schema.Struct({
 export type ShopSessionRow = typeof ShopSessionRow.Type;
 
 /**
- * A row as authentication knows it: everything but the plan columns, so re-authenticating never
- * disturbs a cached plan, and a fresh insert leaves them null, which reads as never fetched.
+ * A row as authentication knows it: everything but the plan columns and the refresh lease, so
+ * re-authenticating never disturbs a cached plan or a refresh in flight, and a fresh insert
+ * leaves them null, which reads as never fetched and unleased.
  */
 export const ShopSessionUpsert = Schema.Struct(
-  Struct.omit(ShopSessionRow.fields, ["planHandle", "planHandleExpiresAt", "planBoundaryAt"]),
+  Struct.omit(ShopSessionRow.fields, [
+    "refreshLeaseUntil",
+    "planHandle",
+    "planHandleExpiresAt",
+    "planBoundaryAt",
+  ]),
 );
 export type ShopSessionUpsert = typeof ShopSessionUpsert.Type;
 
-/** The token columns {@link ShopSessions}' `updateTokens` rewrites, by shop. */
+/** The token columns {@link ShopSessions}' `rotateTokens` rewrites, by shop. */
 export type ShopSessionTokens = Pick<
   ShopSessionRow,
-  "shop" | "accessToken" | "accessTokenExpiresAt" | "refreshToken" | "refreshTokenExpiresAt"
+  "accessToken" | "accessTokenExpiresAt" | "refreshToken" | "refreshTokenExpiresAt"
 >;
+
+/** What an `UPDATE … RETURNING shop` answers: the rows it changed. */
+const decodeWon = Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ shop: ShopKey })));
 
 /** Rows of the `ShopSession` table. A row that does not decode is a broken invariant, so it dies. */
 const decodeRows = Schema.decodeUnknownEffect(Schema.Array(ShopSessionRow));
@@ -75,19 +87,80 @@ const make = Effect.gen(function* () {
         refreshTokenExpiresAt = excluded.refreshTokenExpiresAt`;
   }, Effect.orDie);
 
-  const clearAccessToken = Effect.fn("ShopSessions.clearAccessToken")(function* (shop: ShopKey) {
-    yield* sql`UPDATE ShopSession SET accessToken = NULL WHERE shop = ${shop}`;
+  /**
+   * Clears the access token only while it is still `accessToken`, the one that got a 401, so a
+   * token a concurrent refresh or exchange stored since is not thrown away.
+   */
+  const clearAccessToken = Effect.fn("ShopSessions.clearAccessToken")(function* (
+    shop: ShopKey,
+    accessToken: string,
+  ) {
+    yield* sql`UPDATE ShopSession SET accessToken = NULL WHERE shop = ${shop} AND accessToken = ${accessToken}`;
   }, Effect.orDie);
 
-  const updateTokens = Effect.fn("ShopSessions.updateTokens")(function* (
+  /**
+   * A refresh's write: compare-and-swap on `presented`, the refresh token the grant used. It
+   * rewrites the four token columns, releases the lease, and answers whether it won. It loses
+   * when anything else (an exchange, another refresh) replaced the refresh token first, whose
+   * pair is then the live one.
+   */
+  const rotateTokens = Effect.fn("ShopSessions.rotateTokens")(function* (
+    shop: ShopKey,
+    presented: string,
     tokens: ShopSessionTokens,
   ) {
-    yield* sql`UPDATE ShopSession SET
+    const won = yield* decodeWon(
+      yield* sql`UPDATE ShopSession SET
         accessToken = ${tokens.accessToken},
         accessTokenExpiresAt = ${tokens.accessTokenExpiresAt},
         refreshToken = ${tokens.refreshToken},
-        refreshTokenExpiresAt = ${tokens.refreshTokenExpiresAt}
-      WHERE shop = ${tokens.shop}`;
+        refreshTokenExpiresAt = ${tokens.refreshTokenExpiresAt},
+        refreshLeaseUntil = NULL
+      WHERE shop = ${shop} AND refreshToken = ${presented}
+      RETURNING shop`,
+    );
+    return won.length > 0;
+  }, Effect.orDie);
+
+  /** Takes the shop's refresh lease until `until` if none is live at `now`; answers whether it did. */
+  const acquireRefreshLease = Effect.fn("ShopSessions.acquireRefreshLease")(function* (
+    shop: ShopKey,
+    now: number,
+    until: number,
+  ) {
+    const won = yield* decodeWon(
+      yield* sql`UPDATE ShopSession SET refreshLeaseUntil = ${until}
+      WHERE shop = ${shop} AND (refreshLeaseUntil IS NULL OR refreshLeaseUntil <= ${now})
+      RETURNING shop`,
+    );
+    return won.length > 0;
+  }, Effect.orDie);
+
+  /**
+   * Releases the lease taken until `until`. Matching on `until` means a holder whose lease
+   * lapsed never releases one somebody else took after.
+   */
+  const releaseRefreshLease = Effect.fn("ShopSessions.releaseRefreshLease")(function* (
+    shop: ShopKey,
+    until: number,
+  ) {
+    yield* sql`UPDATE ShopSession SET refreshLeaseUntil = NULL WHERE shop = ${shop} AND refreshLeaseUntil = ${until}`;
+  }, Effect.orDie);
+
+  /**
+   * Test control's way to age a session: the access token expires at `accessTokenExpiresAt`, and
+   * `refreshToken`, when given, replaces the stored one. Test-only in purpose; nothing in the
+   * product calls it.
+   */
+  const expireAccessToken = Effect.fn("ShopSessions.expireAccessToken")(function* (
+    shop: ShopKey,
+    accessTokenExpiresAt: number,
+    refreshToken: string | undefined,
+  ) {
+    yield* sql`UPDATE ShopSession SET
+        accessTokenExpiresAt = ${accessTokenExpiresAt},
+        refreshToken = COALESCE(${refreshToken ?? null}, refreshToken)
+      WHERE shop = ${shop}`;
   }, Effect.orDie);
 
   const updateScope = Effect.fn("ShopSessions.updateScope")(function* (
@@ -101,7 +174,17 @@ const make = Effect.gen(function* () {
     yield* sql`DELETE FROM ShopSession WHERE shop = ${shop}`;
   }, Effect.orDie);
 
-  return { find, upsert, clearAccessToken, updateTokens, updateScope, remove };
+  return {
+    find,
+    upsert,
+    clearAccessToken,
+    rotateTokens,
+    acquireRefreshLease,
+    releaseRefreshLease,
+    expireAccessToken,
+    updateScope,
+    remove,
+  };
 });
 
 /**
@@ -130,12 +213,51 @@ export class ShopSessions extends Context.Service<ShopSessions, Effect.Success<t
             rows.set(
               row.shop,
               existing === undefined
-                ? { ...row, planHandle: null, planHandleExpiresAt: null, planBoundaryAt: null }
+                ? {
+                    ...row,
+                    refreshLeaseUntil: null,
+                    planHandle: null,
+                    planHandleExpiresAt: null,
+                    planBoundaryAt: null,
+                  }
                 : { ...existing, ...row, shopActorId: existing.shopActorId },
             );
           }),
-        clearAccessToken: (shop: ShopKey) => edit(shop, { accessToken: null }),
-        updateTokens: ({ shop, ...tokens }: ShopSessionTokens) => edit(shop, tokens),
+        clearAccessToken: (shop: ShopKey, accessToken: string) =>
+          Effect.sync(() => {
+            const row = rows.get(shop);
+            if (row?.accessToken === accessToken) rows.set(shop, { ...row, accessToken: null });
+          }),
+        rotateTokens: (shop: ShopKey, presented: string, tokens: ShopSessionTokens) =>
+          Effect.sync(() => {
+            const row = rows.get(shop);
+            if (row === undefined || row.refreshToken !== presented) return false;
+            rows.set(shop, { ...row, ...tokens, refreshLeaseUntil: null });
+            return true;
+          }),
+        acquireRefreshLease: (shop: ShopKey, now: number, until: number) =>
+          Effect.sync(() => {
+            const row = rows.get(shop);
+            if (row === undefined) return false;
+            if (row.refreshLeaseUntil !== null && row.refreshLeaseUntil > now) return false;
+            rows.set(shop, { ...row, refreshLeaseUntil: until });
+            return true;
+          }),
+        releaseRefreshLease: (shop: ShopKey, until: number) =>
+          Effect.sync(() => {
+            const row = rows.get(shop);
+            if (row?.refreshLeaseUntil === until)
+              rows.set(shop, { ...row, refreshLeaseUntil: null });
+          }),
+        expireAccessToken: (
+          shop: ShopKey,
+          accessTokenExpiresAt: number,
+          refreshToken: string | undefined,
+        ) =>
+          edit(shop, {
+            accessTokenExpiresAt,
+            ...(refreshToken === undefined ? {} : { refreshToken }),
+          }),
         updateScope: (shop: ShopKey, scope: string | null) => edit(shop, { scope }),
         remove: (shop: ShopKey) =>
           Effect.sync(() => {

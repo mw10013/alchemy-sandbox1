@@ -82,6 +82,9 @@ export default defineConfig({
             dependencies: ["shopify-admin"],
             // Per-file serial mode and one admin boot per file; files must not share a worker's page.
             fullyParallel: false,
+            // One store row serves every embedded spec: a load in one file exchanges a token,
+            // which would break the refresh spec's steps mid-run if two files ran at once.
+            workers: 1,
             timeout: 60_000,
             expect: { timeout: 10_000 },
             use: {

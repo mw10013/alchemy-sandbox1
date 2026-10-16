@@ -48,6 +48,7 @@ const seedSession: ShopSessionRow = {
   accessToken: "shpat_fake_seed_shop",
   refreshToken: "shprt_fake_seed_shop",
   refreshTokenExpiresAt: 4102444800000,
+  refreshLeaseUntil: null,
   planHandle: "basic",
   planHandleExpiresAt: 4102444800000,
   planBoundaryAt: null,

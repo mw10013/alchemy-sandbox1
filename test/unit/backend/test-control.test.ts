@@ -4,6 +4,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcTest from "effect/rpc/RpcTest";
@@ -12,10 +13,13 @@ import { EmailFromInput } from "../../../src/contract/auth.ts";
 import { type Member } from "../../../src/contract/members.ts";
 import { SEED_SHOP, ShopKey } from "../../../src/contract/shop.ts";
 import { E2eEmail, TestControlRpcs } from "../../../src/contract/test-control.ts";
-import { type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
+import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
 import { QuietLogs, testAuth, testShopify } from "./layers.ts";
+import { jsonResponse, withShopifyStub } from "./shopify-stub.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
+import { ShopifyAdmin } from "../../../src/backend/shopify-admin.ts";
+import { ShopifyFake } from "../../../src/backend/shopify-fake.ts";
 import {
   TestControlAuthLive,
   TestControlHandlers,
@@ -36,6 +40,7 @@ const session: ShopSessionRow = {
   accessToken: "shpat_secret_access",
   refreshToken: "shprt_secret_refresh",
   refreshTokenExpiresAt: 1_900_000_000_000,
+  refreshLeaseUntil: null,
   planHandle: null,
   planHandleExpiresAt: null,
   planBoundaryAt: null,
@@ -58,7 +63,11 @@ const TestBackend = (delivery: "inline" | "mailed" = "inline") =>
         members,
         actors: ShopActors.layerTest(revoked),
         delivery,
-        extra: Layer.mergeAll(testShopify([session]), Layer.succeed(TestControlToken, TOKEN)),
+        extra: Layer.mergeAll(
+          ShopifyAdmin.layer.pipe(Layer.provideMerge(testShopify([session]))),
+          ShopifyFake.layer,
+          Layer.succeed(TestControlToken, TOKEN),
+        ),
       }),
     ),
     Layer.provide(RuntimeContext.phantom),
@@ -141,10 +150,75 @@ describe("test control", () => {
         shopGid: "gid://shopify/Shop/1",
         scope: "read_orders,read_products",
         accessTokenExpiresAt: 1_900_000_000_000,
+        refreshTokenExpiresAt: 1_900_000_000_000,
+        refreshLeaseUntil: null,
       });
       assert.notInclude(JSON.stringify(found), "secret");
       const other = Schema.decodeUnknownSync(ShopKey)("other-shop.myshopify.com");
       assert.isNull(yield* client.GetShopSession({ shop: other }).pipe(authorized));
+    }).pipe(Effect.provide(TestBackend())),
+  );
+  it.live("ExpireAccessToken ages the token; invalidate also replaces the refresh token", () =>
+    Effect.gen(function* () {
+      const client = yield* RpcTest.makeClient(TestControlRpcs);
+      const before = Date.now();
+      yield* client.ExpireAccessToken({ shop: SEED_SHOP, refreshToken: "keep" }).pipe(authorized);
+      const kept = yield* client.GetShopSession({ shop: SEED_SHOP }).pipe(authorized);
+      assert.isBelow(kept?.accessTokenExpiresAt ?? Infinity, before);
+      assert.strictEqual(kept?.refreshTokenExpiresAt, 1_900_000_000_000);
+      const sessions = yield* ShopSessions;
+      const row = (yield* sessions.find(SEED_SHOP)).pipe(Option.getOrThrow);
+      assert.strictEqual(row.refreshToken, "shprt_secret_refresh");
+      yield* client
+        .ExpireAccessToken({ shop: SEED_SHOP, refreshToken: "invalidate" })
+        .pipe(authorized);
+      const invalid = (yield* sessions.find(SEED_SHOP)).pipe(Option.getOrThrow);
+      assert.match(invalid.refreshToken ?? "", /^shprt_invalid_/u);
+    }).pipe(Effect.provide(TestBackend())),
+  );
+
+  it.live("PingAdmin answers the shop's id, and tokens never appear in an answer", () =>
+    withShopifyStub(
+      () => jsonResponse(200, { data: { shop: { id: "gid://shopify/Shop/1" } } }),
+      (calls) =>
+        Effect.gen(function* () {
+          const client = yield* RpcTest.makeClient(TestControlRpcs);
+          const answer = yield* client.PingAdmin({ shop: SEED_SHOP }).pipe(authorized);
+          assert.deepStrictEqual(answer, { ok: "gid://shopify/Shop/1" });
+          assert.strictEqual(calls.length, 1);
+          assert.notInclude(JSON.stringify(answer), "shpat_");
+        }),
+    ).pipe(Effect.provide(TestBackend())),
+  );
+
+  it.live("PingAdmin encodes the failures as answers", () =>
+    withShopifyStub(
+      () => jsonResponse(401, { error: "invalid_request" }),
+      () =>
+        Effect.gen(function* () {
+          const client = yield* RpcTest.makeClient(TestControlRpcs);
+          const other = Schema.decodeUnknownSync(ShopKey)("other-shop.myshopify.com");
+          assert.deepStrictEqual(yield* client.PingAdmin({ shop: other }).pipe(authorized), {
+            error: "OfflineSessionMissing",
+          });
+          yield* client
+            .ExpireAccessToken({ shop: SEED_SHOP, refreshToken: "invalidate" })
+            .pipe(authorized);
+          assert.deepStrictEqual(yield* client.PingAdmin({ shop: SEED_SHOP }).pipe(authorized), {
+            error: "ReauthorizationRequired",
+            reason: "refresh-token-rejected",
+          });
+        }),
+    ).pipe(Effect.provide(TestBackend())),
+  );
+
+  it.live("ScriptShopify and ShopifyCalls are defects without the fake binding", () =>
+    Effect.gen(function* () {
+      const client = yield* RpcTest.makeClient(TestControlRpcs);
+      const script = yield* Effect.exit(client.ScriptShopify({ replies: [] }).pipe(authorized));
+      assert.isTrue(Exit.isFailure(script) && Cause.hasDies(script.cause));
+      const calls = yield* Effect.exit(client.ShopifyCalls({}).pipe(authorized));
+      assert.isTrue(Exit.isFailure(calls) && Cause.hasDies(calls.cause));
     }).pipe(Effect.provide(TestBackend())),
   );
 });

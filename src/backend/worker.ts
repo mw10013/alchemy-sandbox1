@@ -31,6 +31,8 @@ import { Members } from "./members.ts";
 import { AuthDb } from "./resources.ts";
 import { ShopAccess, type ShopAccessDenied } from "./shop-access.ts";
 import { Shopify } from "./shopify.ts";
+import { ShopifyAdmin } from "./shopify-admin.ts";
+import { ShopifyFake } from "./shopify-fake.ts";
 import { ShopSessions } from "./shop-sessions.ts";
 import { workerNameOf } from "./stage.ts";
 import ShopActor from "./shop-actor.ts";
@@ -193,7 +195,14 @@ export default class Backend extends Cloudflare.Worker<Backend>()(
     const shopAccess = yield* ShopAccess;
     const api = yield* BackendApi;
     const services = yield* Effect.context<
-      Auth | MagicLinkDelivery | Members | Shopify | ShopActors | ShopSessions
+      | Auth
+      | MagicLinkDelivery
+      | Members
+      | Shopify
+      | ShopifyAdmin
+      | ShopifyFake
+      | ShopActors
+      | ShopSessions
     >();
     const e2eToken = yield* Config.option(Config.String("E2E_TOKEN"));
     // The RPC server is built per request, inside the request's scope (workerd pins I/O to
@@ -276,7 +285,10 @@ export default class Backend extends Cloudflare.Worker<Backend>()(
         Members.layer,
         Mailer.layer,
         signInLimiter,
-        Shopify.layer.pipe(Layer.provideMerge(ShopSessions.layer)),
+        ShopifyFake.layer,
+        ShopifyAdmin.layer.pipe(
+          Layer.provideMerge(Shopify.layer.pipe(Layer.provideMerge(ShopSessions.layer))),
+        ),
       ),
     ),
     Effect.provide(CloudflareD1(AuthDb)),

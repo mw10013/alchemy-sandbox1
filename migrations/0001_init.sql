@@ -8,6 +8,7 @@
 -- Times are epoch-ms integers.
 
 -- shopActorId names the shop's actor and is set once: an upsert never rewrites it.
+-- refreshLeaseUntil (epoch ms) serializes refresh-token grants for one shop; it is not indexed.
 create table if not exists ShopSession (
   shop text primary key,
   shopGid text not null,
@@ -17,6 +18,7 @@ create table if not exists ShopSession (
   accessToken text,
   refreshToken text,
   refreshTokenExpiresAt integer,
+  refreshLeaseUntil integer,
   planHandle text,
   planHandleExpiresAt integer,
   planBoundaryAt integer

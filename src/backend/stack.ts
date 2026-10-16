@@ -147,6 +147,16 @@ export const wireBackend = Effect.fn("wireBackend")(function* (
       }),
     }),
   });
+  const environment = yield* environmentOf(yield* Alchemy.Stage).pipe(Effect.orDie);
+  // The fake replaces the Shopify library's one HTTP function, so it must never sit in front of
+  // a real app: only `test`, which always uses the fake app, gets it. The value is "on", not
+  // "1": the runtime reads a numeric-looking binding as a number, which `Config.String` refuses,
+  // and the Worker then fails every request.
+  yield* Match.value(environment).pipe(
+    Match.when("test", () => backend.bind("ShopifyFake", { env: { SHOPIFY_FAKE_HTTP: "on" } })),
+    Match.whenOr("dev", "e2e", "staging", () => Effect.void),
+    Match.exhaustive,
+  );
   if (Option.isSome(options.e2eToken))
     yield* backend.bind("TestControl", { env: { E2E_TOKEN: options.e2eToken.value } });
 });

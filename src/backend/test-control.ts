@@ -1,7 +1,9 @@
 import { RuntimeContext } from "alchemy";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { ConnectionCaller } from "../contract/shop-actor.ts";
@@ -15,7 +17,9 @@ import { Auth } from "./auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { Members } from "./members.ts";
 import { ShopSessions } from "./shop-sessions.ts";
-import { Shopify } from "./shopify.ts";
+import { SHOP_GID_QUERY, ShopGidResponse, Shopify } from "./shopify.ts";
+import { ShopifyAdmin, type ShopifyAdminError } from "./shopify-admin.ts";
+import { ShopifyFake } from "./shopify-fake.ts";
 
 /** The stage's `E2E_TOKEN`, read once by the Worker, which serves test control only when it has one. */
 export class TestControlToken extends Context.Service<TestControlToken, string>()(
@@ -41,6 +45,8 @@ export const TestControlHandlers = TestControlRpcs.toLayer(
     const actors = yield* ShopActors;
     const shopify = yield* Shopify;
     const sessions = yield* ShopSessions;
+    const shopifyFake = yield* ShopifyFake;
+    const admin = yield* ShopifyAdmin;
 
     return TestControlRpcs.of({
       AddMember: ({ shop, email }) => members.add(shop, email),
@@ -62,14 +68,53 @@ export const TestControlHandlers = TestControlRpcs.toLayer(
           Effect.map(
             Option.match({
               onNone: () => null,
-              onSome: ({ shopGid, scope, accessTokenExpiresAt }) => ({
+              onSome: ({
                 shopGid,
                 scope,
                 accessTokenExpiresAt,
+                refreshTokenExpiresAt,
+                refreshLeaseUntil,
+              }) => ({
+                shopGid,
+                scope,
+                accessTokenExpiresAt,
+                refreshTokenExpiresAt,
+                refreshLeaseUntil,
               }),
             }),
           ),
         ),
+      ExpireAccessToken: ({ shop, refreshToken }) =>
+        Effect.gen(function* () {
+          const now = yield* Clock.currentTimeMillis;
+          yield* sessions.expireAccessToken(
+            shop,
+            now - 1000,
+            refreshToken === "invalidate" ? `shprt_invalid_${crypto.randomUUID()}` : undefined,
+          );
+          return {};
+        }),
+      PingAdmin: ({ shop }) =>
+        admin.graphqlDecode(shop, ShopGidResponse, SHOP_GID_QUERY).pipe(
+          Effect.map(({ shop: { id } }) => ({ ok: id })),
+          Effect.catch((error: ShopifyAdminError) =>
+            Effect.succeed(
+              Match.value(error).pipe(
+                Match.tags({
+                  OfflineSessionMissing: () => ({ error: "OfflineSessionMissing" as const }),
+                  ReauthorizationRequired: ({ reason }) => ({
+                    error: "ReauthorizationRequired" as const,
+                    reason,
+                  }),
+                  ShopifyUnavailable: () => ({ error: "ShopifyUnavailable" as const }),
+                }),
+                Match.exhaustive,
+              ),
+            ),
+          ),
+        ),
+      ScriptShopify: ({ replies }) => shopifyFake.script(replies).pipe(Effect.as({})),
+      ShopifyCalls: () => shopifyFake.takeCalls,
       IssueMagicLink: ({ email, returnTo }, { headers }) =>
         Effect.gen(function* () {
           if (!(yield* maySignIn(email)))
