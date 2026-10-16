@@ -81,6 +81,24 @@ export const requireStore = (environment: StoreEnvironment, variable: string, va
     ),
   );
 
+const SeedStore = Schema.Union([StoreOf("dev"), StoreOf("staging")]);
+
+/**
+ * `store` as a store `stores:seed` may write: a dev store, or a staging store, which gets the same
+ * table so staging has realistic data to check by hand. The e2e stores are not seeded, and
+ * production's never is; neither is a store outside the scheme, such as `sandbox-shop-NN`.
+ */
+export const requireSeedStore = (store: string) =>
+  Schema.decodeUnknownEffect(SeedStore)(store).pipe(
+    Effect.mapError(
+      (error) =>
+        new StoresError({
+          message: `${store} is not a dev or staging store of the scheme mw10013-<dev|staging>-shop-NN: stores:seed writes only those`,
+          cause: error,
+        }),
+    ),
+  );
+
 const StoreList = Schema.Struct({
   stores: Schema.Array(
     Schema.Struct({
@@ -469,9 +487,9 @@ const waitForOrders = Effect.fn("waitForOrders")(function* (domain: string) {
 });
 
 /**
- * Brings dev store `store` to the table in `seed/dev-shop.ts`, printing one line
+ * Brings dev or staging store `store` to the table in `seed/dev-shop.ts`, printing one line
  * per product and order. Every step reads before it writes, so a second run changes nothing. The
- * store must be a dev store of the scheme and must have store auth with the needed scopes
+ * store must be one {@link requireSeedStore} accepts and must have store auth with the needed scopes
  * ({@link requireStoreAuth}); both are checked before any mutation.
  *
  * 1. `productSet` each product that is missing or differs, by handle. No images.
@@ -484,15 +502,7 @@ const waitForOrders = Effect.fn("waitForOrders")(function* (domain: string) {
  *    token, and the CLI's store auth is an online one.
  */
 export const seedStore = Effect.fn("seedStore")(function* (store: string) {
-  const { environment, index } = yield* requireStore("dev", "--store", store).pipe(
-    Effect.mapError(
-      (error) =>
-        new StoresError({
-          message: `${store} is not a dev store of the scheme mw10013-dev-shop-NN: stores:seed writes only dev stores`,
-          cause: error,
-        }),
-    ),
-  );
+  const { environment, index } = yield* requireSeedStore(store);
   const domain = domainOf(storeNameOf(environment, index));
   yield* requireStoreAuth(domain);
 

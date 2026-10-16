@@ -1,10 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import * as DevShop from "../../../../seed/dev-shop.ts";
 import {
   CliResult,
   missingScopes,
+  requireSeedStore,
   resultText,
   SEED_SCOPES,
 } from "../../../../scripts/lib/stores.ts";
@@ -85,4 +87,33 @@ describe("the dev shop table", () => {
       assert.isTrue(product?.variants.some(({ value }) => value === line.value) ?? false);
     }
   });
+});
+
+describe("requireSeedStore", () => {
+  it.effect("accepts dev and staging stores", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* requireSeedStore("mw10013-dev-shop-03"), {
+        environment: "dev",
+        index: 3,
+      });
+      assert.deepStrictEqual(yield* requireSeedStore("mw10013-staging-shop-00"), {
+        environment: "staging",
+        index: 0,
+      });
+    }),
+  );
+
+  it.effect("refuses e2e, production and stores outside the scheme", () =>
+    Effect.gen(function* () {
+      for (const store of [
+        "mw10013-e2e-shop-00",
+        "mw10013-production-shop-00",
+        "sandbox-shop-00",
+        "mw10013-staging-shop-00.myshopify.com",
+      ]) {
+        const exit = yield* Effect.exit(requireSeedStore(store));
+        assert.isTrue(exit._tag === "Failure", store);
+      }
+    }),
+  );
 });

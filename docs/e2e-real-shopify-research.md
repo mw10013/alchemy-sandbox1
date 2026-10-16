@@ -183,6 +183,8 @@ Q2. Does staging get its own store (`mw10013-staging-shop-00`) instead of sharin
 - [ ] No, staging stays on `sandbox-shop-00`
 
 Recommended: Yes, after e2e works
+
+Status: done 2026-10-15. Baton Staging is installed on `mw10013-staging-shop-00` and uninstalled from `sandbox-shop-00`; `stores:seed` accepts `mw10013-staging-shop-NN`, and the runbook's "Staging's store" section covers installing and seeding it.
 :::
 
 :::question

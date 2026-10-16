@@ -2,7 +2,7 @@
 /**
  * `vp run stores:check | stores:seed`: this checkout's Shopify dev stores. `check` verifies that the
  * dev store (`SHOPIFY_DEV_STORE`) and the e2e store (`SHOPIFY_E2E_STORE`) exist; `seed` writes the
- * dev shop's table (`seed/dev-shop.ts`) into a dev store. Both read `.env` through `node --env-file`, and the logic is in
+ * dev shop's table (`seed/dev-shop.ts`) into a dev or staging store. Both read `.env` through `node --env-file`, and the logic is in
  * {@link checkStores} and {@link seedStore}.
  */
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
@@ -42,7 +42,7 @@ const seedCommand = Command.make(
   "seed",
   {
     store: Flag.String("store").pipe(
-      Flag.withDescription("The dev store to seed; default SHOPIFY_DEV_STORE"),
+      Flag.withDescription("The dev or staging store to seed; default SHOPIFY_DEV_STORE"),
       Flag.optional,
     ),
   },
@@ -54,7 +54,7 @@ const seedCommand = Command.make(
     }).pipe(Effect.mapError(toUserError)),
 ).pipe(
   Command.withDescription(
-    "Write the dev shop's products and orders into a dev store, and bring a store that drifted back to the table.",
+    "Write the dev shop's products and orders into a dev or staging store, and bring a store that drifted back to the table.",
   ),
 );
 

@@ -29,13 +29,20 @@ The e2e store needs only the e2e server (`vp run test:e2e` starts it); it is not
 
 ## Seed and reset
 
-`vp run stores:seed` (default: this checkout's dev store; `--store <name>` for another dev store) brings the store to `seed/dev-shop.ts`:
+`vp run stores:seed` (default: this checkout's dev store; `--store <name>` for another dev store or the staging store) brings the store to `seed/dev-shop.ts`:
 
 - products written by handle, with their real workflow tags and no seed marker; products the table does not name are archived;
 - every open order **without** the `seed` tag is cancelled, with no refund, restock or notice, so an order made by hand on a dev store does not survive the next seed;
 - three orders, each tagged `seed` and its own `seed-…` tag, created when missing. They are the data the help pages' screenshots are taken against.
 
-It is safe to run again: it only writes what differs. It refuses any store that is not `mw10013-dev-shop-NN`. Cancelled orders stay in the store's history; delete them in the admin if they get in the way.
+It is safe to run again: it only writes what differs. It refuses any store that is not `mw10013-dev-shop-NN` or `mw10013-staging-shop-NN`. Cancelled orders stay in the store's history; delete them in the admin if they get in the way.
+
+## Staging's store
+
+Staging uses `mw10013-staging-shop-00`. Its app, Baton Staging, is installed through the Dev Dashboard (Apps, Baton Staging, **Install app**), never with `shopify app dev`: that would point the app at a local tunnel. The store is seeded with the same table as the dev stores, once:
+
+1. `shopify store auth --store mw10013-staging-shop-00.myshopify.com --scopes read_products,write_products,read_orders,write_orders,read_draft_orders,write_draft_orders`, and click **Install** on the page it opens.
+2. `vp run stores:seed --store mw10013-staging-shop-00`. A second run reports everything as already there.
 
 ## The e2e admin login
 
