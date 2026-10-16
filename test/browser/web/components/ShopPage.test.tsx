@@ -13,7 +13,7 @@ import {
   reconnectAtom,
 } from "../../../../src/web/client/actor-connection.ts";
 import { EmailFromInput } from "../../../../src/contract/auth.ts";
-import { SANDBOX_SHOP } from "../../../../src/contract/shop.ts";
+import { SEED_SHOP } from "../../../../src/contract/shop.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_NOT_A_MEMBER,
@@ -42,7 +42,7 @@ const snapshotOf = (caller: ConnectionCaller, value: number): ShopPageData => ({
 });
 
 const memberPage = (data: ShopPageData) => (
-  <ShopPage role="member" shop={SANDBOX_SHOP} merchantToken={Option.none()} data={data} />
+  <ShopPage role="member" shop={SEED_SHOP} merchantToken={Option.none()} data={data} />
 );
 
 /** A notice from the actor, as the socket would deliver it to this registry's page. */
@@ -114,14 +114,14 @@ describe("ShopPage", () => {
     const screen = await renderInApp(
       <ShopPage
         role="merchant"
-        shop={SANDBOX_SHOP}
+        shop={SEED_SHOP}
         merchantToken={Option.some("token")}
         data={snapshotOf(merchant, 5)}
       />,
       registry,
     );
     await expect.element(screen.getByRole("status", { name: "Count" })).toHaveTextContent("5");
-    await expect.element(screen.getByText(`Merchant of ${SANDBOX_SHOP}`)).toBeVisible();
+    await expect.element(screen.getByText(`Merchant of ${SEED_SHOP}`)).toBeVisible();
     await expect.element(screen.getByRole("button", { name: "Increment" })).not.toBeInTheDocument();
 
     await screen.getByRole("button", { name: "Reset" }).click();

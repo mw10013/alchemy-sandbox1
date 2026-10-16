@@ -14,7 +14,7 @@ import {
   type RequestInfo,
 } from "../../../src/contract/auth.ts";
 import { type Member } from "../../../src/contract/members.ts";
-import { SANDBOX_SHOP, type ShopKey } from "../../../src/contract/shop.ts";
+import { SEED_SHOP, type ShopKey } from "../../../src/contract/shop.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
 import { MagicLinkDelivery } from "../../../src/backend/magic-link-delivery.ts";
@@ -37,8 +37,8 @@ const stranger = email("nobody@example.com");
 const member2 = email("m2@m.com");
 /** Baton's `Member` rows. The operator has none: it is a user row with the role `admin`. */
 const members: ReadonlyArray<Member> = [
-  { id: "mem-1", shop: SANDBOX_SHOP, email: member, createdAt: 1 },
-  { id: "mem-2", shop: SANDBOX_SHOP, email: member2, createdAt: 2 },
+  { id: "mem-1", shop: SEED_SHOP, email: member, createdAt: 1 },
+  { id: "mem-2", shop: SEED_SHOP, email: member2, createdAt: 2 },
 ];
 
 /** What the Better Auth hooks asked the actors to revoke; cleared by the tests that read it. */
@@ -193,7 +193,7 @@ describe("magic-link sign-in (inline delivery)", () => {
       assert.strictEqual(error._tag, "Unauthorized");
       assert.deepStrictEqual(
         revoked.map(({ key, by }) => ({ key, by })),
-        [{ key: SANDBOX_SHOP, by: "session" }],
+        [{ key: SEED_SHOP, by: "session" }],
       );
     }).pipe(Effect.provide(TestBackend({ delivery: "inline" }))),
   );

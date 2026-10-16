@@ -17,7 +17,7 @@ export const ORIGIN = "https://shopify.dev";
 /** Webhook snapshots follow this version; the other API sections follow Shopify's `latest` pages. */
 export const API_VERSION = "2026-10";
 const SITEMAP_URL = `${ORIGIN}/sitemap_standard.xml.gz`;
-const USER_AGENT = "alchemy-sandbox1/refs-shopify-docs";
+const USER_AGENT = "baton/refs-shopify-docs";
 const CONCURRENCY = 8;
 
 type DocSection = "apps" | "api" | "admin-graphql";

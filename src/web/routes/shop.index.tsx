@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { SANDBOX_SHOP } from "../../contract/shop.ts";
+import { SEED_SHOP } from "../../contract/shop.ts";
 import { useNavigateOnClick } from "../components/navigate.ts";
 
 export const Route = createFileRoute("/shop/")({
@@ -8,7 +8,7 @@ export const Route = createFileRoute("/shop/")({
     return (
       <s-page heading="Member area" inlineSize="small">
         <s-section heading="Shops">
-          <s-link {...navigate(`/shop/${SANDBOX_SHOP}`)}>{SANDBOX_SHOP}</s-link>
+          <s-link {...navigate(`/shop/${SEED_SHOP}`)}>{SEED_SHOP}</s-link>
         </s-section>
       </s-page>
     );

@@ -32,9 +32,7 @@ export interface StageConfigValues {
  * field; every deploy writes the whole record. The stack name is a logical id in state: renaming
  * it orphans every stage's record.
  */
-export class StageConfig extends Alchemy.Stack<StageConfig, StageConfigValues>()(
-  "Alchemy-sandbox1-config",
-) {}
+export class StageConfig extends Alchemy.Stack<StageConfig, StageConfigValues>()("baton-config") {}
 
 /**
  * The stack's state store, chosen by the stage's environment. State lives where the resources

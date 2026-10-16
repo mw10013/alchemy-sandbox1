@@ -1,4 +1,4 @@
-# Alchemy-sandbox1
+# Baton
 
 A minimal TanStack Start app (`Website.Vite`) that calls a private Effect
 backend Worker over a service binding, styled with Shopify's Polaris web components
@@ -30,7 +30,7 @@ in Baton's layout:
   (`@shopify/shopify-api`, token exchange) and keeps that in `ShopSession`. Server functions
   called from the embedded page carry App Bridge's bearer token. `/` redirects there when
   Shopify's `shop=` is in the URL.
-- `/shop` and `/shop/alchemy-sandbox1.myshopify.com` are the member area (Better Auth).
+- `/shop` and `/shop/seed-shop.myshopify.com` are the member area (Better Auth).
 - `/merchant/<shop>?token=<Shopify session token>` is the merchant page without App Bridge,
   which test control mints tokens for.
 
@@ -151,15 +151,15 @@ vp run refs:check
 ```
 
 References include Alchemy, Vite+, TanStack Start/Router/Query/Form, Effect, the Polaris
-CDN bundle, Cloudflare docs, Shopify docs, and the private Baton repository. Library tags follow exact `package.json` pins;
-Baton snapshots `main` using your existing `gh` authentication (`gh auth login`).
-Fetching requires `curl` and `tar`, plus `gh` for Baton.
+CDN bundle, Cloudflare docs, Shopify docs, and the archived Baton repository (`baton-legacy`). Library tags follow exact `package.json` pins;
+`baton-legacy` snapshots `main` using your existing `gh` authentication (`gh auth login`).
+Fetching requires `curl` and `tar`, plus `gh` for `baton-legacy`.
 
 Downloaded sources and `.ref.json` stamps live under `refs/`, which is excluded
 from Git, TypeScript, linting, formatting, and the app's test discovery. Do not
 import application code from refs. `check` exits nonzero for missing, stale, or
 invalid copies; branch snapshots report their fetch date, not upstream freshness.
-Refresh Baton explicitly with `vp run refs fetch baton`. Downloads are staged before
+Refresh `baton-legacy` explicitly with `vp run refs fetch baton-legacy`. Downloads are staged before
 replacement, and a failed download leaves the existing reference intact.
 
 Cloudflare docs snapshot the upstream `production` branch; refresh them with
@@ -183,7 +183,7 @@ Do not enable task caching for reference fetches.
 
 Staging runs on Cloudflare under stage `staging`:
 
-https://alchemy-sandbox1-website-staging-a6uwn3bzazl3yzgy.mw10013.workers.dev
+https://baton-website-staging-xyv5yq2naedqkzgg.mw10013.workers.dev
 
 The staging homepage and server snapshot were verified. Git pushes to `main`
 deploy through Cloudflare Builds using `pnpm exec vp run deploy:staging`.

@@ -10,14 +10,14 @@
 # have one web configuration file with the backend role". It must NOT be copied into
 # shopify.app.toml: the ACTIVE config's web_directories are re-matched with minimatch against
 # "shopify.web.toml", "./shopify.web.toml" does not match, and the app silently loads zero webs.
-# See refs/baton/docs/shopify-web-toml-conflict-research.md.
+# See refs/baton-legacy/docs/shopify-web-toml-conflict-research.md.
 #
 # Everything else mirrors shopify.app.toml (scopes, webhooks); keep the two in step. No `handle`: it
 # sets the App Home's admin URL slug, and changing one later breaks admin links.
 
 client_id = "54b4c701f5c568d4cf4a11fd42d6fe7b"
 name = "Baton Staging"
-application_url = "https://alchemy-sandbox1-website-staging-a6uwn3bzazl3yzgy.mw10013.workers.dev"
+application_url = "https://baton-website-staging-xyv5yq2naedqkzgg.mw10013.workers.dev"
 embedded = true
 web_directories = ["."]
 
@@ -26,9 +26,7 @@ web_directories = ["."]
 scopes = "read_orders,read_products"
 
 [auth]
-redirect_urls = [
-  "https://alchemy-sandbox1-website-staging-a6uwn3bzazl3yzgy.mw10013.workers.dev/api/auth",
-]
+redirect_urls = ["https://baton-website-staging-xyv5yq2naedqkzgg.mw10013.workers.dev/api/auth"]
 
 [webhooks]
 api_version = "2026-10"

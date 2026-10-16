@@ -10,7 +10,7 @@ import SignOutButton from "./SignOutButton.tsx";
 export default function MemberBar({ email }: { readonly email: string }) {
   return (
     <TopBar
-      title="Alchemy-sandbox1"
+      title="Baton"
       to="/shop"
       end={
         <>

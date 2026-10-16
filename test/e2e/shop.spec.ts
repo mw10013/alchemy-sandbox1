@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import { EmailFromInput } from "../../src/contract/auth.ts";
-import { SANDBOX_SHOP } from "../../src/contract/shop.ts";
+import { SEED_SHOP } from "../../src/contract/shop.ts";
 import {
   awaitHydration,
   control,
@@ -18,7 +18,7 @@ test.use({ storageState: "playwright/.auth/member.json" });
 /** Every test here reads or writes the one shop's count, so they take turns. */
 test.describe.configure({ mode: "serial" });
 
-const path = `/shop/${SANDBOX_SHOP}`;
+const path = `/shop/${SEED_SHOP}`;
 
 test("an increment in one window updates the count in another", async ({ context, goto, page }) => {
   await goto(path);
@@ -48,8 +48,8 @@ test("the merchant resets the count and a member sees it", async ({
 
   const merchantContext = await browser.newContext({ storageState: { cookies: [], origins: [] } });
   const merchantPage = await merchantContext.newPage();
-  await merchant(merchantPage, backend, SANDBOX_SHOP);
-  await expect(shop(merchantPage).merchantOf(SANDBOX_SHOP)).toBeVisible();
+  await merchant(merchantPage, backend, SEED_SHOP);
+  await expect(shop(merchantPage).merchantOf(SEED_SHOP)).toBeVisible();
   await expect(shop(merchantPage).increment).toHaveCount(0);
   await shop(merchantPage).reset.click();
 
@@ -101,7 +101,7 @@ test("a member removed while the page is open is told so", async ({ backend, bro
   await awaitHydration(page);
   await opened;
 
-  await backend(control((c) => c.RemoveMember({ shop: SANDBOX_SHOP, email })));
+  await backend(control((c) => c.RemoveMember({ shop: SEED_SHOP, email })));
 
   await expect(shop(page).notAMember).toBeVisible();
   await context.close();
@@ -143,9 +143,9 @@ test("a merchant whose Shopify session expired is told so", async ({ backend, br
   const merchantContext = await browser.newContext({ storageState: { cookies: [], origins: [] } });
   const page = await merchantContext.newPage();
   const { token } = await backend(
-    control((c) => c.IssueMerchantSessionToken({ shop: SANDBOX_SHOP, expiresInSeconds: -60 })),
+    control((c) => c.IssueMerchantSessionToken({ shop: SEED_SHOP, expiresInSeconds: -60 })),
   );
-  await page.goto(`/merchant/${SANDBOX_SHOP}?token=${encodeURIComponent(token)}`);
+  await page.goto(`/merchant/${SEED_SHOP}?token=${encodeURIComponent(token)}`);
   await awaitHydration(page);
   await expect(shop(page).expired).toBeVisible();
   await expect(shop(page).count).toHaveCount(0);

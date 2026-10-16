@@ -6,10 +6,10 @@ How this repository's long-lived worktrees are laid out, set up and used.
 
 There is a fixed set of worktrees, `wt-01`, `wt-02`, …, created once and reused task after task. Each checkout runs its own dev server (`shopify app dev`, which runs `alchemy dev`) on its own port and its own Shopify dev store.
 
-| Checkout | Branch  | Folder                 | `WEBSITE_PORT`       | `SHOPIFY_DEV_STORE`   | `SHOPIFY_E2E_STORE`   | herdr workspace                   |
-| -------- | ------- | ---------------------- | -------------------- | --------------------- | --------------------- | --------------------------------- |
-| main     | `main`  | wherever you cloned it | set in `.env` (3900) | `mw10013-dev-shop-00` | `mw10013-e2e-shop-00` | `alchemy-sandbox1`                |
-| `wt-NN`  | `wt-NN` | chosen by T3 Code      | main's port + NN     | `mw10013-dev-shop-NN` | `mw10013-e2e-shop-NN` | `wt-NN`, under `alchemy-sandbox1` |
+| Checkout | Branch  | Folder                 | `WEBSITE_PORT`       | `SHOPIFY_DEV_STORE`   | `SHOPIFY_E2E_STORE`   | herdr workspace        |
+| -------- | ------- | ---------------------- | -------------------- | --------------------- | --------------------- | ---------------------- |
+| main     | `main`  | wherever you cloned it | set in `.env` (3900) | `mw10013-dev-shop-00` | `mw10013-e2e-shop-00` | `baton`                |
+| `wt-NN`  | `wt-NN` | chosen by T3 Code      | main's port + NN     | `mw10013-dev-shop-NN` | `mw10013-e2e-shop-NN` | `wt-NN`, under `baton` |
 
 - **Folders:** `git worktree list` shows every checkout's folder, with main first. Look them up there; don't assume a path.
 - **Per checkout:** `.env`, `node_modules/`, `.alchemy/` (local data and Alchemy state for every local stage), `.logs/` and `.shopify/` (the CLI's record of the store). `vp run worktree:init` writes `WEBSITE_PORT`, `SHOPIFY_DEV_STORE` and `SHOPIFY_E2E_STORE` into a worktree's `.env`, makes sure both stores exist (`vp run stores:setup`) and refuses a port or store another checkout holds: two `shopify app dev` sessions on one store overwrite each other's app URL.
@@ -17,29 +17,9 @@ There is a fixed set of worktrees, `wt-01`, `wt-02`, …, created once and reuse
 - **Shared:** `refs/` and each deployed stage's `.env.<stage>` (today `.env.staging`) exist once, in main. `vp run worktree:init` gives each worktree a symlink to each.
 - **herdr:** each checkout's dev server runs in a `dev` tab in that checkout's herdr workspace.
 
-## Configure the project action (once)
-
-Do this in T3 before creating worktrees. Open a thread in **alchemy-sandbox1**, then open **Thread details** using the top-right panel toggle. Under **Workspace**, click **Add project script**. This opens **Add Action** for the thread's project.
-
-1. Set **Name** to `Bootstrap worktree` and paste this **Command**:
-
-   ```sh
-   if [ "$T3CODE_WORKTREE_PATH" != "$T3CODE_PROJECT_ROOT" ]; then
-     vp install --frozen-lockfile &&
-     vp run worktree:init &&
-     vp run dev &&
-     vp run dev:status
-   fi
-   ```
-
-2. Enable **Run automatically on worktree creation** and **Wait for it to finish before the agent starts**. Leave the settle and automatic preview options off; no keybinding or preview URL is needed.
-3. Click **Save action**. Reopen it to confirm the command and both switches were saved. It should be the project's only worktree setup action.
-
-T3 runs this action in the worktree's terminal before starting the agent. The guard skips the main checkout. Keep the thread's permission setting on **Auto**. See [the research](worktree-bootstrap-environment-research.md#manual-project-action-setup) for configuration details and rationale.
-
 ## Set up a worktree
 
-This assumes the project action above has been saved. Create each worktree once, from a T3 thread on the main checkout.
+Create each worktree once, from a T3 thread on the main checkout. There is no T3 project action for setup: the new worktree's agent runs the bootstrap itself.
 
 1. **Pick the next free `NN`.** `git worktree list` shows the existing ones. `main` must already contain the worktree scripts (`scripts/worktree.ts`, `scripts/dev.ts`), because a new worktree only gets committed files.
 2. **Create it with T3's `t3_thread_launch` tool:**
@@ -53,24 +33,31 @@ This assumes the project action above has been saved. Create each worktree once,
        "branch": "wt-NN",
        "startFromOrigin": false
      },
-     "message": "Review the Bootstrap worktree action result and report the dev URL, health, port, and Herdr placement. Report any setup failure."
+     "message": "Bootstrap this worktree per docs/worktrees-runbook.md: run `vp install --frozen-lockfile`, `vp run worktree:init`, `vp run dev` and `vp run dev:status`, in that order, stopping at the first failure. Report the dev URL, health, port and herdr placement, or the failing command and its output."
    }
    ```
 
-   T3 creates the named branch and folder, runs the setup action, and starts the agent after setup succeeds. Keep `workspaceStrategy.branch` explicit; use this launch instead of the UI's **New worktree** option.
+   T3 creates the named branch and folder and starts the agent there. Keep `workspaceStrategy.branch` explicit; use this launch instead of the UI's **New worktree** option. Keep the thread's permission setting on **Auto**, so the bootstrap commands run without prompts.
 
-3. **Check what the new thread reports:**
+3. **The new thread bootstraps the worktree,** in its own checkout:
+
+   ```sh
+   vp install --frozen-lockfile
+   vp run worktree:init
+   vp run dev
+   vp run dev:status
+   ```
+
+4. **Check what it reports:**
    - `pnpm port` prints main's port + NN;
    - `vp run dev:status` reports healthy;
-   - herdr shows `wt-NN` under `alchemy-sandbox1`, with a `dev` tab.
+   - herdr shows `wt-NN` under `baton`, with a `dev` tab.
 
 Before seeding the new worktree's dev store, a person authorizes it once with `shopify store auth`; see [Shopify stores](./shopify-stores-runbook.md).
 
-`vp run worktree:init` is safe to run again; a second run only checks. If it fails, it says what to fix.
+`vp run worktree:init` is safe to run again; a second run only checks. If it fails, it says what to fix; fix it and rerun the bootstrap from that command.
 
 **If the launch fails, stop and tell the user.** Don't work around it, for example by creating the worktree with git: T3 decides where worktrees live, and that can change between T3 releases.
-
-If setup fails, inspect the setup terminal's output. If no setup action ran, check the project action configuration before trying again.
 
 ## Open a thread on a worktree
 

@@ -10,7 +10,7 @@ import * as RpcTest from "effect/rpc/RpcTest";
 import * as Schema from "effect/Schema";
 import { EmailFromInput } from "../../../src/contract/auth.ts";
 import { type Member } from "../../../src/contract/members.ts";
-import { SANDBOX_SHOP, ShopKey } from "../../../src/contract/shop.ts";
+import { SEED_SHOP, ShopKey } from "../../../src/contract/shop.ts";
 import { E2eEmail, TestControlRpcs } from "../../../src/contract/test-control.ts";
 import { type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
 import { QuietLogs, testAuth, testShopify } from "./layers.ts";
@@ -28,9 +28,9 @@ const email = Schema.decodeUnknownSync(EmailFromInput);
 const member = email("m1@m.com");
 const stranger = email("nobody@example.com");
 const session: ShopSessionRow = {
-  shop: SANDBOX_SHOP,
+  shop: SEED_SHOP,
   shopGid: "gid://shopify/Shop/1",
-  shopAgentId: SANDBOX_SHOP,
+  shopAgentId: SEED_SHOP,
   scope: "read_orders,read_products",
   accessTokenExpiresAt: 1_900_000_000_000,
   accessToken: "shpat_secret_access",
@@ -41,7 +41,7 @@ const session: ShopSessionRow = {
   planBoundaryAt: null,
 };
 const members: ReadonlyArray<Member> = [
-  { id: "mem-1", shop: SANDBOX_SHOP, email: member, createdAt: 1 },
+  { id: "mem-1", shop: SEED_SHOP, email: member, createdAt: 1 },
 ];
 
 /** What test control asked the actors to revoke; cleared by the tests that read it. */
@@ -115,24 +115,20 @@ describe("test control", () => {
     Effect.gen(function* () {
       const client = yield* RpcTest.makeClient(TestControlRpcs);
       const address = Schema.decodeUnknownSync(E2eEmail)("new@e2e.test");
-      const added = yield* client
-        .AddMember({ shop: SANDBOX_SHOP, email: address })
-        .pipe(authorized);
+      const added = yield* client.AddMember({ shop: SEED_SHOP, email: address }).pipe(authorized);
       assert.strictEqual(added.email, address);
-      assert.strictEqual(added.shop, SANDBOX_SHOP);
+      assert.strictEqual(added.shop, SEED_SHOP);
       const again = yield* client
-        .AddMember({ shop: SANDBOX_SHOP, email: address })
+        .AddMember({ shop: SEED_SHOP, email: address })
         .pipe(authorized, Effect.flip);
       assert.strictEqual(again._tag, "MemberExists");
       revoked.length = 0;
       const removed = yield* client
-        .RemoveMember({ shop: SANDBOX_SHOP, email: address })
+        .RemoveMember({ shop: SEED_SHOP, email: address })
         .pipe(authorized);
       assert.isTrue(removed.removed);
-      assert.deepStrictEqual(revoked, [{ key: SANDBOX_SHOP, by: "member", id: added.id }]);
-      const gone = yield* client
-        .RemoveMember({ shop: SANDBOX_SHOP, email: address })
-        .pipe(authorized);
+      assert.deepStrictEqual(revoked, [{ key: SEED_SHOP, by: "member", id: added.id }]);
+      const gone = yield* client.RemoveMember({ shop: SEED_SHOP, email: address }).pipe(authorized);
       assert.isFalse(gone.removed);
     }).pipe(Effect.provide(TestBackend())),
   );
@@ -140,7 +136,7 @@ describe("test control", () => {
   it.live("GetShopSession returns the non-secret fields, or null for a shop without one", () =>
     Effect.gen(function* () {
       const client = yield* RpcTest.makeClient(TestControlRpcs);
-      const found = yield* client.GetShopSession({ shop: SANDBOX_SHOP }).pipe(authorized);
+      const found = yield* client.GetShopSession({ shop: SEED_SHOP }).pipe(authorized);
       assert.deepStrictEqual(found, {
         shopGid: "gid://shopify/Shop/1",
         scope: "read_orders,read_products",

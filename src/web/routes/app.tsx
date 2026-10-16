@@ -56,7 +56,7 @@ export const Route = createFileRoute("/app")({
   component: function AppHome() {
     const { shop } = Route.useRouteContext();
     return (
-      <s-page heading="Alchemy-sandbox1">
+      <s-page heading="Baton">
         <s-section heading="We got here">
           <s-paragraph>{shop}</s-paragraph>
         </s-section>

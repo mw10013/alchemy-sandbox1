@@ -29,7 +29,7 @@ Start with `vp run dev`. Open `http://localhost:$(pnpm port)`. Plain `vp dev` is
 ## Logs
 Dev logs: `.logs/dev/current`. Rotated archives: `.logs/dev/`.
 E2E server logs: `.logs/e2e/current`. Rotated archives: `.logs/e2e/`.
-Staging logs: use `cf o11y telemetry query` on `cloudflare-workers`, filtering `$metadata.service` to `alchemy-sandbox1-website-staging-a6uwn3bzazl3yzgy`.
+Staging logs: use `cf o11y telemetry query` on `cloudflare-workers`, filtering `$metadata.service` to `baton-website-staging-xyv5yq2naedqkzgg` (Website) or `baton-backend-staging-zegddanlffv4ifey` (Backend).
 
 ## UI: Polaris web components
 - Layout lives only in named parts under `src/web/components/screen/`. Elsewhere, no `s-stack`, `s-grid`, `s-box` or layout props (`gap`, `padding`, …); a new shape is a new part.

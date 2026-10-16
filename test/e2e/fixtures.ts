@@ -8,7 +8,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { RpcClient, type RpcClientError, type RpcGroup, RpcSerialization } from "effect/rpc";
 import * as Schema from "effect/Schema";
 import { EmailFromInput } from "../../src/contract/auth.ts";
-import { SANDBOX_SHOP, type ShopKey } from "../../src/contract/shop.ts";
+import { SEED_SHOP, type ShopKey } from "../../src/contract/shop.ts";
 import { E2eEmail, TestControlRpcs } from "../../src/contract/test-control.ts";
 import { e2eServerURL, e2eToken } from "../../playwright.config.ts";
 
@@ -91,13 +91,13 @@ export const control = <A, E>(
   }).pipe(Effect.scoped);
 
 /**
- * A member of its own: an `@e2e.test` address added to the sandbox shop through test control
+ * A member of its own: an `@e2e.test` address added to the seed shop through test control
  * and signed in, in a fresh browser context. A test that signs out, is removed or opens several
  * windows uses one, so it never touches the shared member's session or sockets.
  */
 export const ownMember = async (browser: Browser, backend: Run, name: string) => {
   const email = Schema.decodeUnknownSync(E2eEmail)(`${name}@e2e.test`);
-  await backend(control((c) => c.AddMember({ shop: SANDBOX_SHOP, email }).pipe(Effect.ignore)));
+  await backend(control((c) => c.AddMember({ shop: SEED_SHOP, email }).pipe(Effect.ignore)));
   const { link } = await backend(control((c) => c.IssueMagicLink({ email })));
   const context = await browser.newContext();
   const page = await context.newPage();

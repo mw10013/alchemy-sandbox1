@@ -67,7 +67,13 @@ const refs: readonly Ref[] = [
   { _tag: "ShopifyDocs", name: "shopify-docs", repo: ShopifyDocs.ORIGIN, optIn: true },
   // The URL the site loads, so the snapshot follows the channel the pages run on.
   { _tag: "Cdn", name: "polaris", repo: new URL(POLARIS_URL).origin, url: POLARIS_URL },
-  { _tag: "Branch", name: "baton", repo: "mw10013/baton", branch: "main", private: true },
+  {
+    _tag: "Branch",
+    name: "baton-legacy",
+    repo: "mw10013/baton-legacy",
+    branch: "main",
+    private: true,
+  },
   {
     _tag: "Branch",
     name: "cloudflare-docs",

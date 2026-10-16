@@ -2,7 +2,7 @@
 DROP TABLE member;
 
 -- Baton's shop and membership tables, copied unchanged from Baton's
--- migrations/0001_init.sql (refs/baton), comments included; the D1_TABLES and
+-- migrations/0001_init.sql (refs/baton-legacy), comments included; the D1_TABLES and
 -- EpochMillis rules they name are Baton's. Until the Shopify slice, the
 -- ShopSession token and plan columns hold seed values, never real tokens.
 -- Better Auth's tables are not copied: @alchemy.run/better-auth migrates them.

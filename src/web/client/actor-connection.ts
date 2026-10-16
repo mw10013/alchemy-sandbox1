@@ -7,7 +7,7 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type * as Socket from "effect/socket/Socket";
 import { ReturnPath } from "../../contract/auth.ts";
-import { SANDBOX_SHOP, type ShopKey } from "../../contract/shop.ts";
+import { SEED_SHOP, type ShopKey } from "../../contract/shop.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_FORBIDDEN,
@@ -20,7 +20,7 @@ import {
  * reads any socket atom. This and the other plain state atoms here are kept alive: they are
  * set while nothing on the page reads them yet, and an unread atom would drop the value.
  */
-export const shopKeyAtom = Atom.make<ShopKey>(SANDBOX_SHOP).pipe(Atom.keepAlive);
+export const shopKeyAtom = Atom.make<ShopKey>(SEED_SHOP).pipe(Atom.keepAlive);
 
 /**
  * The merchant's Shopify session token, set by the merchant route from its `token` search

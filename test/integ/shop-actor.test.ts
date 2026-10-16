@@ -9,7 +9,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
-import { SANDBOX_SHOP, ShopKey } from "../../src/contract/shop.ts";
+import { SEED_SHOP, ShopKey } from "../../src/contract/shop.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_FORBIDDEN,
@@ -47,7 +47,7 @@ const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
 const stack = beforeAll(deploy(Stack));
 afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
 
-const key = SANDBOX_SHOP;
+const key = SEED_SHOP;
 const otherShop = Schema.decodeUnknownSync(ShopKey)("other-shop.myshopify.com");
 const m1 = email("m1@m.com");
 const m2 = email("m2@m.com");

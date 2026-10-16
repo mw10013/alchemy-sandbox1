@@ -60,7 +60,7 @@ export const Route = createRootRouteWithContext<{ registry: AtomRegistry.AtomReg
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Alchemy-sandbox1" },
+      { title: "Baton" },
       { name: "description", content: "TanStack Start, Effect and Polaris on Cloudflare Workers." },
     ],
     links: [{ rel: "stylesheet", href: stylesheet }],

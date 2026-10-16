@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { SANDBOX_SHOP } from "../../src/contract/shop.ts";
+import { SEED_SHOP } from "../../src/contract/shop.ts";
 import { E2eEmail } from "../../src/contract/test-control.ts";
 import { control, expect, test } from "./fixtures.ts";
 
@@ -19,8 +19,8 @@ test("the admin sees the seed members with their shops", async ({ goto, page }) 
     await expect(headers.nth(index)).toHaveAccessibleName(name);
   const literal = (text: string) => text.replaceAll(".", "\\.");
   for (const [shop, email] of [
-    ["alchemy-sandbox1.myshopify.com", "m1@m.com"],
-    ["alchemy-sandbox1.myshopify.com", "m2@m.com"],
+    ["seed-shop.myshopify.com", "m1@m.com"],
+    ["seed-shop.myshopify.com", "m2@m.com"],
     ["other-shop.myshopify.com", "m1@m.com"],
   ] as const)
     await expect(
@@ -33,7 +33,7 @@ test("the admin sees the seed members with their shops", async ({ goto, page }) 
 
 test("a member added through test control is listed", async ({ backend, goto, page }) => {
   const email = Schema.decodeUnknownSync(E2eEmail)(`e2e-${test.info().testId}@e2e.test`);
-  await backend(control((c) => c.AddMember({ shop: SANDBOX_SHOP, email })));
+  await backend(control((c) => c.AddMember({ shop: SEED_SHOP, email })));
   await goto("/admin/members");
   await expect(page.getByRole("gridcell", { name: email })).toBeVisible();
 });

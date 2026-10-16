@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import http from "node:http";
-import { SANDBOX_SHOP, ShopKey } from "../../src/contract/shop.ts";
+import { SEED_SHOP, ShopKey } from "../../src/contract/shop.ts";
 import { CONNECTION_CLOSE_NOT_A_MEMBER } from "../../src/contract/shop-actor.ts";
 import { awaitHydration, expect, ownMember, test } from "./fixtures.ts";
 import { shop } from "./screens.ts";
@@ -40,7 +40,7 @@ test("an upgrade from another site is refused, and the same one from this site o
   context,
 }) => {
   if (baseURL === undefined) throw new Error("use.baseURL is not set");
-  const url = new URL(`/api/actor/${SANDBOX_SHOP}`, baseURL);
+  const url = new URL(`/api/actor/${SEED_SHOP}`, baseURL);
   const cookie = (await context.cookies(url.toString()))
     .map(({ name, value }) => `${name}=${value}`)
     .join("; ");
@@ -55,7 +55,7 @@ test("a visitor who is not a member sees the not-a-member page, and the gate clo
   backend,
   browser,
 }) => {
-  // An own member is a member of the sandbox shop only.
+  // An own member is a member of the seed shop only.
   const { context, page } = await ownMember(
     browser,
     backend,

@@ -1,4 +1,4 @@
-name = "alchemy-sandbox1"
+name = "baton"
 roles = ["frontend", "backend"]
 webhooks_path = "/webhooks/app/uninstalled"
 # No `port`: the CLI reads BACKEND_PORT from the app:dev script, which sets it to this

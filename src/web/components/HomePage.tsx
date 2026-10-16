@@ -24,7 +24,7 @@ export default function HomePage({
   const dashboard = me && homeFor(me.role);
 
   return (
-    <s-page heading="Alchemy-sandbox1" inlineSize="small">
+    <s-page heading="Baton" inlineSize="small">
       {dashboard ? (
         <>
           <s-button slot="secondary-actions" variant="secondary" {...navigate(dashboard)}>

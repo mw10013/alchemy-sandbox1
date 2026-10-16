@@ -58,7 +58,7 @@ export type WebsiteEnv = Cloudflare.InferEnv<typeof Website>;
  * a sign-in page or a test runner takes them; every other stage mails them.
  */
 export default Alchemy.Stack(
-  "Alchemy-sandbox1",
+  "baton",
   { providers: Cloudflare.providers(), state: stageState },
   Effect.gen(function* () {
     const website = yield* Website;

@@ -16,7 +16,7 @@ const INTEG_E2E_TOKEN = "integ";
  * test gets them back from test control's `IssueMagicLink`, and test control is on.
  */
 export default Alchemy.Stack(
-  "Alchemy-sandbox1-test",
+  "baton-test",
   { providers: Cloudflare.providers(), state: stageState },
   Effect.gen(function* () {
     const backend = yield* Backend;

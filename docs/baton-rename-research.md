@@ -83,13 +83,13 @@ The folder move (step 6) is the last thing the thread that started the rename do
 5. Old local checkout: `~/Documents/src/baton` → `~/Documents/src/baton-legacy`, `git worktree repair` (its herdr worktrees `~/.herdr/worktrees/baton/wt-01` and `wt-02` point at it), and `git remote set-url`.
 6. This checkout: move `~/Documents/src/alchemy-sandbox1` → `~/Documents/src/baton`, then `git remote set-url origin https://github.com/mw10013/baton.git`. Copy the Claude memory folder (`memory/`) to `-Users-mw-Documents-src-baton`. Point the old `baton` T3 project at `~/Documents/src/baton-legacy` (title `baton-legacy`), create a new `baton` project for `~/Documents/src/baton`, and archive the `alchemy-sandbox1` project (Q7). Changing T3 projects needs a full-access thread or the T3 UI. Close the old herdr workspace.
 
-**Phase C: rename in the code** (agent, in `~/Documents/src/baton`)
+**Phase C: rename in the code** (agent, in `~/Documents/src/baton`). Done 2026-10-15: `vp check`, `vp test` and `vp run test:e2e` green; `SANDBOX_ENVIRONMENT` and the `sandbox-shop-NN` test strings left as they are.
 
 7. Everything in §2.1 except the staging URLs, which do not exist yet. `scripts/refs.ts`: the old repository's new name and folder (Q3); then `vp run refs fetch <name>` and delete the old `refs/baton`.
 8. Living docs per Q6. `docs/worktrees-runbook.md` drops the T3 "Bootstrap worktree" project action (decided 2026-10-16: worktrees are rare and the action was easy to forget); instead an agent creates the worktree with `t3_thread_launch` and runs the bootstrap commands (`vp install --frozen-lockfile`, `vp run worktree:init`, `vp run dev`, `vp run dev:status`) in it, following the runbook.
 9. `vp check --fix`, `vp test`, `vp run test:e2e`. These recreate the local stages under the new name, which also verifies that local works.
 
-**Phase D: bring staging back** (laptop, then Workers Builds)
+**Phase D: bring staging back** (laptop, then Workers Builds). Steps 10–14 done 2026-10-15: Website `baton-website-staging-xyv5yq2naedqkzgg`, Backend `baton-backend-staging-zegddanlffv4ifey`; Workers Builds reconnected with the same token; embedded load and token exchange verified.
 
 10. `vp run stage-config --stage staging` writes the `Baton-config` record from `.env.staging`.
 11. `vp exec alchemy plan --stage staging` shows only creates, then `vp run deploy:staging`. Note the new Website URL.

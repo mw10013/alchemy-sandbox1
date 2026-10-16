@@ -12,10 +12,8 @@ export const ShopKey = Schema.String.check(
 ).pipe(Schema.brand("ShopKey"));
 export type ShopKey = typeof ShopKey.Type;
 
-/** The sandbox's own shop. The member navigation links to it. */
-export const SANDBOX_SHOP: ShopKey = Schema.decodeUnknownSync(ShopKey)(
-  "alchemy-sandbox1.myshopify.com",
-);
+/** The seed data's shop: a placeholder, not a real store. The member navigation links to it. */
+export const SEED_SHOP: ShopKey = Schema.decodeUnknownSync(ShopKey)("seed-shop.myshopify.com");
 
 /**
  * `shopSnapshot`'s input, shared by both sides of the binding; see `ShoutInput`. `sessionToken`

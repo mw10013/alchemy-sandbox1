@@ -16,7 +16,7 @@ import {
   type RequestInfo,
 } from "../../../src/contract/auth.ts";
 import { type Member } from "../../../src/contract/members.ts";
-import { SANDBOX_SHOP, type ShopKey } from "../../../src/contract/shop.ts";
+import { SEED_SHOP, type ShopKey } from "../../../src/contract/shop.ts";
 import type { ConnectionCaller } from "../../../src/contract/shop-actor.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
@@ -34,19 +34,19 @@ const admin = email("a@a.com");
 const member = email("m1@m.com");
 const stranger = email("nobody@example.com");
 const members: ReadonlyArray<Member> = [
-  { id: "mem-1", shop: SANDBOX_SHOP, email: member, createdAt: 1 },
+  { id: "mem-1", shop: SEED_SHOP, email: member, createdAt: 1 },
 ];
 const merchant: ConnectionCaller = { role: "merchant" };
 
-/** The seed's row for the sandbox shop: a stored token that never expires, so no exchange runs. */
-const sandboxSession: ShopSessionRow = {
-  shop: SANDBOX_SHOP,
+/** The seed's row for the seed shop: a stored token that never expires, so no exchange runs. */
+const seedSession: ShopSessionRow = {
+  shop: SEED_SHOP,
   shopGid: "gid://shopify/Shop/1",
-  shopAgentId: SANDBOX_SHOP,
+  shopAgentId: SEED_SHOP,
   scope: "read_orders,write_orders",
   accessTokenExpiresAt: 4102444800000,
-  accessToken: "shpat_fake_alchemy_sandbox1",
-  refreshToken: "shprt_fake_alchemy_sandbox1",
+  accessToken: "shpat_fake_seed_shop",
+  refreshToken: "shprt_fake_seed_shop",
   refreshTokenExpiresAt: 4102444800000,
   planHandle: "basic",
   planHandleExpiresAt: 4102444800000,
@@ -79,7 +79,7 @@ const TestBackend = ({
         extra: Layer.mergeAll(
           SignInLimiter.layerTest(allow),
           Layer.succeed(ShopAccess, { resolve: () => gate }),
-          testShopify([sandboxSession]),
+          testShopify([seedSession]),
         ),
       }),
     ),
@@ -179,7 +179,7 @@ describe("BackendApi.requestMagicLink", () => {
 });
 
 describe("BackendApi.shopSnapshot", () => {
-  const key: ShopKey = SANDBOX_SHOP;
+  const key: ShopKey = SEED_SHOP;
 
   it.live("answers the gate's caller and the actor's snapshot", () =>
     Effect.gen(function* () {
@@ -213,9 +213,9 @@ describe("BackendApi.shopSnapshot", () => {
 });
 
 describe("BackendApi.authenticateAdmin", () => {
-  /** A session token for the sandbox shop, signed by the app `options` names. */
+  /** A session token for the seed shop, signed by the app `options` names. */
   const tokenFrom = (options: { apiKey: string; apiSecret: string }) =>
-    Effect.flatMap(Shopify, (shopify) => shopify.signSessionToken({ shop: SANDBOX_SHOP })).pipe(
+    Effect.flatMap(Shopify, (shopify) => shopify.signSessionToken({ shop: SEED_SHOP })).pipe(
       Effect.provide(
         Shopify.layerWith({
           apiKey: options.apiKey,
@@ -230,9 +230,9 @@ describe("BackendApi.authenticateAdmin", () => {
       const api = yield* BackendApi;
       const sessionToken = yield* tokenFrom(TEST_SHOPIFY_APP);
       const answer = yield* api.authenticateAdmin(withCookie(undefined), { sessionToken });
-      assert.deepStrictEqual(answer, { shop: SANDBOX_SHOP, shopGid: sandboxSession.shopGid });
-      const row = yield* (yield* ShopSessions).find(SANDBOX_SHOP);
-      assert.deepStrictEqual(row, Option.some(sandboxSession));
+      assert.deepStrictEqual(answer, { shop: SEED_SHOP, shopGid: seedSession.shopGid });
+      const row = yield* (yield* ShopSessions).find(SEED_SHOP);
+      assert.deepStrictEqual(row, Option.some(seedSession));
     }).pipe(Effect.provide(TestBackend())),
   );
 
