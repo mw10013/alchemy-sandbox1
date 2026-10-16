@@ -13,7 +13,8 @@ vp run dev        # start or adopt this checkout's dev server
 vp run dev:status
 vp run dev:logs
 vp run dev:stop
-vp run db:reset    # wipe local D1 and Durable Objects, reseed, restart
+vp run db:reset    # wipe local D1 and Durable Objects, reseed, restart, open the app, load the fixture
+vp run fixture     # put the dev store back into the dev fixture
 ```
 
 ## Staging

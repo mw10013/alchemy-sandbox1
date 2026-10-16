@@ -46,8 +46,10 @@
  *
  * `db:reset` stops the server, removes this checkout's local data (`.alchemy/local`: D1,
  * simulated email, Durable Objects) and local state (`.alchemy/state`) for every stage, and
- * starts the server, which recreates, migrates and seeds the database. Dev, test and e2e keep
- * everything in the checkout, so nothing in the cloud is touched.
+ * starts the server, which recreates, migrates and seeds the database. Then it opens the app in
+ * the dev store and applies the dev fixture ({@link openAppAndApplyFixture}). Dev, test and e2e
+ * keep everything in the checkout, so nothing in the cloud is touched; the fixture's store half
+ * writes the dev store.
  */
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as Array from "effect/Array";
@@ -67,6 +69,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { runCommand } from "./lib/command.ts";
+import { applyFixture } from "./lib/fixture.ts";
 import * as Herdr from "./lib/herdr.ts";
 import { checkoutKind, currentBranch, stage } from "./lib/worktree.ts";
 
@@ -560,52 +563,62 @@ const summarize = Effect.fn("summarize")(function* (port: number, store: string,
 const toUserError = <E extends { readonly message: string }>(error: E) =>
   new CliError.UserError({ cause: error, userMessage: error.message });
 
-/** Starts the server, or adopts the one running; see the module JSDoc. */
-const startServer = Effect.gen(function* () {
-  const port = yield* loadPort;
-  const store = yield* loadStore;
-  const foreground = yield* withLock(
-    Effect.gen(function* () {
-      const server = yield* findServer;
-      if (server.pids.length > 0) {
-        yield* Console.log(`ok    adopted the running server: ${describeServer(server)}`);
+/**
+ * Starts the server, or adopts the one running; see the module JSDoc. `afterReady` runs once the
+ * server answers and is summarized, also beside a foreground server, which holds the terminal
+ * until it exits.
+ */
+const startServer = <E extends { readonly message: string }, R>(
+  afterReady: Effect.Effect<void, E, R>,
+) =>
+  Effect.gen(function* () {
+    const port = yield* loadPort;
+    const store = yield* loadStore;
+    const foreground = yield* withLock(
+      Effect.gen(function* () {
+        const server = yield* findServer;
+        if (server.pids.length > 0) {
+          yield* Console.log(`ok    adopted the running server: ${describeServer(server)}`);
+          yield* waitAnswering(port);
+          yield* summarize(port, store, describeServer(server));
+          yield* afterReady;
+          return Option.none();
+        }
+        if ((yield* portListeners(port)).length > 0)
+          return yield* fail(
+            `port ${String(port)} is held by another process: lsof -nP -iTCP:${String(port)} -sTCP:LISTEN`,
+          );
+        const placement = yield* placeServer;
+        const handle = yield* launchServer(placement);
+        if (Option.isSome(handle)) return handle;
         yield* waitAnswering(port);
-        yield* summarize(port, store, describeServer(server));
-        return Option.none();
-      }
-      if ((yield* portListeners(port)).length > 0)
-        return yield* fail(
-          `port ${String(port)} is held by another process: lsof -nP -iTCP:${String(port)} -sTCP:LISTEN`,
+        yield* summarize(
+          port,
+          store,
+          Match.valueTags(placement, {
+            Pane: ({ paneId }) => `herdr tab "${DEV_TAB}" (pane ${paneId})`,
+            Background: () => "background",
+            Foreground: () => "this terminal",
+          }),
         );
-      const placement = yield* placeServer;
-      const handle = yield* launchServer(placement);
-      if (Option.isSome(handle)) return handle;
-      yield* waitAnswering(port);
-      yield* summarize(
-        port,
-        store,
-        Match.valueTags(placement, {
-          Pane: ({ paneId }) => `herdr tab "${DEV_TAB}" (pane ${paneId})`,
-          Background: () => "background",
-          Foreground: () => "this terminal",
-        }),
-      );
-      return Option.none();
-    }),
-  );
-  // The lock is released before waiting on a foreground server, so an agent can adopt it.
-  if (Option.isSome(foreground)) {
-    yield* waitAnswering(port).pipe(
-      Effect.flatMap(() => summarize(port, store, "this terminal")),
-      Effect.catch((error) => Console.error(`dev: ${error.message}`)),
-      Effect.forkChild,
+        yield* afterReady;
+        return Option.none();
+      }),
     );
-    yield* foreground.value.exitCode;
-  }
-}).pipe(Effect.scoped);
+    // The lock is released before waiting on a foreground server, so an agent can adopt it.
+    if (Option.isSome(foreground)) {
+      yield* waitAnswering(port).pipe(
+        Effect.flatMap(() => summarize(port, store, "this terminal")),
+        Effect.flatMap(() => afterReady),
+        Effect.catch((error) => Console.error(`dev: ${error.message}`)),
+        Effect.forkChild,
+      );
+      yield* foreground.value.exitCode;
+    }
+  }).pipe(Effect.scoped);
 
 const startCommand = Command.make("start", {}, () =>
-  startServer.pipe(Effect.mapError(toUserError)),
+  startServer(Effect.void).pipe(Effect.mapError(toUserError)),
 ).pipe(Command.withDescription("Start the dev server, or adopt the one already running."));
 
 const stopCommand = Command.make("stop", {}, () =>
@@ -614,6 +627,22 @@ const stopCommand = Command.make("stop", {}, () =>
     yield* withLock(step("stop", stopServer(port)));
   }).pipe(Effect.mapError(toUserError)),
 ).pipe(Command.withDescription("Stop the dev server wherever it runs."));
+
+/**
+ * What `db:reset` does once the server answers: a reset leaves the dev store without its
+ * `ShopSession`, which only an embedded load writes, so it opens the app in the default browser,
+ * where the person is already signed in to Shopify, then applies the dev fixture, waiting for that
+ * load. Where `open` is missing, it prints the URL to open instead.
+ */
+const openAppAndApplyFixture = Effect.gen(function* () {
+  const url = adminUrl(yield* loadStore, yield* loadClientId);
+  yield* step(`open ${url}`, runCommand("open", [url])).pipe(
+    Effect.catch(() => Console.log(`open   ${url} in a browser signed in to Shopify`)),
+  );
+  yield* applyFixture({ waitForInstall: true }).pipe(
+    Effect.mapError((error) => fail(error.message)),
+  );
+});
 
 const dbResetCommand = Command.make("db:reset", {}, () =>
   Effect.gen(function* () {
@@ -625,11 +654,11 @@ const dbResetCommand = Command.make("db:reset", {}, () =>
         `remove ${dir}`,
         fs.remove(path.join(ROOT, dir), { recursive: true, force: true }),
       );
-    yield* startServer;
+    yield* startServer(openAppAndApplyFixture);
   }).pipe(Effect.mapError(toUserError)),
 ).pipe(
   Command.withDescription(
-    "Reset the dev database: stop, remove local data and local state, start.",
+    "Reset the dev database: stop, remove local data and local state, start, open the app in the dev store, and apply the dev fixture.",
   ),
 );
 

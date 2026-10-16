@@ -141,7 +141,7 @@ History stays linear: worktree branches are rebased, and `main` only moves by fa
   - If `alchemy.run.ts` or config changed, restart the server.
   - Other worktrees pick up the landed work when they next rebase.
 
-If a sync replaces the initial database schema and the dev logs report missing columns, back up the checkout's `.alchemy/local` and `.alchemy/state`, then run `vp run db:reset`. This removes local data and state for **every** stage in this checkout and restarts dev, so stop E2E first. It does not reset Shopify store data or deployed stages.
+If a sync replaces the initial database schema and the dev logs report missing columns, back up the checkout's `.alchemy/local` and `.alchemy/state`, then run `vp run db:reset`. This removes local data and state for **every** stage in this checkout and restarts dev, so stop E2E first. It then opens the app in the dev store and loads the dev fixture (see the stores runbook), which writes the dev store's products and orders; it does not touch deployed stages.
 
 ## Retire a worktree (rare)
 

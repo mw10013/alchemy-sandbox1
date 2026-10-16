@@ -30,7 +30,9 @@ The e2e store needs only the e2e server (`vp run test:e2e` starts it); it gets n
 
 ## Fixture and reset
 
-`vp run fixture` puts this checkout's dev store (`SHOPIFY_DEV_STORE`) into the dev fixture, `fixture.ts`. Re-run it to put the shop back. Two halves run in parallel, and each prints one line:
+`vp run fixture` puts this checkout's dev store (`SHOPIFY_DEV_STORE`) into the dev fixture, `fixture.ts`. Re-run it to put the shop back.
+
+`vp run db:reset` ends with the same fixture. A reset wipes the shop's session, so after the server restarts it opens the app's admin URL in your default browser, where you are already signed in to Shopify; that embedded load installs the app on the fresh stage. The shop half waits up to three minutes for it, then loads. If the browser is not signed in, sign in, and the wait picks it up; if the wait runs out, open the URL `vp run dev:status` prints and run `vp run fixture`. Two halves run in parallel, and each prints one line:
 
 - **The store half**, through Shopify CLI:
   - products written by handle, with their real workflow tags and no fixture marker; products the fixture does not name are archived;
