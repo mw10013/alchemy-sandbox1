@@ -1,5 +1,8 @@
 # AGENTS.md
 
+## Project
+Baton: embedded Shopify admin app for made-to-order production workflows. We are porting `refs/baton-legacy` into it.
+
 ## Git
 - Do not git commit unless you are explicitly instructed.
 - Commit only to the branch checked out where you work: `main` in the main checkout, `wt-NN` in a worktree. Create no other branches, except a new `wt-NN` when setting up a worktree.
