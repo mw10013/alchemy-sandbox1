@@ -1,6 +1,6 @@
 # Legacy port: research
 
-Status: research, 2026-10-17. **Settled**: all 20 questions in §6 decided as recommended, in review on 2026-10-17. No code has changed. Q16 and Q17 done the same day: the glossary is fixed, `docs/orders-slice-research.md` is settled. Plans: `docs/orders-slice-plan.md` (slice A, `main`) and `docs/domain-port-plan.md` (slices B and D, `wt-01`). Later on 2026-10-17: slices B and D implemented on `wt-01` (`src/domain/platform.ts`, `orders.ts`, `shop-work.ts`; §3 marks them).
+Status: research, 2026-10-17. **Settled**: all 20 questions in §6 decided as recommended, in review on 2026-10-17. No code has changed. Q16 and Q17 done the same day: the glossary is fixed, `docs/orders-slice-research.md` is settled. Plans: `docs/orders-slice-plan.md` (slice A, `main`, in progress) and `docs/domain-port-plan.md` (slices B and D, done and merged 2026-10-17 as cb9be09). Later on 2026-10-17: slices B and D implemented on `wt-01` (`src/domain/platform.ts`, `orders.ts`, `shop-work.ts`; §3 marks them).
 
 **The question.** `refs/baton-legacy` is a working app: about 46k lines of source, 34k of tests, one Worker on wrangler. This repo is its replacement on Alchemy, two Workers and an actor, with Better Auth, embedded Shopify auth, token refresh, the actor socket, seeds, fixtures and the test layers already in place, and every per-shop table declared but unread. The question is how the remaining ~90% of legacy gets here: in what pieces, in what order, by what rules, and what is left behind.
 
