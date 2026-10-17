@@ -183,6 +183,28 @@ Checked against this checkout at `7ab5028` and `refs/baton-legacy/`. Baseline be
 
 ### Implementation review
 
+2026-10-17, lead, at `be46570`. Re-run: `vp check` green (211 files formatted, 168 linted); `vp test` 33 files / 352 tests passed in 23.9 s. `git merge-tree` of `wt-01` with `main` (`b8d1106`) has no conflict.
+
+Checks:
+
+- Moved lines: each `src/domain/*.ts` compared token by token with its legacy file (whitespace collapsed, so the formatter's reflow at width 100 drops out). What differs: import lines, the map and `@module` in the header, the duplicate notes (platform), `closedReasonText` after `ClosedReason` (shop work), and the formatter's trailing commas and parentheses. Nothing else.
+- Titles: every `describe`/`it` title in legacy `domain.test.ts` exists under `test/unit/domain/` byte for byte, except the six billing ones (slice G). A sample of ten titles found with `grep -rF`, all in `shop-work.test.ts`. The five `syncOrder` row titles match the table's cells joined with `|`. Of the 80 `pinned by` titles in the three files, only 2 name a test ported here (both found); the other 78 name workerd tests that arrive with slices A, C, E and F. §5's "sample of ten pinned titles" therefore cannot be drawn from `pinned by` cells.
+- Lint: `import "../contract/shop.ts"` in `orders.ts` and `import "./orders.ts"` in `platform.ts` each failed `vp check` with `eslint(no-restricted-imports): '<spec>' import is restricted from being used by a pattern.`; reverted. `grep` for `../backend`, `../web`, `../contract` imports under `src/domain/` is empty.
+
+Fixed by the lead:
+
+- Nothing needed fixing.
+
+Needs a decision:
+
+- `0001_init` under `@effect/sql-sqlite-node`: the Node client runs only the first statement of a multi-statement `sql` call and drops the rest without an error (Spike verdict). Unit repository tests need `0001_init` split into one `sql` call per statement (no table change) or a statement-splitting test layer. Recommendation: split the migration, in the orders plan's step that adds the dependency.
+- Moved JSDoc that breaks the AGENTS.md link rule: `platform.ts` links `itemPiece`, `D1_TABLES` and `initializeSchema`, which are not in scope; `orders.ts` (on `SyncOrderResult`, `OrdersSyncResult`) points at "the Shape families table on the map in `Domain.ts`", which was left behind. Kept as moved lines; either turn the links into backticks and drop the `Domain.ts` pointer now, or leave them until their slices arrive.
+- `FixtureTask.name` and `instructions` now use `TaskName` and `TaskInstructions`: trimmed on decode, branded, capped at 64 and 500 characters, where the contract's `Name` refused untrimmed text with no cap. The root `fixture.ts` still decodes. Confirm the trim-instead-of-refuse change is wanted.
+- `platform.test.ts` holds new tests, not ported ones (legacy had none for platform); confirm keeping them.
+- The glossary's Domain section names symbols that do not exist here yet (`ShopAgent.*`, `useLiveQuery`); its intro says they arrive with their slices.
+- Step 4 added two overrides beyond the step (`shop-work.ts` refuses `./billing.ts`; `billing.ts` refuses `./shop-work.ts`), so the lint matches the map's `may import` cells. The billing one matches no file until slice G.
+- §5's `pinned by` sample (see Checks): change that check to sample ported test titles, or accept it as written now.
+
 ## 8. Out of scope
 
 - Reconciling the duplicates between `src/domain/platform.ts` and `src/contract/` (`Shop` vs `ShopKey`, `Email`, the connection constants). That happens when the first consumer of each moves, in the slice that moves it; until then both exist and the JSDoc notes say so.
