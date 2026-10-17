@@ -23,10 +23,16 @@ How this project's Shopify dev stores are named, claimed, authorized and given t
    shopify store auth --store mw10013-dev-shop-NN.myshopify.com --scopes read_products,write_products,read_orders,write_orders,read_draft_orders,write_draft_orders
    ```
 
+   Do the same on the e2e store, where the e2e orders spec creates and cancels its own orders (`scripts/test-order.ts`):
+
+   ```sh
+   shopify store auth --store mw10013-e2e-shop-NN.myshopify.com --scopes read_products,write_products,read_orders,write_orders,read_draft_orders,write_draft_orders
+   ```
+
 4. With `vp run dev` running, open the app in the dev store once (the admin URL `vp run dev` prints), which installs it on this checkout's dev stage.
 5. `vp run fixture`. A second run reports the store as already there and replaces the shop's data again.
 
-The e2e store needs only the e2e server (`vp run test:e2e` starts it); it gets no fixture yet.
+The e2e store needs the e2e server (`vp run test:e2e` starts it) and the store auth above; it gets no fixture.
 
 ## Fixture and reset
 

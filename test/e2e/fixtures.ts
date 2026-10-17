@@ -12,7 +12,7 @@ import { e2eServerURL } from "../../playwright.config.ts";
 import { E2E_SHOP, E2eEmail } from "./shop-fixture.ts";
 import { signInWithForm } from "./screens.ts";
 
-type Run = <A, E>(effect: Effect.Effect<A, E, RpcClient.Protocol>) => Promise<A>;
+export type Run = <A, E>(effect: Effect.Effect<A, E, RpcClient.Protocol>) => Promise<A>;
 
 /** The dev client, through the Website's forwarder, as `vp run fixture` reaches the Backend. */
 const protocol = (baseURL: string) =>

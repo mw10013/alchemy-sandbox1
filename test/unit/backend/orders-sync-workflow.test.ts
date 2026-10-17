@@ -10,8 +10,8 @@ import {
   BULK_GIVE_UP_MS,
   BULK_POLL_INTERVAL_MS,
   GAVE_UP_MESSAGE,
-  ORDER_SYNC_WINDOW_DAYS,
 } from "../../../src/backend/orders-sync-constants.ts";
+import { ORDER_SYNC_WINDOW_DAYS } from "../../../src/contract/orders.ts";
 import {
   type OrdersSyncParams,
   ordersSyncBody,

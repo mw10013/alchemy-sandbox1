@@ -18,8 +18,8 @@ test.afterAll(async () => {
 });
 
 test("the app loads embedded and shows the e2e store's domain", async () => {
-  await expect(frame.getByText("We got here")).toBeVisible();
   await expect(frame.getByText(shop, { exact: true })).toBeVisible();
+  await expect(frame.getByRole("link", { name: "Orders" })).toBeVisible();
 });
 
 test("the exchange stored a real session", async ({ backend }) => {
@@ -27,4 +27,9 @@ test("the exchange stored a real session", async ({ backend }) => {
   expect(session).not.toBeNull();
   expect(session?.shopGid).toMatch(/^gid:\/\/shopify\/Shop\/\d+$/u);
   expect(session?.scope).toBe("read_orders,read_products");
+});
+
+test("the Orders link opens the orders screen inside the admin", async () => {
+  await frame.getByRole("link", { name: "Orders" }).click();
+  await expect(frame.getByText(/^(No open orders|Sync from Shopify)$/u).first()).toBeVisible();
 });

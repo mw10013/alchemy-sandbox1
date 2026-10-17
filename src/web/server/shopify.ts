@@ -39,13 +39,15 @@ const refuse = (bearer: boolean): never => {
 };
 
 /**
- * Baton's `ShopifyServerFnMiddleware`: authenticates the embedded admin before a server function
- * runs and puts its shop in context. The session token is the bearer App Bridge adds to every
- * same-origin `fetch` from the embedded page, else the `idToken` in the function's data, which is
- * how the document's `id_token` arrives when `beforeLoad` calls the function in-process during
- * SSR. The Backend verifies and exchanges it; a refusal is {@link refuse}.
+ * The embedded page's session token, before anything checks it: the bearer App Bridge adds to
+ * every same-origin `fetch` from the embedded page, else the `idToken` in the function's data,
+ * which is how the document's `id_token` arrives when a guard or loader calls the function
+ * in-process during SSR. No token is a refusal ({@link refuse}). `rescueToken` is the handler's
+ * catch for a Backend call that answers `InvalidSessionToken`: the same refusal, for the way
+ * the token came. A function in context, not an export, so no client bundle reaches
+ * {@link refuse}'s server-only imports.
  */
-export const shopifyAdmin = createMiddleware({ type: "function" }).server(
+export const embeddedSessionToken = createMiddleware({ type: "function" }).server(
   async ({ next, data }) => {
     const bearer = Option.flatMap(decodeBearer(getRequestHeader("authorization")), ([, token]) =>
       decodeToken(token),
@@ -54,12 +56,26 @@ export const shopifyAdmin = createMiddleware({ type: "function" }).server(
       Option.map(decodeIdTokenData(data), ({ idToken }) => idToken),
     );
     if (Option.isNone(sessionToken)) return refuse(Option.isSome(bearer));
-    const session = await backend()
-      .authenticateAdmin(requestInfo(), { sessionToken: sessionToken.value })
-      .catch(rescue(InvalidSessionToken, () => refuse(Option.isSome(bearer))));
-    return next({ context: { shop: session.shop, shopGid: session.shopGid } });
+    const rescueToken: (error: unknown) => never = rescue(InvalidSessionToken, () =>
+      refuse(Option.isSome(bearer)),
+    );
+    return next({ context: { sessionToken: sessionToken.value, rescueToken } });
   },
 );
+
+/**
+ * Baton's `ShopifyServerFnMiddleware`: authenticates the embedded admin before a server function
+ * runs and puts its shop in context. The token comes from {@link embeddedSessionToken}; the
+ * Backend verifies and exchanges it, and a refusal is {@link refuse}.
+ */
+export const shopifyAdmin = createMiddleware({ type: "function" })
+  .middleware([embeddedSessionToken])
+  .server(async ({ next, context }) => {
+    const session = await backend()
+      .authenticateAdmin(requestInfo(), { sessionToken: context.sessionToken })
+      .catch(context.rescueToken);
+    return next({ context: { shop: session.shop, shopGid: session.shopGid } });
+  });
 
 /** `authenticateApp`'s input: the document's `id_token`, absent on a call App Bridge made. */
 const AuthenticateAppInput = Schema.Struct({ idToken: Schema.optional(Schema.NonEmptyString) });

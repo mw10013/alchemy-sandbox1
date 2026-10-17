@@ -16,9 +16,7 @@ import { type ActorFixtureRows, Fixtures } from "../../../src/backend/fixture.ts
 import { Members } from "../../../src/backend/members.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
-import { ShopifyAdmin } from "../../../src/backend/shopify-admin.ts";
 import { QuietLogs, testShopify } from "./layers.ts";
-import { jsonResponse, withShopifyStub } from "./shopify-stub.ts";
 
 const email = Schema.decodeUnknownSync(EmailFromInput);
 const decodeFixture = Schema.decodeUnknownSync(ShopFixtureData);
@@ -59,7 +57,7 @@ const harness = () => {
       Layer.mergeAll(
         Members.layerTest(members),
         ShopActors.layerTest(revoked, undefined, [], added),
-        ShopifyAdmin.layer.pipe(Layer.provideMerge(testShopify([session]))),
+        testShopify([session]),
       ),
     ),
     Layer.provide(RuntimeContext.phantom),
@@ -113,38 +111,6 @@ describe("DevRpcs", () => {
       const invalid = (yield* sessions.find(SEED_SHOP)).pipe(Option.getOrThrow);
       assert.match(invalid.refreshToken ?? "", /^shprt_invalid_/u);
     }).pipe(Effect.provide(harness().layer)),
-  );
-
-  it.live("PingAdmin answers the shop's id, and tokens never appear in an answer", () =>
-    withShopifyStub(
-      () => jsonResponse(200, { data: { shop: { id: "gid://shopify/Shop/1" } } }),
-      (calls) =>
-        Effect.gen(function* () {
-          const client = yield* RpcTest.makeClient(DevRpcs);
-          const answer = yield* client.PingAdmin({ shop: SEED_SHOP });
-          assert.deepStrictEqual(answer, { ok: "gid://shopify/Shop/1" });
-          assert.strictEqual(calls.length, 1);
-          assert.notInclude(JSON.stringify(answer), "shpat_");
-        }),
-    ).pipe(Effect.provide(harness().layer)),
-  );
-
-  it.live("PingAdmin encodes the failures as answers", () =>
-    withShopifyStub(
-      () => jsonResponse(401, { error: "invalid_request" }),
-      () =>
-        Effect.gen(function* () {
-          const client = yield* RpcTest.makeClient(DevRpcs);
-          assert.deepStrictEqual(yield* client.PingAdmin({ shop: otherShop }), {
-            error: "OfflineSessionMissing",
-          });
-          yield* client.ExpireShopSession({ shop: SEED_SHOP, refreshToken: "invalidate" });
-          assert.deepStrictEqual(yield* client.PingAdmin({ shop: SEED_SHOP }), {
-            error: "ReauthorizationRequired",
-            reason: "refresh-token-rejected",
-          });
-        }),
-    ).pipe(Effect.provide(harness().layer)),
   );
 });
 

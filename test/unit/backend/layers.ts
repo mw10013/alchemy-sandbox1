@@ -24,6 +24,7 @@ import { Auth } from "../../../src/backend/auth.ts";
 import { MagicLinkDelivery } from "../../../src/backend/magic-link-delivery.ts";
 import { Mailer } from "../../../src/backend/mailer.ts";
 import { Members } from "../../../src/backend/members.ts";
+import { Orders } from "../../../src/backend/orders.ts";
 import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
 import { SHOPIFY_API_KEY, SHOPIFY_API_SECRET_FAKE, Shopify } from "../../../src/backend/shopify.ts";
 
@@ -210,5 +211,28 @@ export const testOrdersSyncWorkflows = (
       Effect.suspend(() => {
         created.push(options);
         return create;
+      }),
+  });
+
+/**
+ * {@link Orders} for a test that reaches the merchant's two sync buttons and nothing else:
+ * `beginOpenOrdersSync` answers `InFlight` and `syncOrder` answers `Gone`, each recording the shop
+ * (and order) it was asked for in `calls`. The webhook half dies.
+ */
+export const testOrders = (
+  calls: Array<{ readonly shop: ShopKey; readonly orderId?: string }> = [],
+) =>
+  Layer.succeed(Orders, {
+    fetchOrder: () => Effect.die(new Error("testOrders: fetchOrder")),
+    syncOrderFromWebhook: () => Effect.die(new Error("testOrders: syncOrderFromWebhook")),
+    syncOrder: (shop, orderId) =>
+      Effect.sync(() => {
+        calls.push({ shop, orderId });
+        return { _tag: "Gone" } as const;
+      }),
+    beginOpenOrdersSync: (shop) =>
+      Effect.sync(() => {
+        calls.push({ shop });
+        return { _tag: "InFlight" } as const;
       }),
   });

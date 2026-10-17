@@ -9,6 +9,8 @@ import { ORDERS_KEY } from "../../src/contract/shop-actor.ts";
 import type { LineItemNode, OrderNode } from "../../src/backend/order-sync.ts";
 import { ShopLimits } from "../../src/domain/platform.ts";
 import { OTHER_SHOP, SEED_SHOP } from "../seed-shops.ts";
+import { mintSessionToken } from "../shopify-session-token.ts";
+import { Email } from "../../src/contract/auth.ts";
 import { dev, integ, openAs } from "./actor-clients.ts";
 import { fileStage } from "./file-stage.ts";
 import Stack from "./stack.ts";
@@ -458,5 +460,74 @@ test(
       yield* listedIds(SEED_SHOP),
       [fixtureOrderId(1), orderId(24)].toSorted(),
     );
+  }),
+);
+
+test(
+  "the orders screen's BackendApi methods refuse a bad token and answer for a good one",
+  Effect.gen(function* () {
+    const { backendUrl } = yield* stack;
+    yield* reset(SEED_SHOP);
+    yield* store(SEED_SHOP, aNode(21, 1), [aLineItemNode(21)]);
+    const bad = yield* mintSessionToken({ shop: SEED_SHOP, apiSecret: "other-secret" });
+    const good = yield* mintSessionToken({ shop: SEED_SHOP });
+    const uninstalled = yield* mintSessionToken({ shop: UNINSTALLED_SHOP });
+    yield* integ(backendUrl, (c) =>
+      c.ScriptShopify({
+        replies: [{ route: "graphql", status: 200, body: { data: { order: null } } }],
+      }),
+    );
+    yield* integ(backendUrl, (c) =>
+      Effect.gen(function* () {
+        const refusals = [
+          yield* c.ApiListOrders({ sessionToken: bad, limit: 25, cursor: null }).pipe(Effect.flip),
+          yield* c.ApiSyncOpenOrders({ sessionToken: bad }).pipe(Effect.flip),
+          yield* c.ApiSyncOrder({ sessionToken: bad, orderId: orderId(21) }).pipe(Effect.flip),
+        ];
+        assert.deepStrictEqual(
+          refusals.map((error) => error._tag),
+          ["InvalidSessionToken", "InvalidSessionToken", "InvalidSessionToken"],
+        );
+        const page = yield* c.ApiListOrders({ sessionToken: good, limit: 25, cursor: null });
+        assert.deepStrictEqual(
+          page.orders.map(({ order, lineItems }) => [order.id, lineItems.length]),
+          [[orderId(21), 1]],
+        );
+        assert.deepStrictEqual(
+          yield* c.ApiSyncOrder({ sessionToken: good, orderId: orderId(21) }),
+          { _tag: "Gone" },
+        );
+        const notInstalled = yield* c
+          .ApiListOrders({ sessionToken: uninstalled, limit: 25, cursor: null })
+          .pipe(Effect.flip);
+        assert.strictEqual(notInstalled._tag, "ShopNotInstalled");
+      }),
+    );
+    assert.deepStrictEqual(
+      (yield* integ(backendUrl, (c) => c.ShopifyCalls({}))).map(({ route }) => route),
+      ["graphql"],
+    );
+  }),
+);
+
+test(
+  "a member socket is refused MerchantListOrders",
+  Effect.gen(function* () {
+    const { backendUrl } = yield* stack;
+    yield* Effect.gen(function* () {
+      const member = yield* openAs(backendUrl, SEED_SHOP, {
+        role: "member",
+        memberId: "mem-orders",
+        memberEmail: Schema.decodeUnknownSync(Email)("orders@m.com"),
+        teamIds: [],
+        userId: "user-orders",
+        sessionId: "session-orders",
+        sessionExpiresAt: Date.now() + 600_000,
+      });
+      const error = yield* member.client
+        .MerchantListOrders({ limit: 25, cursor: null })
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "Forbidden");
+    }).pipe(Effect.scoped);
   }),
 );

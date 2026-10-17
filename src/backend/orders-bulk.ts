@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { ShopKey } from "../contract/shop.ts";
 import { BulkOperation } from "../domain/orders.ts";
-import { ORDER_SYNC_WINDOW_DAYS } from "./orders-sync-constants.ts";
+import { ORDER_SYNC_WINDOW_DAYS } from "../contract/orders.ts";
 import { ShopifyAdmin } from "./shopify-admin.ts";
 
 /**

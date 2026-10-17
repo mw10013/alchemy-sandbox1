@@ -363,13 +363,13 @@ const PRODUCT_ARCHIVE = /* GraphQL */ `
 `;
 
 const ORDER_CANCEL = /* GraphQL */ `
-  mutation FixtureOrderCancel($orderId: ID!) {
+  mutation FixtureOrderCancel($orderId: ID!, $staffNote: String) {
     orderCancel(
       orderId: $orderId
       reason: OTHER
       restock: false
       notifyCustomer: false
-      staffNote: "Closed by vp run fixture"
+      staffNote: $staffNote
     ) {
       orderCancelUserErrors {
         message
@@ -560,7 +560,10 @@ export const applyStoreFixture = Effect.fn("applyStoreFixture")(function* (store
         orderCancel: Schema.Struct({ orderCancelUserErrors: UserErrors }),
       }),
       ORDER_CANCEL,
-      { variables: { orderId: leftover.id }, mutation: true },
+      {
+        variables: { orderId: leftover.id, staffNote: "Closed by vp run fixture" },
+        mutation: true,
+      },
     );
     yield* failOnErrors(`cancel ${leftover.name}`, result.orderCancel.orderCancelUserErrors);
     yield* Console.log(`ok    order ${leftover.name}: cancelled, no refund, no restock, no notice`);
@@ -639,4 +642,88 @@ export const applyStoreFixture = Effect.fn("applyStoreFixture")(function* (store
   }
   yield* waitForOrders(domain);
   yield* Console.log("ok    orders: listed by the store");
+});
+
+/**
+ * `store` as a store the e2e specs may create and cancel orders on: this checkout's e2e store. No
+ * dev, staging or production store, and no store outside the scheme, ever gets a test order.
+ */
+export const requireTestOrderStore = (store: string) =>
+  Schema.decodeUnknownEffect(StoreOf("e2e"))(store).pipe(
+    Effect.mapError(
+      (error) =>
+        new StoresError({
+          message: `${store} is not an e2e store of the scheme mw10013-e2e-shop-NN: test orders go only there`,
+          cause: error,
+        }),
+    ),
+  );
+
+const DraftOrderCreated = Schema.Struct({
+  draftOrderCreate: Schema.Struct({
+    draftOrder: Schema.NullOr(Schema.Struct({ id: Schema.String })),
+    userErrors: UserErrors,
+  }),
+});
+
+const DraftOrderCompleted = Schema.Struct({
+  draftOrderComplete: Schema.Struct({
+    draftOrder: Schema.NullOr(
+      Schema.Struct({
+        order: Schema.NullOr(Schema.Struct({ id: Schema.String, name: Schema.String })),
+      }),
+    ),
+    userErrors: UserErrors,
+  }),
+});
+
+/**
+ * Creates one paid order on e2e store `store`, tagged `tag`, through a completed draft order with
+ * one custom line (no product, so the e2e store needs none), and answers its GID and name. Shopify
+ * then sends the order's webhooks to the e2e server. One `shopify store execute` per operation, on
+ * the CLI's store auth ({@link requireStoreAuth}).
+ */
+export const createTestOrder = Effect.fn("createTestOrder")(function* (store: string, tag: string) {
+  const { environment, index } = yield* requireTestOrderStore(store);
+  const domain = domainOf(storeNameOf(environment, index));
+  yield* requireStoreAuth(domain);
+  const draft = yield* execute(domain, DraftOrderCreated, DRAFT_ORDER_CREATE, {
+    variables: {
+      input: {
+        lineItems: [{ title: "Baton e2e", originalUnitPrice: "1.00", quantity: 2 }],
+        tags: [tag],
+      },
+    },
+    mutation: true,
+  });
+  yield* failOnErrors(`draftOrderCreate ${tag}`, draft.draftOrderCreate.userErrors);
+  const draftId = draft.draftOrderCreate.draftOrder?.id;
+  if (draftId === undefined)
+    return yield* new StoresError({ message: `draftOrderCreate ${tag}: no draft order` });
+  const completed = yield* execute(domain, DraftOrderCompleted, DRAFT_ORDER_COMPLETE, {
+    variables: { id: draftId },
+    mutation: true,
+  });
+  yield* failOnErrors(`draftOrderComplete ${tag}`, completed.draftOrderComplete.userErrors);
+  const order = completed.draftOrderComplete.draftOrder?.order;
+  if (order === null || order === undefined)
+    return yield* new StoresError({ message: `draftOrderComplete ${tag}: no order` });
+  return order;
+});
+
+/** Cancels order `orderId` (a GID) on e2e store `store`, with no refund, restock or notice. */
+export const cancelTestOrder = Effect.fn("cancelTestOrder")(function* (
+  store: string,
+  orderId: string,
+) {
+  const { environment, index } = yield* requireTestOrderStore(store);
+  const domain = domainOf(storeNameOf(environment, index));
+  yield* requireStoreAuth(domain);
+  const result = yield* execute(
+    domain,
+    Schema.Struct({ orderCancel: Schema.Struct({ orderCancelUserErrors: UserErrors }) }),
+    ORDER_CANCEL,
+    { variables: { orderId, staffNote: "Closed by the e2e orders spec" }, mutation: true },
+  );
+  yield* failOnErrors(`cancel ${orderId}`, result.orderCancel.orderCancelUserErrors);
 });

@@ -181,7 +181,12 @@ export default defineConfig(({ command, mode, isPreview }) => {
           plugins: [react()],
           resolve: { alias: browserStubs },
           optimizeDeps: {
-            include: ["react/jsx-dev-runtime", "effect/SchemaGetter", "effect/Struct"],
+            include: [
+              "react/jsx-dev-runtime",
+              "effect/SchemaGetter",
+              "effect/Struct",
+              "effect/DateTime",
+            ],
           },
           test: {
             name: "browser",

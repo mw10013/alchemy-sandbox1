@@ -242,7 +242,7 @@ const decodeExpiry = Schema.decodeUnknownEffect(StoredExpiry);
 const encodeExpiry = Schema.encodeUnknownEffect(StoredExpiry);
 
 /** The query whose answer {@link ShopGidResponse} decodes. */
-export const SHOP_GID_QUERY = `#graphql
+const SHOP_GID_QUERY = `#graphql
   query ShopGid {
     shop {
       id
@@ -250,7 +250,7 @@ export const SHOP_GID_QUERY = `#graphql
   }`;
 
 /** The `shop { id }` answer, the shop's Admin API id. */
-export const ShopGidResponse = Schema.Struct({
+const ShopGidResponse = Schema.Struct({
   shop: Schema.Struct({ id: Schema.NonEmptyString }),
 });
 const decodeShopGidResponse = Schema.decodeUnknownEffect(ShopGidResponse);
@@ -306,6 +306,16 @@ const make = (options: {
           : Effect.die(cause),
       ),
     );
+
+    /**
+     * The shop a merchant's session token names (its `dest`), with no session read and no
+     * exchange: what a merchant's call needs to find its shop's actor. A token that does not
+     * verify is {@link InvalidSessionToken}.
+     */
+    const sessionTokenShop = Effect.fn("Shopify.sessionTokenShop")(function* (token: string) {
+      const { dest } = yield* decodeSessionToken(token);
+      return yield* decodeShopFromDest(dest).pipe(Effect.orDie);
+    });
 
     /** A stored row as the library's offline `Session`. */
     const sessionOf = Effect.fn("Shopify.sessionOf")(function* (row: ShopSessionRow) {
@@ -609,8 +619,7 @@ const make = (options: {
      */
     const authenticateAdmin = Effect.fn("Shopify.authenticateAdmin")(
       function* (sessionToken: string) {
-        const { dest } = yield* decodeSessionToken(sessionToken);
-        const shop = yield* decodeShopFromDest(dest).pipe(Effect.orDie);
+        const shop = yield* sessionTokenShop(sessionToken);
         const stored = yield* shopSessions.find(shop);
         const leased = yield* Effect.map(
           Clock.currentTimeMillis,
@@ -718,6 +727,7 @@ const make = (options: {
     return {
       validateWebhook,
       decodeSessionToken,
+      sessionTokenShop,
       authenticateAdmin,
       ensureShopSession,
       adminRequest,

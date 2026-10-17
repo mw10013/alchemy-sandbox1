@@ -21,13 +21,17 @@ import {
   ShopSnapshotInput,
 } from "../contract/shop.ts";
 import { ShoutInput } from "../contract/playground.ts";
+import { ShopNotInstalled } from "../contract/fixture.ts";
+import { ListOrdersRequest, SyncOpenOrdersRequest, SyncOrderRequest } from "../contract/orders.ts";
 import { ShopActors } from "./shop-actors.ts";
 import { Auth } from "./auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { Members } from "./members.ts";
+import { Orders } from "./orders.ts";
 import { sessionFromCookie } from "./auth.ts";
 import { SignInLimit } from "./resources.ts";
 import { ShopAccess } from "./shop-access.ts";
+import { ShopSessions } from "./shop-sessions.ts";
 import { Shopify } from "./shopify.ts";
 
 /**
@@ -68,6 +72,9 @@ const decodeShout = Schema.decodeUnknownEffect(ShoutInput);
 const decodeMagicLinkInput = Schema.decodeUnknownEffect(MagicLinkInput);
 const decodeSnapshotInput = Schema.decodeUnknownEffect(ShopSnapshotInput);
 const decodeAuthenticateAdminInput = Schema.decodeUnknownEffect(AuthenticateAdminInput);
+const decodeListOrdersRequest = Schema.decodeUnknownEffect(ListOrdersRequest);
+const decodeSyncOpenOrdersRequest = Schema.decodeUnknownEffect(SyncOpenOrdersRequest);
+const decodeSyncOrderRequest = Schema.decodeUnknownEffect(SyncOrderRequest);
 const encodeAdminSession = Schema.encodeSync(AdminSession);
 const encodeMagicLinkRequested = Schema.encodeSync(MagicLinkRequested);
 
@@ -80,6 +87,8 @@ const make = Effect.gen(function* () {
   const shopAccess = yield* ShopAccess;
   const actors = yield* ShopActors;
   const shopify = yield* Shopify;
+  const orders = yield* Orders;
+  const shopSessions = yield* ShopSessions;
 
   /** The signed-in user and session from the request's cookie; see {@link sessionFromCookie}. */
   const session = (request: RequestInfo) =>
@@ -192,6 +201,44 @@ const make = Effect.gen(function* () {
     return encodeAdminSession(yield* shopify.authenticateAdmin(sessionToken));
   });
 
+  /**
+   * The merchant's orders screen, its first render: one page of the shop's stored orders. The
+   * session token names the shop and is only verified (`Shopify.sessionTokenShop`), never
+   * exchanged: the App Home's guard exchanged it when the page loaded, and a call per screen
+   * read must not cost a token exchange. The request is ignored, as on
+   * {@link authenticateAdmin}. A shop with no `ShopSession` is {@link ShopNotInstalled} and its
+   * actor is not touched, so a token outliving an uninstall never recreates it.
+   */
+  const listOrders = Effect.fn("BackendApi.listOrders")(function* (
+    _request: RequestInfo,
+    payload: ListOrdersRequest,
+  ) {
+    const { sessionToken, limit, cursor } = yield* decodeListOrdersRequest(payload).pipe(
+      Effect.orDie,
+    );
+    const shop = yield* shopify.sessionTokenShop(sessionToken);
+    if (Option.isNone(yield* shopSessions.find(shop))) return yield* new ShopNotInstalled({ shop });
+    return yield* actors.listOrders(shop, { limit, cursor });
+  });
+
+  /** Sync open orders for the token's shop: `Orders.beginOpenOrdersSync`; the token as on {@link listOrders}. */
+  const syncOpenOrders = Effect.fn("BackendApi.syncOpenOrders")(function* (
+    _request: RequestInfo,
+    payload: SyncOpenOrdersRequest,
+  ) {
+    const { sessionToken } = yield* decodeSyncOpenOrdersRequest(payload).pipe(Effect.orDie);
+    return yield* orders.beginOpenOrdersSync(yield* shopify.sessionTokenShop(sessionToken));
+  });
+
+  /** Sync from Shopify on one order of the token's shop: `Orders.syncOrder`; the token as on {@link listOrders}. */
+  const syncOrder = Effect.fn("BackendApi.syncOrder")(function* (
+    _request: RequestInfo,
+    payload: SyncOrderRequest,
+  ) {
+    const { sessionToken, orderId } = yield* decodeSyncOrderRequest(payload).pipe(Effect.orDie);
+    return yield* orders.syncOrder(yield* shopify.sessionTokenShop(sessionToken), orderId);
+  });
+
   return {
     hello,
     shout,
@@ -201,6 +248,9 @@ const make = Effect.gen(function* () {
     myShops,
     shopSnapshot,
     authenticateAdmin,
+    listOrders,
+    syncOpenOrders,
+    syncOrder,
   };
 });
 

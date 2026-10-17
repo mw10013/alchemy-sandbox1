@@ -7,6 +7,7 @@ import {
   FIXTURE_SCOPES,
   missingScopes,
   requireFixtureStore,
+  requireTestOrderStore,
   resultText,
 } from "../../../../scripts/lib/stores.ts";
 
@@ -79,6 +80,32 @@ describe("requireFixtureStore", () => {
         "mw10013-staging-shop-00.myshopify.com",
       ]) {
         const exit = yield* Effect.exit(requireFixtureStore(store));
+        assert.isTrue(exit._tag === "Failure", store);
+      }
+    }),
+  );
+});
+
+describe("requireTestOrderStore", () => {
+  it.effect("accepts an e2e store", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* requireTestOrderStore("mw10013-e2e-shop-01"), {
+        environment: "e2e",
+        index: 1,
+      });
+    }),
+  );
+
+  it.effect("refuses dev, staging, production and stores outside the scheme", () =>
+    Effect.gen(function* () {
+      for (const store of [
+        "mw10013-dev-shop-00",
+        "mw10013-staging-shop-00",
+        "mw10013-production-shop-00",
+        "sandbox-shop-00",
+        "mw10013-e2e-shop-00.myshopify.com",
+      ]) {
+        const exit = yield* Effect.exit(requireTestOrderStore(store));
         assert.isTrue(exit._tag === "Failure", store);
       }
     }),

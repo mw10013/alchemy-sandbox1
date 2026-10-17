@@ -11,8 +11,10 @@ import Stack from "./stack.ts";
 
 /**
  * The offline-token refresh over real SQL and the fake Shopify HTTP layer: `ExpireShopSession`
- * ages the seeded session, `PingAdmin` makes the Backend's own Admin call, `ScriptShopify` shapes
- * Shopify's answers and `ShopifyCalls` shows what it was asked.
+ * ages the seeded session, `SyncOrder` (Sync from Shopify on one order) makes the Backend's own
+ * Admin call, `ScriptShopify` shapes Shopify's answers and `ShopifyCalls` shows what it was asked.
+ * The order is one Shopify answers null for, so every successful call is `Gone`: the session is
+ * ensured before the fetch, so `Gone` still means the refresh happened, and no actor is touched.
  */
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),
@@ -27,16 +29,34 @@ const otherShop = Schema.decodeUnknownSync(ShopKey)("other-shop.myshopify.com");
 
 const HOUR = 60 * 60 * 1000;
 const NINETY_DAYS = 90 * 24 * HOUR;
-const FAKE_SHOP_GID = "gid://shopify/Shop/0";
+const GONE = { _tag: "Gone" } as const;
 
-/** Resets the fake, then ages the shop's session with its refresh token kept. */
-const expiredAndScripted = (backendUrl: string, replies: ReadonlyArray<ShopifyFakeReply>) =>
+/** Shopify's answer to the order query for an order it does not have. */
+const orderGone: ShopifyFakeReply = {
+  route: "graphql",
+  status: 200,
+  body: { data: { order: null } },
+};
+
+/**
+ * Resets the fake with `replies` and `syncs` gone-order answers, then ages the shop's session with
+ * its refresh token kept.
+ */
+const expiredAndScripted = (
+  backendUrl: string,
+  replies: ReadonlyArray<ShopifyFakeReply>,
+  syncs = 1,
+) =>
   Effect.gen(function* () {
-    yield* integ(backendUrl, (c) => c.ScriptShopify({ replies }));
+    yield* integ(backendUrl, (c) =>
+      c.ScriptShopify({ replies: [...replies, ...Array.from({ length: syncs }, () => orderGone)] }),
+    );
     yield* dev(backendUrl, (c) => c.ExpireShopSession({ shop, refreshToken: "keep" }));
   });
 
-const ping = (backendUrl: string) => dev(backendUrl, (c) => c.PingAdmin({ shop }));
+/** Sync from Shopify on an order Shopify does not have. */
+const sync = (backendUrl: string) =>
+  integ(backendUrl, (c) => c.SyncOrder({ shop, orderId: "gid://shopify/Order/1" }));
 
 /** The calls the fake served since the last script or read. */
 const shopifyCalls = (backendUrl: string) => integ(backendUrl, (c) => c.ShopifyCalls({}));
@@ -54,7 +74,7 @@ test(
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
     yield* expiredAndScripted(backendUrl, []);
-    assert.deepStrictEqual(yield* ping(backendUrl), { ok: FAKE_SHOP_GID });
+    assert.deepStrictEqual(yield* sync(backendUrl), GONE);
     const now = Date.now();
     const after = yield* session(backendUrl);
     assert.approximately(after.accessTokenExpiresAt ?? 0, now + HOUR, 2 * 60 * 1000);
@@ -78,10 +98,12 @@ test(
     ]);
     const before = yield* session(backendUrl);
     const started = Date.now();
-    assert.deepStrictEqual(yield* ping(backendUrl), {
-      error: "ReauthorizationRequired",
-      reason: "refresh-token-rejected",
-    });
+    const error = yield* sync(backendUrl).pipe(Effect.flip);
+    assert.strictEqual(error._tag, "ReauthorizationRequired");
+    assert.strictEqual(
+      error._tag === "ReauthorizationRequired" && error.reason,
+      "refresh-token-rejected",
+    );
     assert.isAbove(Date.now() - started, 1500);
     const after = yield* session(backendUrl);
     assert.strictEqual(after.accessTokenExpiresAt, before.accessTokenExpiresAt);
@@ -96,7 +118,7 @@ test(
     yield* expiredAndScripted(backendUrl, [
       { route: "token", status: 503, body: { error: "down" } },
     ]);
-    assert.deepStrictEqual(yield* ping(backendUrl), { ok: FAKE_SHOP_GID });
+    assert.deepStrictEqual(yield* sync(backendUrl), GONE);
     const calls = yield* shopifyCalls(backendUrl);
     const grants = calls.filter(({ route }) => route === "token");
     assert.strictEqual(grants.length, 2);
@@ -105,15 +127,15 @@ test(
 );
 
 test(
-  "five concurrent pings refresh exactly once",
+  "five concurrent syncs refresh exactly once",
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
-    yield* expiredAndScripted(backendUrl, []);
+    yield* expiredAndScripted(backendUrl, [], 5);
     const answers = yield* Effect.all(
-      Array.from({ length: 5 }, () => ping(backendUrl)),
+      Array.from({ length: 5 }, () => sync(backendUrl)),
       { concurrency: "unbounded" },
     );
-    for (const answer of answers) assert.deepStrictEqual(answer, { ok: FAKE_SHOP_GID });
+    for (const answer of answers) assert.deepStrictEqual(answer, GONE);
     const calls = yield* shopifyCalls(backendUrl);
     assert.strictEqual(calls.filter(({ route }) => route === "token").length, 1);
     assert.strictEqual(calls.filter(({ route }) => route === "graphql").length, 5);

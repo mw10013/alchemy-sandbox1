@@ -25,24 +25,6 @@ export const ShopSessionView = Schema.Struct({
 export type ShopSessionView = typeof ShopSessionView.Type;
 
 /**
- * What `PingAdmin` answers: the shop's Admin API id, or the tag of the failure of the Admin call,
- * with the reason when it is `ReauthorizationRequired`. An answer rather than an RPC failure, so
- * a test asserts on it directly.
- */
-export const PingAdminAnswer = Schema.Union([
-  Schema.Struct({ ok: Schema.String }),
-  Schema.Struct({
-    error: Schema.Literals([
-      "OfflineSessionMissing",
-      "ReauthorizationRequired",
-      "ShopifyUnavailable",
-    ]),
-    reason: Schema.optional(Schema.String),
-  }),
-]);
-export type PingAdminAnswer = typeof PingAdminAnswer.Type;
-
-/**
  * The dev procedures. The Backend serves them on `/api/dev` only with the `DEV_ENDPOINT`
  * binding, which the stack binds on `dev`, `test` and `e2e` and never on a deployed stage;
  * without it the path is 404, the answer for an unknown path.
@@ -65,8 +47,6 @@ export type PingAdminAnswer = typeof PingAdminAnswer.Type;
  * - `ExpireShopSession` ages a shop's stored session: the access token expires a second ago, so
  *   the next Admin call refreshes it. `invalidate` also replaces the refresh token with one
  *   Shopify will reject, which kills the session until an exchange.
- * - `PingAdmin` makes the Backend's own Admin call for a shop with no merchant present
- *   (`ShopifyAdmin`, asking for `shop { id }`) and answers {@link PingAdminAnswer}.
  */
 export const DevRpcs = RpcGroup.make(
   Rpc.make("LoadFixture", {
@@ -90,9 +70,5 @@ export const DevRpcs = RpcGroup.make(
   Rpc.make("ExpireShopSession", {
     payload: { shop: ShopKey, refreshToken: Schema.Literals(["keep", "invalidate"]) },
     success: Schema.Struct({}),
-  }),
-  Rpc.make("PingAdmin", {
-    payload: { shop: ShopKey },
-    success: PingAdminAnswer,
   }),
 );

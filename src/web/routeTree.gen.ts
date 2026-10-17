@@ -17,6 +17,8 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminMembersRouteImport } from './routes/admin.members'
 import { Route as ApiDevRouteImport } from './routes/api.dev'
+import { Route as AppIndexRouteImport } from './routes/app.index'
+import { Route as AppOrdersRouteImport } from './routes/app.orders'
 import { Route as AuthExitIframeRouteImport } from './routes/auth.exit-iframe'
 import { Route as AuthSessionTokenRouteImport } from './routes/auth.session-token'
 import { Route as ShopIndexRouteImport } from './routes/shop.index'
@@ -24,6 +26,7 @@ import { Route as ShopKeyRouteImport } from './routes/shop.$key'
 import { Route as WebhooksSplatRouteImport } from './routes/webhooks.$'
 import { Route as ApiActorKeyRouteImport } from './routes/api.actor.$key'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
+import { Route as AppOrdersFromShopifyRouteImport } from './routes/app.orders.from-shopify'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -65,6 +68,16 @@ const ApiDevRoute = ApiDevRouteImport.update({
   path: '/api/dev',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppIndexRoute = AppIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppOrdersRoute = AppOrdersRouteImport.update({
+  id: '/orders',
+  path: '/orders',
+  getParentRoute: () => AppRoute,
+} as any)
 const AuthExitIframeRoute = AuthExitIframeRouteImport.update({
   id: '/auth/exit-iframe',
   path: '/auth/exit-iframe',
@@ -100,56 +113,69 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppOrdersFromShopifyRoute = AppOrdersFromShopifyRouteImport.update({
+  id: '/from-shopify',
+  path: '/from-shopify',
+  getParentRoute: () => AppOrdersRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
-  '/app': typeof AppRoute
+  '/app': typeof AppRouteWithChildren
   '/shop': typeof ShopRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
   '/api/dev': typeof ApiDevRoute
+  '/app/orders': typeof AppOrdersRouteWithChildren
   '/auth/exit-iframe': typeof AuthExitIframeRoute
   '/auth/session-token': typeof AuthSessionTokenRoute
   '/shop/$key': typeof ShopKeyRoute
   '/webhooks/$': typeof WebhooksSplatRoute
   '/admin/': typeof AdminIndexRoute
+  '/app/': typeof AppIndexRoute
   '/shop/': typeof ShopIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/app': typeof AppRoute
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
   '/api/dev': typeof ApiDevRoute
+  '/app/orders': typeof AppOrdersRouteWithChildren
   '/auth/exit-iframe': typeof AuthExitIframeRoute
   '/auth/session-token': typeof AuthSessionTokenRoute
   '/shop/$key': typeof ShopKeyRoute
   '/webhooks/$': typeof WebhooksSplatRoute
   '/admin': typeof AdminIndexRoute
+  '/app': typeof AppIndexRoute
   '/shop': typeof ShopIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
-  '/app': typeof AppRoute
+  '/app': typeof AppRouteWithChildren
   '/shop': typeof ShopRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
   '/api/dev': typeof ApiDevRoute
+  '/app/orders': typeof AppOrdersRouteWithChildren
   '/auth/exit-iframe': typeof AuthExitIframeRoute
   '/auth/session-token': typeof AuthSessionTokenRoute
   '/shop/$key': typeof ShopKeyRoute
   '/webhooks/$': typeof WebhooksSplatRoute
   '/admin/': typeof AdminIndexRoute
+  '/app/': typeof AppIndexRoute
   '/shop/': typeof ShopIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -161,29 +187,34 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/admin/members'
     | '/api/dev'
+    | '/app/orders'
     | '/auth/exit-iframe'
     | '/auth/session-token'
     | '/shop/$key'
     | '/webhooks/$'
     | '/admin/'
+    | '/app/'
     | '/shop/'
     | '/api/actor/$key'
     | '/api/auth/$'
+    | '/app/orders/from-shopify'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/app'
     | '/sign-in'
     | '/admin/members'
     | '/api/dev'
+    | '/app/orders'
     | '/auth/exit-iframe'
     | '/auth/session-token'
     | '/shop/$key'
     | '/webhooks/$'
     | '/admin'
+    | '/app'
     | '/shop'
     | '/api/actor/$key'
     | '/api/auth/$'
+    | '/app/orders/from-shopify'
   id:
     | '__root__'
     | '/'
@@ -193,20 +224,23 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/admin/members'
     | '/api/dev'
+    | '/app/orders'
     | '/auth/exit-iframe'
     | '/auth/session-token'
     | '/shop/$key'
     | '/webhooks/$'
     | '/admin/'
+    | '/app/'
     | '/shop/'
     | '/api/actor/$key'
     | '/api/auth/$'
+    | '/app/orders/from-shopify'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRouteWithChildren
-  AppRoute: typeof AppRoute
+  AppRoute: typeof AppRouteWithChildren
   ShopRoute: typeof ShopRouteWithChildren
   SignInRoute: typeof SignInRoute
   ApiDevRoute: typeof ApiDevRoute
@@ -275,6 +309,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDevRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/app/': {
+      id: '/app/'
+      path: '/'
+      fullPath: '/app/'
+      preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/orders': {
+      id: '/app/orders'
+      path: '/orders'
+      fullPath: '/app/orders'
+      preLoaderRoute: typeof AppOrdersRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/auth/exit-iframe': {
       id: '/auth/exit-iframe'
       path: '/auth/exit-iframe'
@@ -324,6 +372,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/app/orders/from-shopify': {
+      id: '/app/orders/from-shopify'
+      path: '/from-shopify'
+      fullPath: '/app/orders/from-shopify'
+      preLoaderRoute: typeof AppOrdersFromShopifyRouteImport
+      parentRoute: typeof AppOrdersRoute
+    }
   }
 }
 
@@ -338,6 +393,30 @@ const AdminRouteChildren: AdminRouteChildren = {
 }
 
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
+
+interface AppOrdersRouteChildren {
+  AppOrdersFromShopifyRoute: typeof AppOrdersFromShopifyRoute
+}
+
+const AppOrdersRouteChildren: AppOrdersRouteChildren = {
+  AppOrdersFromShopifyRoute: AppOrdersFromShopifyRoute,
+}
+
+const AppOrdersRouteWithChildren = AppOrdersRoute._addFileChildren(
+  AppOrdersRouteChildren,
+)
+
+interface AppRouteChildren {
+  AppOrdersRoute: typeof AppOrdersRouteWithChildren
+  AppIndexRoute: typeof AppIndexRoute
+}
+
+const AppRouteChildren: AppRouteChildren = {
+  AppOrdersRoute: AppOrdersRouteWithChildren,
+  AppIndexRoute: AppIndexRoute,
+}
+
+const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 interface ShopRouteChildren {
   ShopKeyRoute: typeof ShopKeyRoute
@@ -354,7 +433,7 @@ const ShopRouteWithChildren = ShopRoute._addFileChildren(ShopRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRouteWithChildren,
-  AppRoute: AppRoute,
+  AppRoute: AppRouteWithChildren,
   ShopRoute: ShopRouteWithChildren,
   SignInRoute: SignInRoute,
   ApiDevRoute: ApiDevRoute,

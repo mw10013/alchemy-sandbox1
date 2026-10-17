@@ -25,12 +25,13 @@ import {
 export const shopKeyAtom = Atom.make<Option.Option<ShopKey>>(Option.none()).pipe(Atom.keepAlive);
 
 /**
- * The merchant's Shopify session token, set by the merchant route from its `token` search
- * param; None on the member page. Its presence is what makes this browser a merchant.
+ * How the merchant's browser gets a Shopify session token, run once per connect, so every
+ * reconnect carries a token minted for it; None on the member page. Its presence is what makes
+ * this browser a merchant.
  */
-export const merchantTokenAtom = Atom.make<Option.Option<string>>(Option.none()).pipe(
-  Atom.keepAlive,
-);
+export const merchantTokenAtom = Atom.make<Option.Option<Effect.Effect<string>>>(
+  Option.none(),
+).pipe(Atom.keepAlive);
 
 /** Set when the gate answers that this member may not open the shop. */
 export const notAMemberAtom = Atom.make(false).pipe(Atom.keepAlive);

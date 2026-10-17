@@ -8,6 +8,7 @@ import { RpcSerialization, RpcServer } from "effect/rpc";
 import * as Schema from "effect/Schema";
 import { ShopKey } from "../../src/contract/shop.ts";
 import { ConnectionCaller } from "../../src/contract/shop-actor.ts";
+import { BackendApi } from "../../src/backend/api.ts";
 import { Auth } from "../../src/backend/auth.ts";
 import {
   backendBody,
@@ -61,7 +62,7 @@ export default class TestBackend extends Cloudflare.Worker<TestBackend>()(
       const base = yield* backendBody;
       const actors = yield* ShopActor;
       const services = yield* Effect.context<
-        Auth | MagicLinkDelivery | Members | Orders | ShopifyFake | ShopActors
+        Auth | BackendApi | MagicLinkDelivery | Members | Orders | ShopifyFake | ShopActors
       >();
       const shopifyFake = yield* ShopifyFake;
       // Built per request, inside the request's scope, as the Backend's own RPC servers are.

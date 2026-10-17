@@ -6,6 +6,7 @@ import {
   useAtomValue,
 } from "@effect/atom-react";
 import { useHydrated } from "@tanstack/react-router";
+import * as Effect from "effect/Effect";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
@@ -167,7 +168,7 @@ function LiveShop(props: {
   useState(() =>
     seedShop(registry, {
       key: props.shop,
-      merchantToken: props.merchantToken,
+      merchantToken: Option.map(props.merchantToken, (token) => Effect.succeed(token)),
       caller: props.data.caller,
       snapshot: props.data.snapshot,
     }),

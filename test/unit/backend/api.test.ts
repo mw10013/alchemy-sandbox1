@@ -21,7 +21,7 @@ import type { ConnectionCaller } from "../../../src/contract/shop-actor.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
 import { mintSessionToken } from "../../shopify-session-token.ts";
-import { QuietLogs, TEST_SHOPIFY_APP, testAuth, testShopify } from "./layers.ts";
+import { QuietLogs, TEST_SHOPIFY_APP, testAuth, testOrders, testShopify } from "./layers.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopAccess, ShopAccessDenied } from "../../../src/backend/shop-access.ts";
@@ -67,20 +67,25 @@ const TestBackend = ({
   allow = true,
   gate = Effect.succeed(merchant),
   memberRows = members,
+  actors = ShopActors.layerTest([], snapshot),
+  orderCalls = [],
 }: {
   delivery?: "inline" | "mailed";
   allow?: boolean;
   gate?: Effect.Effect<ConnectionCaller, ShopAccessDenied>;
   memberRows?: ReadonlyArray<Member>;
+  actors?: Layer.Layer<ShopActors>;
+  orderCalls?: Array<{ readonly shop: ShopKey; readonly orderId?: string }>;
 } = {}) =>
   BackendApi.layer.pipe(
     Layer.provideMerge(
       testAuth({
         members: memberRows,
-        actors: ShopActors.layerTest([], snapshot),
+        actors,
         delivery,
         extra: Layer.mergeAll(
           SignInLimiter.layerTest(allow),
+          testOrders(orderCalls),
           Layer.succeed(ShopAccess, { resolve: () => gate }),
           testShopify([seedSession]),
         ),
@@ -260,5 +265,91 @@ describe("BackendApi.authenticateAdmin", () => {
         .pipe(Effect.flip);
       assert.strictEqual(error._tag, "InvalidSessionToken");
     }).pipe(Effect.provide(TestBackend())),
+  );
+});
+
+describe("BackendApi orders", () => {
+  const page = { orders: [], limit: 25, nextCursor: null };
+  /** {@link ShopActors.layerTest} whose `listOrders` answers {@link page}, recording each shop. */
+  const listingActors = (listed: Array<ShopKey>) =>
+    Layer.effect(
+      ShopActors,
+      Effect.gen(function* () {
+        const base = yield* ShopActors;
+        return {
+          ...base,
+          listOrders: (key: ShopKey) =>
+            Effect.sync(() => {
+              listed.push(key);
+              return page;
+            }),
+        };
+      }),
+    ).pipe(Layer.provide(ShopActors.layerTest([], snapshot)));
+  const badToken = mintSessionToken({ shop: SEED_SHOP, apiSecret: "other-secret" });
+
+  it.live("each refuses a token signed with another secret, touching nothing", () => {
+    const listed: Array<ShopKey> = [];
+    const orderCalls: Array<{ readonly shop: ShopKey }> = [];
+    return Effect.gen(function* () {
+      const api = yield* BackendApi;
+      const sessionToken = yield* badToken;
+      const request = withCookie(undefined);
+      const errors = [
+        yield* api.listOrders(request, { sessionToken, limit: 25, cursor: null }).pipe(Effect.flip),
+        yield* api.syncOpenOrders(request, { sessionToken }).pipe(Effect.flip),
+        yield* api
+          .syncOrder(request, { sessionToken, orderId: "gid://shopify/Order/1" })
+          .pipe(Effect.flip),
+      ];
+      assert.deepStrictEqual(
+        errors.map((error) => error._tag),
+        ["InvalidSessionToken", "InvalidSessionToken", "InvalidSessionToken"],
+      );
+      assert.deepStrictEqual(listed, []);
+      assert.deepStrictEqual(orderCalls, []);
+    }).pipe(Effect.provide(TestBackend({ actors: listingActors(listed), orderCalls })));
+  });
+
+  it.live("each acts for the shop its token names", () => {
+    const listed: Array<ShopKey> = [];
+    const orderCalls: Array<{ readonly shop: ShopKey; readonly orderId?: string }> = [];
+    return Effect.gen(function* () {
+      const api = yield* BackendApi;
+      const sessionToken = yield* mintSessionToken({ shop: SEED_SHOP });
+      const request = withCookie(undefined);
+      assert.deepStrictEqual(
+        yield* api.listOrders(request, { sessionToken, limit: 25, cursor: null }),
+        page,
+      );
+      assert.deepStrictEqual(yield* api.syncOpenOrders(request, { sessionToken }), {
+        _tag: "InFlight",
+      });
+      assert.deepStrictEqual(
+        yield* api.syncOrder(request, { sessionToken, orderId: "gid://shopify/Order/1" }),
+        { _tag: "Gone" },
+      );
+      assert.deepStrictEqual(listed, [SEED_SHOP]);
+      assert.deepStrictEqual(orderCalls, [
+        { shop: SEED_SHOP },
+        { shop: SEED_SHOP, orderId: "gid://shopify/Order/1" },
+      ]);
+    }).pipe(Effect.provide(TestBackend({ actors: listingActors(listed), orderCalls })));
+  });
+
+  it.live(
+    "listOrders for a shop with no ShopSession is ShopNotInstalled and reads no actor",
+    () => {
+      const listed: Array<ShopKey> = [];
+      return Effect.gen(function* () {
+        const api = yield* BackendApi;
+        const sessionToken = yield* mintSessionToken({ shop: OTHER_SHOP });
+        const error = yield* api
+          .listOrders(withCookie(undefined), { sessionToken, limit: 25, cursor: null })
+          .pipe(Effect.flip);
+        assert.strictEqual(error._tag, "ShopNotInstalled");
+        assert.deepStrictEqual(listed, []);
+      }).pipe(Effect.provide(TestBackend({ actors: listingActors(listed) })));
+    },
   );
 });

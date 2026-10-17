@@ -31,6 +31,9 @@ import {
   type ConnectionCaller,
   type Notice,
   NoticeFrame,
+  ORDERS_KEY,
+  type OrdersListPage,
+  SYNC_KEY,
   ShopActorRpcs,
   type ShopSnapshot,
 } from "../../contract/shop-actor.ts";
@@ -55,7 +58,7 @@ const decodeNotice = Schema.decodeUnknownOption(NoticeFrame);
  * protocol sees only its own messages. Pull again when a chunk held nothing else, because a
  * reader's pull must return a non-empty array.
  */
-const layerSocketWithNotices = (url: string, notices: PubSub.PubSub<Notice>) =>
+const layerSocketWithNotices = (url: Effect.Effect<string>, notices: PubSub.PubSub<Notice>) =>
   Layer.effect(
     Socket.Socket,
     Effect.gen(function* () {
@@ -93,19 +96,28 @@ type ProtocolInput = {
   readonly registry: AtomRegistry.AtomRegistry;
   readonly notices: PubSub.PubSub<Notice>;
   readonly key: ShopKey;
-  readonly merchantToken: Option.Option<string>;
+  readonly merchantToken: Option.Option<Effect.Effect<string>>;
 };
 
 /**
  * One hibernating WebSocket per browser, retried on `retryPolicy`, which stops on a terminal
  * close. The gate names the socket on its upgrade, from the cookie or, for a merchant, the
- * Shopify token on the URL (Baton's form), so no call carries a credential. Every close goes
+ * Shopify token on the URL (Baton's form), minted for each connect, so no call carries a
+ * credential. Every close goes
  * through `closeOutcome` to the page's atoms.
  */
 const browserProtocol = (input: ProtocolInput) => {
-  const url = new URL(`/api/actor/${input.key}`, wsOrigin());
+  const base = new URL(`/api/actor/${input.key}`, wsOrigin());
   const merchant = Option.isSome(input.merchantToken);
-  if (Option.isSome(input.merchantToken)) url.searchParams.set("token", input.merchantToken.value);
+  const url = Option.match(input.merchantToken, {
+    onNone: () => Effect.succeed(base.toString()),
+    onSome: (mint) =>
+      Effect.map(mint, (token) => {
+        const withToken = new URL(base);
+        withToken.searchParams.set("token", token);
+        return withToken.toString();
+      }),
+  });
   const setState = (state: "connecting" | "open") =>
     Effect.sync(() => input.registry.set(connectionStateAtom, state));
   return Layer.effect(
@@ -118,7 +130,7 @@ const browserProtocol = (input: ProtocolInput) => {
   ).pipe(
     Layer.provide(
       Layer.mergeAll(
-        layerSocketWithNotices(url.toString(), input.notices),
+        layerSocketWithNotices(url, input.notices),
         RpcSerialization.layerJson,
         // Refetch after every (re)connect: a notice sent while this browser was disconnected
         // is lost.
@@ -127,7 +139,7 @@ const browserProtocol = (input: ProtocolInput) => {
             Effect.andThen(
               PubSub.publish(input.notices, {
                 _tag: "ShopActorNotice",
-                invalidated: [COUNT_KEY],
+                invalidated: [COUNT_KEY, ORDERS_KEY, SYNC_KEY],
               }),
             ),
           ),
@@ -243,8 +255,25 @@ const seed = <A, E>(
 };
 
 /**
+ * Names the shop and credential the protocol connects with, and starts the page's connection
+ * state afresh. Run once, in the browser, before the page reads any socket atom.
+ */
+const nameSocket = (
+  registry: AtomRegistry.AtomRegistry,
+  key: ShopKey,
+  merchantToken: Option.Option<Effect.Effect<string>>,
+) => {
+  registry.set(shopKeyAtom, Option.some(key));
+  registry.set(merchantTokenAtom, merchantToken);
+  registry.set(notAMemberAtom, false);
+  registry.set(merchantExpiredAtom, false);
+  registry.set(uninstalledAtom, false);
+  registry.set(connectionStateAtom, "connecting");
+};
+
+/**
  * Seeds the socket's atoms from a shop page's loader data: the shop and credential the protocol
- * connects with, a fresh connection state, and the role's count, who-am-I and (for a member)
+ * connects with ({@link nameSocket}), and the role's count, who-am-I and (for a member)
  * activation, so the page shows them at once and the socket only keeps them current. Run it
  * once, in the browser, before the page reads any socket atom. A second run on the same
  * registry (React's StrictMode doubles a state initializer in development) finds the nodes and
@@ -254,17 +283,12 @@ export const seedShop = (
   registry: AtomRegistry.AtomRegistry,
   input: {
     readonly key: ShopKey;
-    readonly merchantToken: Option.Option<string>;
+    readonly merchantToken: Option.Option<Effect.Effect<string>>;
     readonly caller: ConnectionCaller;
     readonly snapshot: ShopSnapshot;
   },
 ) => {
-  registry.set(shopKeyAtom, Option.some(input.key));
-  registry.set(merchantTokenAtom, input.merchantToken);
-  registry.set(notAMemberAtom, false);
-  registry.set(merchantExpiredAtom, false);
-  registry.set(uninstalledAtom, false);
-  registry.set(connectionStateAtom, "connecting");
+  nameSocket(registry, input.key, input.merchantToken);
   if (Option.isSome(input.merchantToken)) {
     seed(registry, merchantCountQuery, input.snapshot.count);
     seed(registry, merchantWhoAmIAtom, input.caller);
@@ -275,10 +299,55 @@ export const seedShop = (
   }
 };
 
+/** How many orders the orders screen shows: one page, the index's 25 rows. */
+export const ORDERS_PAGE_SIZE = 25;
+
+/**
+ * The orders screen's first page, the query itself; the node {@link seedOrders} fills. Later
+ * pages are not read yet: the screen shows the newest page.
+ */
+export const merchantOrdersQuery = ShopActorClient.query(
+  "MerchantListOrders",
+  { limit: ORDERS_PAGE_SIZE, cursor: null },
+  { serializationKey: "merchant-orders" },
+);
+
+/** The orders screen's first page; refetched on every notice naming {@link ORDERS_KEY}. */
+export const merchantOrdersAtom = merchantOrdersQuery.pipe(
+  Atom.withReactivity([ORDERS_KEY]),
+  refreshOnFocus,
+);
+
+/**
+ * Whether an open-orders sync is running and the last one's error; refetched on every notice
+ * naming {@link SYNC_KEY}. Not seeded: the loader does not read it, so the banner and the
+ * button's state arrive with the socket's first answer.
+ */
+export const merchantSyncStatusAtom = ShopActorClient.query("MerchantSyncStatus", undefined, {
+  serializationKey: "merchant-sync-status",
+}).pipe(Atom.withReactivity([SYNC_KEY]), refreshOnFocus);
+
+/**
+ * Seeds the merchant orders screen's socket atoms: the shop and the token source
+ * ({@link nameSocket}), and the first page from the loader, so the table shows at once and the
+ * socket only keeps it current. The same rules as {@link seedShop}.
+ */
+export const seedOrders = (
+  registry: AtomRegistry.AtomRegistry,
+  input: {
+    readonly key: ShopKey;
+    readonly merchantToken: Effect.Effect<string>;
+    readonly page: OrdersListPage;
+  },
+) => {
+  nameSocket(registry, input.key, Option.some(input.merchantToken));
+  seed(registry, merchantOrdersQuery, input.page);
+};
+
 /**
  * Turns notices into invalidations; mounted by the page. The stream never ends. It sees the
  * last notice published before it subscribed (see {@link noticeBus}), so every connect, the
- * first included, refetches the count.
+ * first included, refetches what the page shows.
  */
 export const noticesAtom = ShopActorClient.runtime.atom((get) =>
   Stream.fromPubSub(get(noticeBus)).pipe(

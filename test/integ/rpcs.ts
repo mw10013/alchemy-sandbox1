@@ -13,7 +13,13 @@ import { Email, ReturnPath } from "../../src/contract/auth.ts";
 import { Auth } from "../../src/backend/auth.ts";
 import { MagicLinkDelivery } from "../../src/backend/magic-link-delivery.ts";
 import { Members } from "../../src/backend/members.ts";
-import { ShopKey } from "../../src/contract/shop.ts";
+import { InvalidSessionToken, ShopKey } from "../../src/contract/shop.ts";
+import {
+  ListOrdersRequest,
+  SyncOpenOrdersRequest,
+  SyncOrderRequest,
+} from "../../src/contract/orders.ts";
+import { BackendApi } from "../../src/backend/api.ts";
 import { OrdersListInput, OrdersListPage } from "../../src/contract/shop-actor.ts";
 import { OrderDetail, OrdersSyncResult, SyncOrderResult } from "../../src/domain/orders.ts";
 import { ShopNotInstalled } from "../../src/contract/fixture.ts";
@@ -67,6 +73,9 @@ export type ShopifyFakeCall = typeof ShopifyFakeCall.Type;
  * - `TrackSync` and `SyncFailed` are the {@link ShopActors} methods `beginSync` and `syncFailed`
  *   on `shop`'s actor: a start recorded at a `startedAt` the test picks (an old one is a dead
  *   sync's record) with no Workflow behind it, and a sync's end as a late caller reports it.
+ * - `ApiListOrders`, `ApiSyncOpenOrders` and `ApiSyncOrder` are the `BackendApi` methods the
+ *   orders screen's server functions call, with an empty request, because integ has no Website to
+ *   call them over the binding.
  * - `ShopIdentityNames` answers the emails of `shop`'s `Member` rows and the names of its `Team`
  *   rows, read from D1 alone ({@link Members}' `identityNames`), so it never reaches the actor.
  */
@@ -127,6 +136,27 @@ export const IntegRpcs = RpcGroup.make(
     payload: { shop: ShopKey, workflowId: Schema.String, message: Schema.String },
     success: Schema.Struct({}),
   }),
+  Rpc.make("ApiListOrders", {
+    payload: ListOrdersRequest,
+    success: OrdersListPage,
+    error: Schema.Union([InvalidSessionToken, ShopNotInstalled]),
+  }),
+  Rpc.make("ApiSyncOpenOrders", {
+    payload: SyncOpenOrdersRequest,
+    success: OrdersSyncResult,
+    error: Schema.Union([InvalidSessionToken, ShopNotInstalled]),
+  }),
+  Rpc.make("ApiSyncOrder", {
+    payload: SyncOrderRequest,
+    success: SyncOrderResult,
+    error: Schema.Union([
+      InvalidSessionToken,
+      ShopNotInstalled,
+      OfflineSessionMissing,
+      ReauthorizationRequired,
+      ShopifyUnavailable,
+    ]),
+  }),
   Rpc.make("ShopIdentityNames", {
     payload: { shop: ShopKey },
     success: Schema.Struct({ emails: Schema.Array(Email), teams: Schema.Array(Schema.String) }),
@@ -141,6 +171,8 @@ export const IntegHandlers = IntegRpcs.toLayer(
     const actors = yield* ShopActors;
     const members = yield* Members;
     const orders = yield* Orders;
+    const api = yield* BackendApi;
+    const noRequest = { cookie: undefined, ip: undefined };
 
     return IntegRpcs.of({
       IssueMagicLink: ({ email, returnTo }, { headers }) =>
@@ -169,6 +201,9 @@ export const IntegHandlers = IntegRpcs.toLayer(
       TrackSync: ({ shop, workflowId, startedAt }) =>
         actors.beginSync(shop, { workflowId, now: startedAt }),
       SyncFailed: ({ shop, ...input }) => actors.syncFailed(shop, input).pipe(Effect.as({})),
+      ApiListOrders: (payload) => api.listOrders(noRequest, payload),
+      ApiSyncOpenOrders: (payload) => api.syncOpenOrders(noRequest, payload),
+      ApiSyncOrder: (payload) => api.syncOrder(noRequest, payload),
       ShopIdentityNames: ({ shop }) => members.identityNames(shop),
     });
   }),
