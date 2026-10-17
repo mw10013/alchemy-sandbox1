@@ -140,14 +140,21 @@ Checked against this checkout at `7ab5028` and `refs/baton-legacy/`. Baseline be
 - 2026-10-17 [Step 1] The map and Platform's vocabulary are one top-of-file JSDoc ending in `@module` (as `src/contract/fixture.ts` does): legacy had the map in `Domain.ts` above `export *` and Platform's vocabulary as an untagged block above its import. The map comes first, then a blank line, then "Vocabulary, platform." unchanged.
 - 2026-10-17 [Step 1] Duplicate notes name the sibling as "the contract's `X`" with no file name (AGENTS.md: a symbol in backticks, never a file name): `Shop` (`ShopKey`), `Email`, `ConnectionRole` (`ConnectionCaller`), the four `CONNECTION_*_HEADER` (one `CONNECTION_HEADER`, `x-actor-connection`), `CONNECTION_CLOSE_FORBIDDEN`/`REVOKED` (one note on their shared JSDoc), `CONNECTION_CLOSE_DISPLACED`, `InvalidatedMessage` (`Notice`). `Shop` had no JSDoc and got a one-line one; the rest are a new last paragraph.
 - 2026-10-17 [Step 1] `test/unit/domain/platform.test.ts` is new, not ported (legacy has no case for these): describes `formatNumber`, `formatKilobytes`, `retentionCutoff`, `userIsAdmin`, `BoundedId`, one `it` each ("groups digits the en-US way and prints no fraction", "prints whole kilobytes of 1,024 bytes", "is the retention window in days before now", "only the admin role is an admin", "an id is non-empty and at most 128 characters"). Legacy's `membersAtCeiling`, `openOrdersAtCeiling` and `seatEventValue` cases test `Billing.ts` and are not ported; they go with `billing.ts`.
+- 2026-10-17 [Step 2] `orders.ts`'s top-of-file vocabulary block gains `@module`, as `platform.ts`'s does; otherwise only the import lines change (plus the formatter's reflow).
+- 2026-10-17 [Step 2] `src/contract/fixture.ts` imports `LineItemProperty` from `../domain/orders.ts` and re-exports it with `export { LineItemProperty }`; the contract's own definition and its one-line JSDoc are deleted (the schemas were identical, so nothing else changed). `src/backend/fixture.ts` is unchanged.
+- 2026-10-17 [Step 2] Ported tests call the functions by name (`capProperties`, `syncOrder`, `retentionCutoff`, `ShopLimits`, `OrdersSyncStatus`) instead of `Domain.…`, since there is no barrel; describe and it titles are legacy's byte for byte, including the `Domain.` prefix in describe titles. The `capProperties` helper's JSDoc says `ShopLimits.maxPropertiesBytesPerItem` without `Domain.`.
+- 2026-10-17 [Step 2] "Domain.syncOrder actions" is a `for` loop of `it` over `SYNC_ROWS`, as legacy's is, not `it.each` (keeps the title a plain string, no `$` interpolation). Each row carries `title`, `action` (`tag`, `note`) and `fixtures` written out (4, 2, 2, 4, 4 inputs); the five titles were checked against the table by splitting its rows as `cellsOf` does.
+- 2026-10-17 [Step 2] "the orders index's sync state" keeps only its first assertion (`OrdersSyncStatus`'s fields). The second, `OrdersIndexData.fields.syncState === OrdersSyncStatus`, reads `OrdersIndexData` in shop work, which arrives in Step 3; Step 3 adds it back to this test (importing `shop-work.ts` from `orders.test.ts`, or moving the case to `shop-work.test.ts`).
 
 ### Issues
 
 - 2026-10-17 [Step 1] `platform.ts` keeps legacy's `{@link}`s to symbols not in scope: `itemPiece` (shop work, which platform may not import), `D1_TABLES` and `initializeSchema` (legacy backend modules, never ported here). Lint does not check `{@link}` targets, so they pass; they are moved lines and stay. Whoever reconciles them should turn them into backticks.
+- 2026-10-17 [Step 2] `orders.ts` keeps two moved JSDoc lines that point at the map's Shape families table "on the map in `Domain.ts`" (`SyncOrderResult`, `OrdersSyncResult`); that table was left behind in Step 1 and the file does not exist here. Left as moved lines; whoever reconciles the shapes should reword them.
 
 ### Command results
 
 - 2026-10-17 [Step 1] `vp check`: 207 files formatted, 164 linted, green. `vp test`: 31 files / 275 tests passed, 28.3 s.
+- 2026-10-17 [Step 2] `vp check`: 209 files formatted, 166 linted, green. `vp test`: 32 files / 282 tests passed, 24.7 s.
 
 ### Spike verdict (Step 5)
 

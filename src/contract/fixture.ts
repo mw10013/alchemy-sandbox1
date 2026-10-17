@@ -9,6 +9,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { LineItemProperty } from "../domain/orders.ts";
 import { Email } from "./auth.ts";
 import { ShopKey } from "./shop.ts";
 
@@ -195,12 +196,7 @@ export const FixtureOrderChange = Schema.Struct({
 });
 export type FixtureOrderChange = typeof FixtureOrderChange.Type;
 
-/** A line item property as Shopify sends it: `customAttributes`, whose value may be null. */
-export const LineItemProperty = Schema.Struct({
-  key: Schema.String,
-  value: Schema.NullOr(Schema.String),
-});
-export type LineItemProperty = typeof LineItemProperty.Type;
+export { LineItemProperty };
 
 /**
  * An item of a fixture order. `tags` are its product's tags, which workflows match on.
