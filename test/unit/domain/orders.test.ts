@@ -1,6 +1,6 @@
 import { describe, it } from "@effect/vitest";
 import { deepStrictEqual, strictEqual } from "@effect/vitest/utils";
-import { capProperties, OrdersSyncStatus, syncOrder } from "../../../src/domain/orders.ts";
+import { capProperties, syncOrder } from "../../../src/domain/orders.ts";
 import { retentionCutoff, ShopLimits } from "../../../src/domain/platform.ts";
 
 /**
@@ -127,10 +127,4 @@ describe("Domain.syncOrder actions", () => {
             strictEqual(action.reason, row.action.note.split(";")[0], where);
         }
     });
-});
-
-describe("the orders index's sync state", () => {
-  it("no sync count reaches a screen: the orders index carries whether one runs and the last error", () => {
-    deepStrictEqual(Object.keys(OrdersSyncStatus.fields).toSorted(), ["inFlight", "lastError"]);
-  });
 });

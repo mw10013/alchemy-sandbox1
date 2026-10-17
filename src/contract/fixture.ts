@@ -10,6 +10,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { LineItemProperty } from "../domain/orders.ts";
+import { TaskInstructions, TaskName, WorkflowState } from "../domain/shop-work.ts";
 import { Email } from "./auth.ts";
 import { ShopKey } from "./shop.ts";
 
@@ -69,15 +70,14 @@ export type FixtureTeam = typeof FixtureTeam.Type;
  * parallel.
  */
 export const FixtureTask = Schema.Struct({
-  name: Name,
+  name: TaskName,
   team: Schema.NullOr(Name),
   step: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
-  instructions: Schema.optionalKey(Name),
+  instructions: Schema.optionalKey(TaskInstructions),
 });
 export type FixtureTask = typeof FixtureTask.Type;
 
-export const WorkflowState = Schema.Literals(["active", "inactive"]);
-export type WorkflowState = typeof WorkflowState.Type;
+export { WorkflowState };
 
 /**
  * The step each task gets: its own, or the previous task's plus one (the first task's previous

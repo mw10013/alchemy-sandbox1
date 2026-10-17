@@ -145,17 +145,25 @@ Checked against this checkout at `7ab5028` and `refs/baton-legacy/`. Baseline be
 - 2026-10-17 [Step 2] Ported tests call the functions by name (`capProperties`, `syncOrder`, `retentionCutoff`, `ShopLimits`, `OrdersSyncStatus`) instead of `Domain.…`, since there is no barrel; describe and it titles are legacy's byte for byte, including the `Domain.` prefix in describe titles. The `capProperties` helper's JSDoc says `ShopLimits.maxPropertiesBytesPerItem` without `Domain.`.
 - 2026-10-17 [Step 2] "Domain.syncOrder actions" is a `for` loop of `it` over `SYNC_ROWS`, as legacy's is, not `it.each` (keeps the title a plain string, no `$` interpolation). Each row carries `title`, `action` (`tag`, `note`) and `fixtures` written out (4, 2, 2, 4, 4 inputs); the five titles were checked against the table by splitting its rows as `cellsOf` does.
 - 2026-10-17 [Step 2] "the orders index's sync state" keeps only its first assertion (`OrdersSyncStatus`'s fields). The second, `OrdersIndexData.fields.syncState === OrdersSyncStatus`, reads `OrdersIndexData` in shop work, which arrives in Step 3; Step 3 adds it back to this test (importing `shop-work.ts` from `orders.test.ts`, or moving the case to `shop-work.test.ts`).
+- 2026-10-17 [Step 3] Legacy `ShopWork.ts` opens with two JSDoc blocks before its import (the vocabulary, then the note on action tables and lists, which attached to the import). They are one top-of-file block here, the second as its last paragraph, ending in `@module`. Imports are `effect/Match`, `effect/Schema`, `effect/SchemaGetter`, `effect/Struct`, `./orders.ts`, `./platform.ts`; no other line changed but the formatter's.
+- 2026-10-17 [Step 3] `closedReasonText` and its JSDoc moved from legacy `MemberRun.tsx` into `shop-work.ts` right after `ClosedReason`; `Domain.ClosedReason`/`Domain.ConnectionRole` became `ClosedReason`/`ConnectionRole`, also in its `{@link}`.
+- 2026-10-17 [Step 3] `src/contract/fixture.ts` imports and re-exports `WorkflowState` (identical) from `../domain/shop-work.ts`; `FixtureTask.name` is `TaskName` and `instructions` is `TaskInstructions`. Semantic shift: the contract's `Name` refused untrimmed text and had no cap; these trim on decode, brand, and cap (64 and 500 characters). `step`, `team`, `stepsAreDense` and `referencesResolve` are unchanged. The root `fixture.ts` still decodes and `src/backend/fixture.ts` compiled with no change (it reads the decoded fields as strings).
+- 2026-10-17 [Step 3] `test/unit/domain/shop-work.test.ts` is legacy `domain.test.ts` minus `capProperties` (Step 2) and the three billing describes. `Domain.X` became `ShopWork.X`, `Orders.X` or `Platform.X` (namespace imports, one per context file) in code and comments, never in a string: named imports would collide with the test's own local helpers (`multiMatchItems`, for one, wraps the function it is named after). `closedReasonText` is `ShopWork.closedReasonText`. A title check over all three test files finds every legacy describe/it title but the six billing ones.
+- 2026-10-17 [Step 3] "the orders index's sync state" moved whole, both assertions, from `orders.test.ts` to `shop-work.test.ts`, since its second assertion reads `OrdersIndexData`; the title exists once.
+- 2026-10-17 [Step 3] The `runActions`, `taskActions` and `reconcileItem` matrices are not row-tested here: legacy's `run-actions.test.ts` drives repositories in workerd and comes with slice F. Their `pinned by` cells are unchanged.
 
 ### Issues
 
 - 2026-10-17 [Step 1] `platform.ts` keeps legacy's `{@link}`s to symbols not in scope: `itemPiece` (shop work, which platform may not import), `D1_TABLES` and `initializeSchema` (legacy backend modules, never ported here). Lint does not check `{@link}` targets, so they pass; they are moved lines and stay. Whoever reconciles them should turn them into backticks.
 - 2026-10-17 [Step 2] `orders.ts` keeps two moved JSDoc lines that point at the map's Shape families table "on the map in `Domain.ts`" (`SyncOrderResult`, `OrdersSyncResult`); that table was left behind in Step 1 and the file does not exist here. Left as moved lines; whoever reconciles the shapes should reword them.
+- 2026-10-17 [Step 3] The step says `unitsToMake`, `itemMatches`, `laterStepStarted`, `workflowsListFrom` and `setupFactHolds` "keep their legacy tests"; legacy `domain.test.ts` has no case naming any of them (they are exercised through workerd tests: `order-repository`, `run-repository`, `setup-facts`). Nothing was invented; they wait for the slices that port those tests.
 
 ### Command results
 
 - 2026-10-17 [Step 1] `vp check`: 207 files formatted, 164 linted, green. `vp test`: 31 files / 275 tests passed, 28.3 s.
 - 2026-10-17 [Step 2] `vp check`: 209 files formatted, 166 linted, green. `vp test`: 32 files / 282 tests passed, 24.7 s.
 - CHECKPOINT: Steps 1–2 ready to merge (db9dd05)
+- 2026-10-17 [Step 3] `vp check`: 168 files linted, green. `vp test`: 33 files / 352 tests passed, 27.9 s.
 
 ### Spike verdict (Step 5)
 
