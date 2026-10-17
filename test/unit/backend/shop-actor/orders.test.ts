@@ -740,4 +740,122 @@ describe("OrderRepository.beginSync", () => {
       }),
     ),
   );
+
+  /**
+   * Legacy compared the whole `SyncState` row before and after, because the tracking row was the
+   * Agents SDK's own table. Here the tracking record is `SyncState.workflowId` and `startedAt`,
+   * so the completion clears exactly those two columns and every other column, of `SyncState`
+   * and `ShopUsage`, is as the start left it. Both completions, `ShopActor.streamOrders` and
+   * `syncEmpty`, end in this `clearSyncTracking`; the orders a stream writes are its rows.
+   */
+  it.effect("a completed sync deletes the tracking row and writes nothing else", () =>
+    runInRepository((repository, sql) =>
+      Effect.gen(function* () {
+        yield* upsert(repository, anOrder(), [aLineItem(1)]);
+        yield* repository.beginSync({ workflowId: "wf-1", now: NOW });
+        const syncState = sql`select * from SyncState`;
+        const shopUsage = sql`select * from ShopUsage`;
+        const started = { syncState: yield* syncState, shopUsage: yield* shopUsage };
+        assert.isTrue(yield* repository.clearSyncTracking({ workflowId: "wf-1" }));
+        assert.deepStrictEqual(
+          { syncState: yield* syncState, shopUsage: yield* shopUsage },
+          {
+            syncState: started.syncState.map((row) => ({
+              ...row,
+              workflowId: null,
+              startedAt: null,
+            })),
+            shopUsage: started.shopUsage,
+          },
+        );
+        assert.deepStrictEqual(yield* ids(sql, "ShopOrder"), [orderId(1)]);
+        assert.deepStrictEqual(yield* repository.getSyncStatus(NOW + MINUTE), {
+          inFlight: false,
+          lastError: null,
+        });
+      }),
+    ),
+  );
+});
+
+/**
+ * The webhook path's probe before the Backend's fetch. Legacy lowered `ShopLimits.maxOpenOrders`
+ * to 2 and delivered a webhook to the agent; here the ceiling keeps its value, is filled with open
+ * rows, and the probe is the repository's: that `Refused` makes no Admin call is the Backend's
+ * half, pinned by `webhooks.test.ts`' "a refused version answers 200 with no Admin call and
+ * nothing stored".
+ */
+describe("OrderRepository.orderVersion", () => {
+  const NOW = Date.UTC(2026, 9, 17);
+
+  it.effect("refuses a new order at the ceiling and flags the refusal", () =>
+    runInRepository((repository, sql) =>
+      Effect.gen(function* () {
+        yield* storeOpenOrders(sql, ShopLimits.maxOpenOrders, CYCLE_START);
+        const version = yield* repository.orderVersion({
+          orderId: orderId(1),
+          updatedAt: CYCLE_START,
+          now: NOW,
+        });
+        assert.deepStrictEqual(version, {
+          _tag: "Refused",
+          openOrders: ShopLimits.maxOpenOrders,
+        });
+        const after = yield* usage(repository, sql);
+        assert.strictEqual(after.openOrders, ShopLimits.maxOpenOrders);
+        assert.strictEqual(after.ordersLimitedAt, NOW);
+        assert.lengthOf(yield* ids(sql, "ShopOrder"), ShopLimits.maxOpenOrders);
+      }),
+    ),
+  );
+
+  /**
+   * Legacy's case ran on webhooks to the agent and on Sync open orders through its Workflow; here
+   * each read is the repository's: the webhook's probe (`orderVersion`), the write
+   * (`upsertOrder`) and the start (`beginSync`). The orders a fulfilment frees are read at each,
+   * with no counter to fall out of step.
+   */
+  it.effect(
+    "the order ceiling is read against the open orders stored: a fulfilled order makes room for a new one",
+    () =>
+      runInRepository((repository, sql) =>
+        Effect.gen(function* () {
+          yield* storeOpenOrders(sql, ShopLimits.maxOpenOrders, CYCLE_START);
+          const probe = () =>
+            repository.orderVersion({ orderId: orderId(1), updatedAt: null, now: NOW });
+          assert.strictEqual((yield* probe())._tag, "Refused");
+          assert.isTrue((yield* upsert(repository, paid(1), [])).refused);
+          assert.strictEqual(
+            (yield* repository.beginSync({ workflowId: "wf-refused", now: NOW }))._tag,
+            "Refused",
+          );
+
+          const fulfilled = "gid://shopify/Order/open-1";
+          const update = yield* upsert(
+            repository,
+            paid(0, {
+              id: fulfilled,
+              legacyId: "open-1",
+              updatedAt: CYCLE_START + 1,
+              fulfillmentStatus: "FULFILLED",
+            }),
+            [],
+          );
+          assert.isTrue(update.written);
+          assert.strictEqual((yield* probe())._tag, "Fetch");
+          const stored = yield* upsert(repository, paid(1), []);
+          assert.isTrue(stored.fresh);
+          const limited = yield* usage(repository, sql);
+          assert.strictEqual(limited.openOrders, ShopLimits.maxOpenOrders);
+          // Stored again, but the refused delivery is still a gap: the flag stays until Sync
+          // open orders starts.
+          assert.strictEqual(limited.ordersLimitedAt, NOW);
+
+          yield* sql`update ShopOrder set fulfillmentStatus = 'FULFILLED' where id = ${orderId(1)}`;
+          const started = yield* repository.beginSync({ workflowId: "wf-1", now: NOW + 1 });
+          assert.strictEqual(started._tag, "Started");
+          assert.strictEqual((yield* usage(repository, sql)).ordersLimitedAt, null);
+        }),
+      ),
+  );
 });

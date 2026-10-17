@@ -48,7 +48,7 @@ import type { OrdersSyncResult } from "../domain/orders.ts";
 import * as ActorSocket from "./actor-socket.ts";
 import type { ActorFixtureAdded, ActorFixtureRows } from "./fixture.ts";
 import { type LineItemNode, type OrderNode, toOrderLineItems, toShopOrder } from "./order-sync.ts";
-import { makeOrderRepository, openOrdersAtCeiling, type Transaction } from "./shop-actor/orders.ts";
+import { makeOrderRepository, type Transaction } from "./shop-actor/orders.ts";
 import { runOrdersStream } from "./shop-actor/orders-stream.ts";
 
 const encodeNotice = Schema.encodeSync(NoticeFrame);
@@ -684,12 +684,8 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
       );
 
       /**
-       * The webhook path's probe, before the Backend asks Shopify for the order: `stale` when the
-       * payload's version is not newer than the stored row (an edit has no version, `null`, and
-       * always fetches); for an order not stored, `refused` at the order ceiling, read against
-       * the open orders stored now, which marks `ordersLimitedAt` (rule 5 on `syncOrder`);
-       * otherwise `fetch`. Every order already stored keeps receiving its updates. A refusal
-       * notifies nothing: it stored no order.
+       * The webhook path's probe, `OrderRepository.orderVersion`, logged and answered as
+       * the stub's string. A refusal notifies nothing: it stored no order.
        */
       const orderVersion = Effect.fn("ShopActor.orderVersion")(
         function* ({
@@ -699,36 +695,44 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
           readonly orderId: string;
           readonly updatedAt: number | null;
         }) {
-          const stored = yield* orders.getOrderUpdatedAt(orderId);
-          if (updatedAt !== null && Option.isSome(stored) && updatedAt <= stored.value) {
-            yield* Effect.logInfo(
-              `ShopActor.orderVersion: shop=${shop} orderId=${orderId} status=stale`,
-            ).pipe(Effect.annotateLogs({ shop, orderId, status: "stale" }));
-            return "stale" as const;
-          }
-          if (Option.isNone(stored)) {
-            const openOrders = yield* orders.countOpenOrders();
-            if (openOrdersAtCeiling(openOrders)) {
-              const limit = ShopLimits.maxOpenOrders;
-              yield* orders.markOrdersLimited(yield* Clock.currentTimeMillis);
-              yield* Effect.logError(
-                `ShopActor.orderVersion: shop=${shop} orderId=${orderId} status=order-ceiling openOrders=${String(openOrders)} limit=${String(limit)}`,
-              ).pipe(
-                Effect.annotateLogs({
-                  shop,
-                  orderId,
-                  status: "order-ceiling",
-                  openOrders,
-                  limit,
-                }),
-              );
-              return "refused" as const;
-            }
-          }
-          yield* Effect.logInfo(
-            `ShopActor.orderVersion: shop=${shop} orderId=${orderId} status=fetch`,
-          ).pipe(Effect.annotateLogs({ shop, orderId, status: "fetch" }));
-          return "fetch" as const;
+          const version = yield* orders.orderVersion({
+            orderId,
+            updatedAt,
+            now: yield* Clock.currentTimeMillis,
+          });
+          return yield* Match.value(version).pipe(
+            Match.tagsExhaustive({
+              Stale: () =>
+                Effect.logInfo(
+                  `ShopActor.orderVersion: shop=${shop} orderId=${orderId} status=stale`,
+                ).pipe(
+                  Effect.annotateLogs({ shop, orderId, status: "stale" }),
+                  Effect.as("stale" as const),
+                ),
+              Refused: ({ openOrders }) => {
+                const limit = ShopLimits.maxOpenOrders;
+                return Effect.logError(
+                  `ShopActor.orderVersion: shop=${shop} orderId=${orderId} status=order-ceiling openOrders=${String(openOrders)} limit=${String(limit)}`,
+                ).pipe(
+                  Effect.annotateLogs({
+                    shop,
+                    orderId,
+                    status: "order-ceiling",
+                    openOrders,
+                    limit,
+                  }),
+                  Effect.as("refused" as const),
+                );
+              },
+              Fetch: () =>
+                Effect.logInfo(
+                  `ShopActor.orderVersion: shop=${shop} orderId=${orderId} status=fetch`,
+                ).pipe(
+                  Effect.annotateLogs({ shop, orderId, status: "fetch" }),
+                  Effect.as("fetch" as const),
+                ),
+            }),
+          );
         },
         Effect.orDie,
         Effect.provide(runtime),

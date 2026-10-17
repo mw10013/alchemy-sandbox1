@@ -7,12 +7,14 @@ import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import { ShopKey } from "../../src/contract/shop.ts";
+import { ORDERS_KEY } from "../../src/contract/shop-actor.ts";
 import type { OrderNode } from "../../src/backend/order-sync.ts";
 import { SEED_SHOP } from "../seed-shops.ts";
 import { signWebhook } from "../shopify-webhook.ts";
-import { dev, integ } from "./actor-clients.ts";
+import { dev, integ, openAs } from "./actor-clients.ts";
 import { fileStage } from "./file-stage.ts";
 import Stack from "./stack.ts";
 
@@ -298,6 +300,44 @@ test(
     assert.deepStrictEqual(yield* shopifyRoutes(backendUrl), ["graphql"]);
     assert.isNull(
       yield* integ(backendUrl, (c) => c.GetOrder({ shop: SEED_SHOP, orderId: orderGid(5) })),
+    );
+  }),
+);
+
+/**
+ * An edit carries no version, so each delivery fetches and Shopify answers the same version
+ * both times: the second write rewrites the row and moves nothing a screen reads, so it
+ * publishes nothing. Legacy also compared the order's runs; runs are not ported.
+ */
+test(
+  "a redelivered webhook rewrites the same version and changes nothing a screen shows",
+  Effect.gen(function* () {
+    const { backendUrl } = yield* stack;
+    const updatedAt = Date.parse("2026-09-02T12:00:00Z");
+    const body = orderSyncBody(6, updatedAt);
+    yield* scriptGraphql(backendUrl, [body, body]);
+    const redeliver = deliver(backendUrl, "/webhooks/orders", "orders/edited", {
+      order_edit: { order_id: 6 },
+    });
+    const read = integ(backendUrl, (c) => c.GetOrder({ shop: SEED_SHOP, orderId: orderGid(6) }));
+    const [first, second] = yield* Effect.gen(function* () {
+      const merchant = yield* openAs(backendUrl, SEED_SHOP, { role: "merchant" });
+      yield* merchant.client.MerchantWhoAmI();
+      assert.strictEqual(yield* redeliver, 200);
+      const notice = yield* PubSub.take(merchant.received).pipe(Effect.timeout("5 seconds"));
+      assert.deepStrictEqual(notice, { _tag: "ShopActorNotice", invalidated: [ORDERS_KEY] });
+      const first = yield* read;
+      assert.strictEqual(yield* redeliver, 200);
+      yield* Effect.sleep("500 millis");
+      assert.strictEqual(yield* PubSub.remaining(merchant.received), 0, "no notice");
+      return [first, yield* read] as const;
+    }).pipe(Effect.scoped);
+    assert.deepStrictEqual(yield* shopifyRoutes(backendUrl), ["graphql", "graphql"]);
+    assert.isNotNull(first);
+    assert.isAbove(second?.order.syncedAt ?? 0, first?.order.syncedAt ?? Infinity);
+    assert.deepStrictEqual(
+      { ...second, order: { ...second?.order, syncedAt: 0 } },
+      { ...first, order: { ...first?.order, syncedAt: 0 } },
     );
   }),
 );

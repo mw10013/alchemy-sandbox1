@@ -424,6 +424,27 @@ describe("orders webhooks", () => {
     },
   );
 
+  /**
+   * The topic never reaches the actor: `storeOrder` takes the order Shopify answered and nothing
+   * of the delivery. Legacy also asserted the order's run stayed open; runs are not ported.
+   */
+  it.effect(
+    "a webhook's topic decides nothing: a cancelled topic on an open order stores it open",
+    () => {
+      const calls = newCalls();
+      return Effect.gen(function* () {
+        const response = yield* delivery("orders/cancelled", paid);
+        assert.strictEqual(response.status, 200);
+        assert.lengthOf(calls.stored, 1);
+        const [stored] = calls.stored;
+        assert.strictEqual(stored?.order.cancelledAt, null);
+        assert.strictEqual(stored?.order.displayFulfillmentStatus, "UNFULFILLED");
+      }).pipe(
+        Effect.provide(layer([session], { calls, replies: [Effect.succeed(recorded.data)] })),
+      );
+    },
+  );
+
   it.effect("an orders/edited delivery fetches the order of order_edit.order_id", () => {
     const calls = newCalls();
     return Effect.gen(function* () {

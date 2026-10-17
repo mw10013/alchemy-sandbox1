@@ -306,6 +306,13 @@ Step 7
 
 - 2026-10-17 [Step 8] The fixture rows already matched: `OrderRow` is the `ShopOrder` columns plus `countedAt` (always 0), and the repository's `orderColumns` select list leaves `countedAt` out, so it is never read into `ShopOrder` and never written (`grep countedAt src/backend/shop-actor/orders.ts`: the JSDoc line only). No fix needed. To pin it, the actor's `insertFixtureRows` moved from a closure in the actor body to an exported `insertFixtureRows(sql, rows)` beside `syncTransaction` in `shop-actor.ts`; `loadFixture` and `addFixture` call it unchanged.
 - 2026-10-17 [Step 8] New unit test in `test/unit/backend/shop-actor/orders.test.ts` ("fixture rows", 1 test): the whole dev fixture (`fixture.ts`, 42 orders, 47 items) through `fixtureRows` and `insertFixtureRows` into `ActorSqliteTest`, read back by `listOrders` (every order and item decodes; a cancelled and an unpaid one among them), then a newer sync of one order (`written`, `changed`) leaves every `countedAt` at 0.
+- 2026-10-17 [§5] Six legacy `pinned by` titles had no test under `test/`; none was pinned exactly under another title, so all six are added, none renamed.
+- 2026-10-17 [§5] Added "a completed sync deletes the tracking row and writes nothing else" (unit, `test/unit/backend/shop-actor/orders.test.ts`, `OrderRepository.beginSync`). Differs: legacy compared the whole `SyncState` row, the tracking row being the Agents SDK's table; here the tracking record is `SyncState.workflowId`/`startedAt`, so the test asserts `clearSyncTracking` nulls those two and leaves every other `SyncState` and `ShopUsage` column and the stored orders as the start left them, and the status reads idle with no error. Both completions (`streamOrders`, `syncEmpty`) end in that call.
+- 2026-10-17 [§5] Added "a redelivered webhook rewrites the same version and changes nothing a screen shows" (integ, `test/integ/webhooks.test.ts`): two signed `orders/edited` deliveries answered at the same version; two GraphQL calls, one `ORDERS_KEY` notice to a merchant socket then none, `syncedAt` rewritten and the rest of the order unchanged. Differs: legacy also compared the order's runs (not ported).
+- 2026-10-17 [§5] Added "a webhook's topic decides nothing: a cancelled topic on an open order stores it open" (unit, `test/unit/backend/webhooks.test.ts`, "orders webhooks"): an `orders/cancelled` delivery for an order Shopify answers open hands `storeOrder` `cancelledAt: null`, `UNFULFILLED`. Differs: legacy also asserted the order's run stayed open (runs not ported).
+- 2026-10-17 [§5] Added "refuses a new order at the ceiling and flags the refusal" (unit, `shop-actor/orders.test.ts`, new describe `OrderRepository.orderVersion`). To reach it at unit level, the webhook probe's logic moved from the actor's `orderVersion` into a new `OrderRepository.orderVersion({ orderId, updatedAt, now })` answering `Stale | Refused { openOrders } | Fetch`; `ShopActor.orderVersion` now calls it and `Match`es the tag for its logs and the stub's string, behaviour unchanged. Differs: legacy lowered the ceiling to 2 and delivered a webhook; here the ceiling is filled with open rows and the probe is the repository's; the no-Admin-call half is the existing unit "a refused version answers 200 with no Admin call and nothing stored".
+- 2026-10-17 [§5] Added "the order ceiling is read against the open orders stored: a fulfilled order makes room for a new one" (unit, same describe): at the ceiling the probe, the write and `beginSync` all refuse; a fulfilment written to a stored order makes the probe answer `Fetch` and the new order store; the flag stays; one more freed order lets `beginSync` start, which clears the flag. Differs: legacy ran webhooks and the Workflow; here the three reads are the repository's. The integ "at the order ceiling a new order is refused before the fetch and by the write, and a stored one still updates" is kept as is.
+- 2026-10-17 [§5] Added "the stream's callbacks are not callable from a socket, and the two sync buttons refuse a member" (integ, `test/integ/orders.test.ts`): no `ShopActorRpcs` procedure ends in `BeginSync`/`StreamOrders`/`SyncEmpty`/`SyncFailed` and no `MemberRpcs` procedure names a sync; a forged member socket is `Forbidden` on `MerchantSyncStatus`; `ApiSyncOpenOrders`/`ApiSyncOrder` given the member's session id as the token answer `InvalidSessionToken` with no Shopify call. Differs: legacy called the callbacks and the two sync callables over a socket; here the callbacks are stub methods and the buttons are `BackendApi` methods that take only a Shopify session token, which a member never holds.
 
 ### Issues
 
@@ -387,6 +394,19 @@ Step 7
 
 - 2026-10-17 [Step 8] Lead verification: diff read (`insertFixtureRows` moved to module scope unchanged, plus the "fixture rows" unit test); `vp check` green (244 files, 200 linted); `vp test` 44 files, 505 tests, 42.3 s; `vp run test:e2e` 32 passed, 1.8 min. **Step 8 is green.**
 
+- 2026-10-17 [§5] `vp check --fix` then `vp check`: green, 244 files formatted, 200 linted and type-checked. `vp test`: green first run, 44 files, 511 tests, 46.0 s (was 505; +3 unit in `shop-actor/orders.test.ts`, +1 unit in `webhooks.test.ts`, +1 integ each in `orders.test.ts` and `webhooks.test.ts`). The six-title grep: no MISS. e2e not run (`test/e2e` untouched). Nine leaked `.alchemy/local/baton-test-…-ShopActor` directories deleted.
+
+- 2026-10-17 [Step 9] Lead: `AGENTS.md` gains "Logging" and "SQL" (one line each); `docs/legacy-port-research.md` §3 marks A done on `main`, staging check pending; `docs/glossary.md` gains a **webhook** row (**order** and **sync** were there). `vp check` green.
+- 2026-10-17 [§5] Lead checks after the six legacy titles were added:
+  - `vp check` green (244 files, 200 linted); `vp test` 44 files, 511 tests, 44.5 s; `vp run test:e2e` 32 passed, 1.6 min.
+  - Production bundle, walked from `.alchemy/bundles/Backend/worker.js` (11 files, built 11:19): `IntegRpcs` 0, `ShopifyFake` 0, `SyncOpenOrders` 0; `OrdersSyncWorkflow` 28 (the control). The directory as a whole holds stale chunks that do contain `ShopifyFake`; only the walk counts.
+  - `pinned by` titles: every title in the three tables of legacy `Orders.ts` was checked with `grep -rF` (not a sample of ten): 34 present. Missing by design: the four that name runs or the usage queue (slices F and G) and "a start that fails leaves no tracking row and no banner" (Step 5 deviation).
+  - `countedAt` in `src/backend/shop-actor/orders.ts`: JSDoc only (line 208); the select list leaves it out and no `SET` names it.
+  - No-session webhook: pinned by integ "a signed orders/create for a shop with no ShopSession creates no actor storage".
+  - Dev store live order: Step 8 (order #1008 and #1009 stored by webhook in 3–4 s, cancels in 4 s).
+
+STAGING: ready for the orchestrator.
+
 ### Human steps requested
 
 - 2026-10-17 [Step 7] `embedded/orders.spec.ts` needs store auth on the e2e store. Run once, approve the Shopify CLI Connector App install in the browser page it opens:
@@ -400,6 +420,25 @@ Step 7
 - 2026-10-17 [Step 7] Done by the human; the next e2e run got past the auth.
 
 ### Implementation review
+
+Fixed by the lead:
+
+- Step 2: repository tests moved from an integ probe Durable Object to unit tests over `@effect/sql-sqlite-node`, and `0001_init` split one statement per `sql` call, per the spike verdict.
+- Step 5: a stream that fails partway now notifies `ORDERS_KEY`, so the orders it stored show up.
+- Step 7: the e2e test order's tag fits Shopify's 40-character limit (`e2e-<randomUUID>`).
+- §5: six legacy `pinned by` titles had no test; added (the ceiling probe moved into `OrderRepository.orderVersion` to make two of them unit tests).
+
+Needs a decision:
+
+- Fixture rows get "Sync from Shopify" and a broken admin link, against `FIXTURE_ORDER_PREFIX`'s rule; the refresh e2e spec relies on the button. Hide both on fixture rows (and give the spec a real order), or relax the rule.
+- `orders.spec.ts`' third case passes in 91 ms without proving a sync ran; the screen shows no finished-sync marker to wait on. Add one, or drop the case.
+- A scopes-update webhook without `current` answers 500 (Shopify retries), as legacy; 400 is the alternative.
+- `ORDER_SYNC_WINDOW_DAYS` lives in `src/contract/orders.ts` (the screen's copy needs it) rather than beside the Workflow's constants.
+- Dev store: one order did not reach an already-open orders page until a reload; later changes arrived live. Cause unknown; the merchant socket logs no connects or closes. Add that logging?
+- `/app/orders` shows one page (25 rows): 17 of the fixture's 42 orders, including its cancelled and fulfilled ones, are unreachable. Pagination is not in the plan.
+- `vp run fixture` replaces stored orders, so the dev store's 3 real orders are missing from `/app/orders` until someone presses Sync open orders.
+- The compliance JSDoc omits legacy's sentence on teardown's `status=failed` visibility (Step 4 Issue); `ShopActors.destroy` logs it now.
+- `embedded/app.spec.ts` timed out once on hydration (Step 5) and passed on rerun; not seen since.
 
 ## 8. Out of scope
 

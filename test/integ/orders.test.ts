@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import { ShopKey } from "../../src/contract/shop.ts";
-import { ORDERS_KEY } from "../../src/contract/shop-actor.ts";
+import { MemberRpcs, ORDERS_KEY, ShopActorRpcs } from "../../src/contract/shop-actor.ts";
 import type { LineItemNode, OrderNode } from "../../src/backend/order-sync.ts";
 import { ShopLimits } from "../../src/domain/platform.ts";
 import { OTHER_SHOP, SEED_SHOP } from "../seed-shops.ts";
@@ -529,5 +529,58 @@ test(
         .pipe(Effect.flip);
       assert.strictEqual(error._tag, "Forbidden");
     }).pipe(Effect.scoped);
+  }),
+);
+
+/**
+ * Legacy's `onOrdersStream`, `onOrdersSyncEmpty` and `onOrdersSyncError` were agent methods a
+ * socket could name; here they are `streamOrders`, `syncEmpty` and `syncFailed` on the actor's
+ * stub, with `beginSync`, so no browser procedure carries them. Legacy's two sync buttons were
+ * merchant-only callables; here they are `BackendApi.syncOpenOrders` and `syncOrder`, which take
+ * a Shopify session token and nothing else, so a member, whose only credential is a Better Auth
+ * session, is refused them as an invalid token, and is `Forbidden` the sync's status on the
+ * socket.
+ */
+test(
+  "the stream's callbacks are not callable from a socket, and the two sync buttons refuse a member",
+  Effect.gen(function* () {
+    const { backendUrl } = yield* stack;
+    const procedures = [...ShopActorRpcs.requests.keys()];
+    for (const name of ["BeginSync", "StreamOrders", "SyncEmpty", "SyncFailed"])
+      assert.deepStrictEqual(
+        procedures.filter((tag) => tag.endsWith(name)),
+        [],
+        `${name} is not a socket procedure`,
+      );
+    assert.deepStrictEqual(
+      [...MemberRpcs.requests.keys()].filter((tag) => tag.includes("Sync")),
+      [],
+    );
+    const sessionId = "session-orders-sync";
+    yield* Effect.gen(function* () {
+      const member = yield* openAs(backendUrl, SEED_SHOP, {
+        role: "member",
+        memberId: "mem-orders-sync",
+        memberEmail: Schema.decodeUnknownSync(Email)("orders-sync@m.com"),
+        teamIds: [],
+        userId: "user-orders-sync",
+        sessionId,
+        sessionExpiresAt: Date.now() + 600_000,
+      });
+      const error = yield* member.client.MerchantSyncStatus().pipe(Effect.flip);
+      assert.strictEqual(error._tag, "Forbidden");
+    }).pipe(Effect.scoped);
+    yield* scriptGraphql([]);
+    const refusals = yield* integ(backendUrl, (c) =>
+      Effect.all([
+        c.ApiSyncOpenOrders({ sessionToken: sessionId }).pipe(Effect.flip),
+        c.ApiSyncOrder({ sessionToken: sessionId, orderId: orderId(31) }).pipe(Effect.flip),
+      ]),
+    );
+    assert.deepStrictEqual(
+      refusals.map((error) => error._tag),
+      ["InvalidSessionToken", "InvalidSessionToken"],
+    );
+    assert.deepStrictEqual(yield* integ(backendUrl, (c) => c.ShopifyCalls({})), []);
   }),
 );

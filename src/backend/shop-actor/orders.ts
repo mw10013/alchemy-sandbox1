@@ -361,6 +361,35 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
   });
 
   /**
+   * The webhook path's probe, before the Backend asks Shopify for the order: `Stale` when the
+   * payload's version is not newer than the stored row (an edit has no version, `null`, and
+   * always fetches); for an order not stored, `Refused` at the order ceiling, read against the
+   * open orders stored now, which marks `ordersLimitedAt` (rule 5 on `syncOrder`); otherwise
+   * `Fetch`. Every order already stored keeps receiving its updates.
+   */
+  const orderVersion = Effect.fn("OrderRepository.orderVersion")(function* ({
+    orderId,
+    updatedAt,
+    now,
+  }: {
+    readonly orderId: string;
+    readonly updatedAt: number | null;
+    readonly now: number;
+  }) {
+    const stored = yield* getOrderUpdatedAt(orderId);
+    if (updatedAt !== null && Option.isSome(stored) && updatedAt <= stored.value)
+      return { _tag: "Stale" } as const;
+    if (Option.isNone(stored)) {
+      const openOrders = yield* countOpenOrders();
+      if (openOrdersAtCeiling(openOrders)) {
+        yield* markOrdersLimited(now);
+        return { _tag: "Refused", openOrders } as const;
+      }
+    }
+    return { _tag: "Fetch" } as const;
+  });
+
+  /**
    * One page of the stored orders with their items, newest first by `processedAt`, `id` breaking
    * a tie. Keyset, never `limit/offset`: the bulk stream and webhooks insert while a merchant
    * pages, and an offset would skip or repeat rows under those writes. One extra row is fetched
@@ -644,6 +673,7 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
     upsertOrder,
     getOrder,
     getOrderUpdatedAt,
+    orderVersion,
     countOpenOrders,
     markOrdersLimited,
     clearOrdersLimited,

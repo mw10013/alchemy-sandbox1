@@ -34,6 +34,12 @@ Dev logs: `.logs/dev/current`. Rotated archives: `.logs/dev/`.
 E2E server logs: `.logs/e2e/current`. Rotated archives: `.logs/e2e/`.
 Staging logs: use `cf o11y telemetry query` on `cloudflare-workers`, filtering `$metadata.service` to `baton-website-staging` (Website) or `baton-backend-staging` (Backend).
 
+## Logging
+- One string message: `<operation>: shop=<shop> key=<value>: <detail>`. Structured fields go in `Effect.annotateLogs`; `shop` goes in both.
+
+## SQL
+- Lowercase keywords, positional parameters (the `sql` template's interpolations), never values spliced into the text.
+
 ## UI: Polaris web components
 - Layout lives only in named parts under `src/web/components/screen/`. Elsewhere, no `s-stack`, `s-grid`, `s-box` or layout props (`gap`, `padding`, …); a new shape is a new part.
 - Outside the Shopify admin nothing intercepts Polaris anchors: navigate with a TanStack `<Link>`, or `href` plus an `onClick` that calls the router.
