@@ -74,7 +74,7 @@ import * as Struct from "effect/Struct";
  * A count as every screen prints one: digits grouped the en-US way
  * ("1,200"), no fraction. One rule for every number a screen shows, so the
  * orders strip, the quotas and a row's `×n` agree; the row's `×n`
- * ({@link itemPiece}) is the one the domain itself prints.
+ * (`itemPiece`) is the one the domain itself prints.
  */
 export const formatNumber = (value: number) =>
   value.toLocaleString("en-US", { maximumFractionDigits: 0 });
@@ -443,8 +443,8 @@ export type ShopSessionRedactedPage = typeof ShopSessionRedactedPage.Type;
 /**
  * Baton stores every time as epoch-ms integers in a column whose name ends in At.
  *
- * "Baton" means the tables Baton writes the DDL for: {@link D1_TABLES} in D1
- * and every table in {@link initializeSchema}. A vendor's table stores time as
+ * "Baton" means the tables Baton writes the DDL for: `D1_TABLES` in D1
+ * and every table in `initializeSchema`. A vendor's table stores time as
  * the vendor writes it, and Baton reads it through the vendor's API or a
  * decoding schema: better-auth writes ISO 8601 text through its adapter
  * (`refs/better-auth/packages/core/src/db/adapter/factory.ts`, the

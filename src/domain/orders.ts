@@ -237,8 +237,8 @@ export const SyncOrderInput = Schema.Struct({
 export type SyncOrderInput = typeof SyncOrderInput.Type;
 
 /**
- * What Sync from Shopify is told it did: a `Result` (the Shape families
- * table on the map in `Domain.ts`). `Gone` is Shopify answering `null` for
+ * What Sync from Shopify is told it did: a `Result`, the outcomes of one
+ * write as a tagged union. `Gone` is Shopify answering `null` for
  * the order: the stored row stays (a transient `null` must not be
  * destructive; reconcile has already closed the runs of a cancelled order
  * and retention deletes the row in time), and the order page says so.
@@ -471,9 +471,8 @@ export const OrdersSyncStatus = Schema.Struct({
 export type OrdersSyncStatus = typeof OrdersSyncStatus.Type;
 
 /**
- * What the Sync open orders button is told it did: a `Result` (the Shape
- * families table on the map in `Domain.ts`), a tagged union like every
- * other. `InFlight` is a sync already tracked as running, `Refused` is
+ * What the Sync open orders button is told it did: a `Result`, the outcomes of one
+ * write as a tagged union like every other. `InFlight` is a sync already tracked as running, `Refused` is
  * the order ceiling, which the quota banner already carries
  * (`ordersLimitedAt`); neither is an error, and in all three cases the page re-reads
  * `OrdersIndexData` in ShopWork.
