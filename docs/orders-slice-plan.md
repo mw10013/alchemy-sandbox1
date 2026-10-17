@@ -405,7 +405,7 @@ Step 7
   - No-session webhook: pinned by integ "a signed orders/create for a shop with no ShopSession creates no actor storage".
   - Dev store live order: Step 8 (order #1008 and #1009 stored by webhook in 3–4 s, cancels in 4 s).
 
-STAGING: ready for the orchestrator (head 4e4d0c6, after Follow-up round 1).
+STAGING: ready for the orchestrator (head d8fa411, after Follow-up round 2).
 
 ### Follow-up round 1
 
