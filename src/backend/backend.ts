@@ -36,6 +36,7 @@ import { Shopify } from "./shopify.ts";
 import { ShopifyAdmin } from "./shopify-admin.ts";
 import { ShopSessions } from "./shop-sessions.ts";
 import { workerNameOf } from "./stage.ts";
+import { Webhooks } from "./webhooks.ts";
 import ShopActor from "./shop-actor.ts";
 
 /** Under `alchemy dev` the limiter is open; see {@link SignInLimiter.layerOpen}. */
@@ -156,8 +157,9 @@ export const backendProps = {
  * methods, which the Website's server functions call over the `BACKEND` service binding and
  * which the binding carries schemaless. Run it only through {@link provideBackend}.
  *
- * `fetch` serves Better Auth's routes under `/api/auth`, {@link DevRpcs} on `/api/dev`, and the
- * actor's sockets; anything else is 404.
+ * `fetch` serves Better Auth's routes under `/api/auth`, Shopify's webhooks under `/webhooks/`
+ * ({@link Webhooks}), {@link DevRpcs} on `/api/dev`, and the actor's sockets; anything else is
+ * 404.
  *
  * It hosts {@link ShopActor} and forwards a WebSocket upgrade on `/api/actor/<key>` (see
  * {@link actorKeyFromPath}) to the actor named by the key, after {@link ShopAccess}, the gate,
@@ -174,6 +176,7 @@ export const backendBody = Effect.gen(function* () {
   const actors = yield* ShopActor;
   const shopAccess = yield* ShopAccess;
   const api = yield* BackendApi;
+  const webhooks = yield* Webhooks;
   const services = yield* Effect.context<Members | ShopifyAdmin | ShopActors | ShopSessions>();
   const devEndpoint = Option.isSome(yield* Config.option(Config.String("DEV_ENDPOINT")));
   // The RPC server is built per request, inside the request's scope (workerd pins I/O to
@@ -219,6 +222,7 @@ export const backendBody = Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const { pathname } = new URL(request.url, "http://backend");
     if (pathname === "/api/auth" || pathname.startsWith("/api/auth/")) return yield* auth.fetch;
+    if (pathname.startsWith("/webhooks/")) return yield* webhooks.serve(request);
     if (isActorPath(pathname))
       return yield* Option.match(actorKeyFromPath(pathname), {
         onNone: () => Effect.succeed(HttpServerResponse.empty({ status: 404 })),
@@ -243,6 +247,7 @@ export const backendBody = Effect.gen(function* () {
 export const provideBackend = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.provide(BackendApi.layer),
+    Effect.provide(Webhooks.layer),
     Effect.provide(ShopAccess.layer),
     Effect.provide(Auth.layer),
     Effect.provide(ShopActors.layer),

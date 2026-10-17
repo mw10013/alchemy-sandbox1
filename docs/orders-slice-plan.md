@@ -155,11 +155,112 @@ Needs the domain merge.
 
 For the implementer. Append as you go. Keep each entry short, dated and tagged with its step. A deviation is anything built differently from the step that specified it. An issue is anything the plan did not predict: a failing assumption, an API that behaves differently, a test that cannot be written as described. Command results go under their own heading with the counts and times.
 
+### Plan review (2026-10-17, lead)
+
+Checked every step against this repo, `refs/baton-legacy/` and Alchemy's Workflow source (`refs/alchemy/packages/alchemy/src/Cloudflare/Workflows/`). Outcome, names, order and steps unchanged; these are the corrected details each step is built to.
+
+General
+
+- §0 "Do not commit": superseded for this run; the lead commits each green step on `main`.
+- SQL style: legacy's "positional parameters" are Effect's tagged templates (`sql\`select … where id = ${id}\``, `sql.in`, `sql.literal(OPEN)`), lowercase keywords; no `sql.unsafe`, no `?`. The existing uppercase SQL in `shop-actor.ts` (fixture) is left as is.
+- Legacy tests all live in `refs/baton-legacy/test/integration/`; "legacy title" means a title there, ported byte for byte.
+- No `build` script in `package.json`: "regenerate the route tree" is `vp build` (Vite+ command) or whatever regenerates `routeTree.gen.ts`; record what worked.
+
+Step 1
+
+- `api.webhooks.validate` (web-api adapter; `rawRequest` is a web `Request`) returns `topic` as `topicForStorage(header)`: `ORDERS_CREATE`, `ORDERS_EDITED`, `APP_UNINSTALLED`, `APP_SCOPES_UPDATE`, `CUSTOMERS_REDACT`, `CUSTOMERS_DATA_REQUEST`, `SHOP_REDACT`. The `Match` dispatch matches these, not `orders/create`. The Backend's `HttpServerRequest` must be turned back into a web `Request` with the body read once.
+- Missing-headers 400 covers all five headers the library requires: HMAC, topic, shop domain, API version, webhook id. `signWebhook` sets all five.
+- Legacy titles: "fails with a 405 ResponseError for a non-POST request", "fails with a 400 ResponseError when required webhook headers are missing"; `handleWebhook`: "fails with the rejection ResponseError without running the handler", "runs the handler with the validated result and returns its Response", "re-raises a handler failure so Shopify retries". Legacy's toml test reads only `shopify.app.toml` and pins no `include_fields`; the plan's wider test (both tomls, `include_fields`) stands, legacy titles reused.
+- Unknown topic 404: kept (new; legacy routed by URI).
+
+Step 2
+
+- `ordersLimitedAt` and `lastSweepAt` are `ShopUsage` columns, not `SyncState`'s (`SyncState` is `id, lastError`).
+- Legacy `upsertOrder<A = void, E = never>({order, lineItems, afterWrite?})` does its own probe and, for a new order only, the ceiling read (`openOrdersAtCeiling(countOpenOrders())`) and `markOrdersLimited` inside its transaction, then `syncOrder`. `storeOrder` relies on that; it does not re-probe.
+- `listOrders` in legacy is run-entangled (`{limit, cursor, q, show, team, teams}` → `OrdersPage`). The run-free read is new: keep legacy's cursor `${processedAt}:${id}`, `order by processedAt desc, id desc`, `limit + 1`. `getOrder` answers the order and its items, run-free (legacy's `OrderDetail` carries runs).
+- Repository tests: wt-01's spike verdict (`domain-port-plan.md` §7) is still empty. Read it when Step 2 starts. Legacy describe names are `OrderRepository.upsertOrder`, `OrderRepository.upsertOrder columns`, `OrderRepository.sweepExpiredOrders`, `OrderRepository retention`, `OrderRepository sync state`.
+- "Equal rewritten" is the `storeOrder` path; the webhook probe skips an equal version (Step 3).
+- Ceiling test: legacy's `withMaxOpenOrders` (`test/integration/open-order-ceiling.ts`) has no counterpart here. Choose and record.
+
+Step 3
+
+- `orderRef` follows legacy: a missing `admin_graphql_api_id` builds `gid://shopify/Order/${id}`, and a bad or missing `updated_at` is `null` (fetch). Only a payload that decodes as neither shape is a 400. Legacy answered non-2xx there too.
+- The probe skips `updatedAt <= stored`.
+- Call shape: `ShopifyAdmin.graphqlDecode(shop, OrderSyncResponse, orderSyncQuery, { variables: orderSyncVariables(orderId) })`. Failures are `EnsureShopSessionError` only; an undecodable response is a defect.
+- `toOrderLineItems({shop, orderId, nodes})` is effectful (logs drops). The no-session guard is new (legacy had none).
+
+Step 4
+
+- Legacy has no `ShopAgent.destroy`. The spec is `destroyShopAgent` (`Shopify.ts`): the abort rejection counts as success; log lines `…: shop=<shop> status=destroyed|failed` with `annotateLogs({shop, status})`. `ShopActors.destroy` ports that.
+
+Step 5
+
+- `SYNC_STALE_MS` (private, `ShopAgent.ts`) and `GAVE_UP_MESSAGE` ("Shopify did not finish the export in time. Try again.", private, `OrdersSyncWorkflow.ts`) move into `orders-sync-constants.ts` as §3 says. `ORDERS_SYNC_WORKFLOW_NAME` is not ported.
+- `runShopAgentOrdersStream` is renamed `runOrdersStream`. It needs the repository and `HttpClient` (`filterStatusOk`, `retryTransient`) and reads `syncedAt` itself.
+- Legacy has four GraphQL documents: the inner `BulkOrdersQuery` plus three operations.
+- Legacy steps use default retries; the explicit `retries` here are new, as planned.
+- Workflow API, verified:
+  - The body is `Effect.fn((params) => …)` returned by the outer generator. Its requirements are limited to `WorkflowServices`, so resolve `ShopifyAdmin`, `ShopSessions`, `ShopActors` and the bulk repository in the outer generator. They flow to the Backend's init and come from `provideBackend`.
+  - `handle.create({id, params})`; `get(id)` is itself an Effect (`yield* (yield* wf.get(id)).status()`).
+  - `Effect.die` becomes `NonRetryableError`; a typed failure retries. Task results go through Cloudflare's serializer (no JSON check), so pass plain data.
+  - An instance may run in another isolate of the script; the shared init runs there too.
+- `ShopifyFake` patches only the Shopify library's fetch (`setAbstractFetchFunc`), answers JSON only, and 599s any other host. It cannot serve the bulk file to the actor's `HttpClient`.
+  - Corrected design: the research §6 fallback. A `bulk` reply holds the JSONL body; the fake's `bulkOperation` answer names a URL on the test Backend's own origin, and the test Backend serves the body there.
+  - `ShopifyFakeReply`/`ShopifyFakeCall` route literals, the queues and the script filter all grow.
+  - Whether the Workflow's `ShopifyAdmin` sees the fake (same script, shared init) is checked first in Step 5.
+
+Step 6
+
+- `AddToFixture`'s `PlacedDaysAgo` is `< 365`, so it cannot insert a sweepable row. If the spike verdict is **unit**, the 365-day deletion is pinned over the repository with an explicit `now`, and integ pins that `storeOrder` sweeps when due (`lastSweepAt` set) plus the rate limit. If **integ**, a test-Backend-only path inserts the old row. Record which.
+- Legacy has no "sweep batch and chunking" test; write new ones (200 per sweep, 90 ids per statement). The legacy title is "deletes any order older than 365 days, open or closed, with its runs".
+
+Step 7
+
+- `BackendApi` methods take `(request, payload)`. Resolve the `ShopKey` with `Shopify.decodeSessionToken` (`authenticateAdmin`'s first half, the one `ShopAccess.merchant` uses), not a full `authenticateAdmin`: that may token-exchange on every call. Server functions follow `src/web/server/shopify.ts`'s `shopifyAdmin` middleware.
+- `app.tsx` renders the home body with no `<Outlet/>`. Move the home body to `app.index.tsx` and give `app.tsx` an `<Outlet/>`; the guards in `beforeLoad` still apply.
+- The merchant socket has never been wired into `/app`: `ShopPage`/`seedShop` take a merchant token, but no route passes one. Step 7 wires it.
+- Legacy's columns are Order, Placed, Payment (Paid/Unpaid badge), Status, Issues, Items, Shopify. The name links to the in-app order page, and `adminOrderUrl` (`shopify://admin/orders/${legacyId}`) is a last "Shopify" column, an icon button labelled `Open ${name} in Shopify`. Here: drop Issues; the name is plain text until the order page (slice F); keep the Shopify column.
+- Per-row "Sync from Shopify" stays per row (legacy has it on the order page, which arrives with F).
+- Copy:
+  - InFlight: "A sync is already running".
+  - A start error: its message, or "Couldn't start the sync.".
+  - Gone: "Shopify no longer has this order".
+  - Refused: legacy has no toast. It shows the ceiling in `QuotaBanners`; use that component's ceiling sentence as the toast and record it.
+  - Sync banner: `<s-banner tone="critical">{lastError}</s-banner>` in `IndexSection`'s head.
+  - Parts: `IndexSection` exists; add `EmptyLine` (and `FootLine` if needed) by legacy's names.
+- `PingAdmin` callers beyond the e2e spec:
+  - `test/unit/backend/dev.test.ts` (2 tests);
+  - `test/integ/shopify-refresh.test.ts`'s `ping` helper (every refresh integ test);
+  - five e2e tests plus `afterAll` in `refresh.spec.ts`: refresh, 5 parallel, reload reuse, rejected → `ReauthorizationRequired`, reload exchange.
+
+  Each moves to a one-order sync: the `syncOrder` server function or press in e2e, a signed `orders/*` webhook or `syncOrder` in integ. Keep each case's assertion.
+
+- `scripts/lib/stores.ts` has `DRAFT_ORDER_CREATE`/`DRAFT_ORDER_COMPLETE`/`ORDER_CANCEL` as private documents inside `applyStoreFixture`, and its store guard admits dev stores only. Export narrow order helpers guarded to the e2e store. They shell out per operation to `shopify store execute`. `testEmail` is in `test/e2e/fixtures.ts`.
+- The runbook's `shopify store auth` line covers dev stores only; add the e2e store line.
+
 ### Deviations
+
+- 2026-10-17 [Step 1] `Shopify.validateWebhook` fails with `WebhookRejected { status: 400 | 401 | 405 }` (a `Schema.TaggedError`), not legacy's `ResponseError` carrying a `Response`; `Webhooks.serve` answers `HttpServerResponse.empty({ status })`. The legacy titles still say "ResponseError" and are kept byte for byte.
+- 2026-10-17 [Step 1] `validateWebhook` lives on `Shopify` (the step text), not on `Webhooks` as §3's table lists. `Webhooks` has `handle(request, handler)` (the web `Request` is a parameter; there is no `CurrentRequest` service) and `serve(HttpServerRequest)`, the Backend's `/webhooks/` branch: `HttpServerRequest.toWeb` hands back the Worker's own `Request` with its body unread, `validateWebhook` reads it once, a rejection answers its status, any other failure (already logged at Error by `handle`) answers 500.
+- 2026-10-17 [Step 1] A signed delivery whose shop domain is not a `ShopKey` or whose body is not JSON is a 400 rejection (logged at Debug); legacy let both become a defect (500).
+- 2026-10-17 [Step 1] An unknown topic is 404 after the `Webhook received` line, with a Warning `Webhooks.dispatch: shop=<shop> topic=<topic>: no handler`. Topics are a `WebhookTopic` literal schema; the dispatch is `Match` with `Match.exhaustive` over it.
+- 2026-10-17 [Step 1] The compliance JSDoc (on `compliance` in `src/backend/webhooks.ts`) drops legacy's two sentences about the admin orphan sweep and `destroyShopAgent`'s `status=failed`, which do not exist here yet; `handle`'s Error line is the stated visibility.
+- 2026-10-17 [Step 1] The Website forwarder answers non-POST with TanStack Start's `ANY` handler (405, `allow: POST`).
+- 2026-10-17 [Step 1] `signWebhook(topic, shop, body)` answers the headers (the five plus `content-type`, API version `2026-10`); the caller builds the request.
+- 2026-10-17 [Step 1] Tests beyond legacy's titles: each of the other four required headers missing is 400; a non-`ShopKey` domain is 400; through `serve`: the three compliance topics 200, `app/uninstalled` and `orders/*` 200 with nothing written, an unsubscribed topic 404, a scopes payload without `current` 500 with nothing written, 401/400/405. Legacy's "app/scopes_update updates the stored scope from the payload" and "app/scopes_update is a no-op when no session row exists" are ported as unit tests; the first also titles the integ case. The toml test adds "trims every orders topic but orders/edited to id, admin_graphql_api_id and updated_at" for both tomls.
 
 ### Issues
 
+- 2026-10-17 setup: baseline `vp check` green. The first `vp test` failed with an unhandled "Port 63315 is already in use" (all 26 files that ran passed). A rerun was green: 30 files, 270 tests, 23.2 s. Transient; likely a concurrent run in `wt-01`.
+- 2026-10-17 [Step 1] Route tree: `vp build` regenerates `src/web/routeTree.gen.ts` (2.7 s; +21 lines for `/webhooks/$`). It also writes `dist/`, which is gitignored.
+- 2026-10-17 [Step 1] `shopify.app.toml?raw` imports type-check in the unit project with no extra declaration (`vite/client` is in `tsconfig.json`); legacy's `oxlint-disable` line for it is not needed here.
+- 2026-10-17 [Step 1] The library checks the HMAC before the headers: a missing HMAC header or an empty body is 400 (`missing_hmac`, `missing_body`), a missing topic/domain/version/id after a good HMAC is 400 (`missing_headers`).
+
 ### Command results
+
+- 2026-10-17 [Step 1] `vp check`: green, 214 files formatted, 171 files linted and type-checked (~2.5 s).
+- 2026-10-17 [Step 1] `vp test`: green first run, 34 files, 316 tests, 30.1 s (unit alone: 276 tests, 10.8 s; `test/unit/backend/webhooks.test.ts` 32 tests; `test/integ/webhooks.test.ts` 2 tests, 10.3 s alone). The seven leaked `.alchemy/local/baton-test-…-ShopActor` directories were deleted.
+- 2026-10-17 [Step 1] e2e by hand, not run (for the lead): with `vp run dev` up under `shopify app dev`, `shopify app webhook trigger --topic customers/redact --api-version 2026-10 --delivery-method http --address <tunnel>/webhooks/compliance --client-secret <Baton Dev client secret>`; expect 200 once, and a `Webhook received: shop=… topic=CUSTOMERS_REDACT` line in `.logs/dev/current`.
 
 ### Human steps requested
 

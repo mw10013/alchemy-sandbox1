@@ -10,6 +10,7 @@ import {
   RequestedTokenType,
   Session,
   shopifyApi,
+  WebhookValidationErrorReason,
 } from "@shopify/shopify-api";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
@@ -159,6 +160,29 @@ export class AdminUnauthorized extends Schema.TaggedError<AdminUnauthorized>()(
   "AdminUnauthorized",
   { shop: ShopKey },
 ) {}
+
+/**
+ * `validateWebhook` refused the request: 405 for a method other than POST, 401 for a bad HMAC,
+ * 400 for anything else invalid (an empty body, a missing header, a shop domain that is not a
+ * {@link ShopKey}, a body that is not JSON). The caller answers with `status` and nothing else.
+ */
+export class WebhookRejected extends Schema.TaggedError<WebhookRejected>()("WebhookRejected", {
+  status: Schema.Literals([400, 401, 405]),
+}) {}
+
+/**
+ * A webhook that passed `validateWebhook`. `topic` is the library's storage form
+ * (`APP_UNINSTALLED`, `ORDERS_CREATE`), not the header's `app/uninstalled`.
+ */
+export interface ValidatedWebhook {
+  readonly shop: ShopKey;
+  readonly topic: string;
+  readonly payload: unknown;
+  readonly webhookId: string;
+}
+
+const decodeWebhookShop = Schema.decodeUnknownOption(ShopKey);
+const decodeWebhookPayload = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 /** Every way `ensureShopSession` fails; anything else is a defect. */
 export type EnsureShopSessionError =
@@ -643,7 +667,56 @@ const make = (options: {
       Effect.catchTag("SchemaError", Effect.die),
     );
 
+    /**
+     * Baton's `validateWebhook`: verifies a webhook by HMAC over its raw body and parses it, or
+     * fails with {@link WebhookRejected}. It reads no session: authenticity is the HMAC alone, and
+     * a handler that needs the Admin API calls `ensureShopSession` itself, since a webhook is a
+     * trigger to re-query Shopify, not a data feed. `request`'s body is read here, once.
+     *
+     * Every rejection logs at Debug, silent in deployed stages (minimum level Info). They are
+     * the validator working: the URL is public and draws constant scanner traffic, so Info is
+     * kept for validated events (`Webhook received`) and Warning would imply a fault of ours
+     * on every spoof. A misconfigured secret, which fails every real delivery with 401, shows as
+     * the absence of `Webhook received` lines and in Shopify's delivery-failure dashboard. If
+     * spoof monitoring is ever wanted, raise only the 401 to Warning and accept the noise.
+     */
+    const validateWebhook = Effect.fn("Shopify.validateWebhook")(function* (request: Request) {
+      if (request.method !== "POST") {
+        yield* Effect.logDebug(
+          "Received a non-POST request for a webhook. Only POST requests are allowed.",
+        ).pipe(Effect.annotateLogs({ url: request.url, method: request.method }));
+        return yield* new WebhookRejected({ status: 405 });
+      }
+      const shopify = yield* api;
+      const rawBody = yield* tryShopify(() => request.text()).pipe(Effect.orDie);
+      const validation = yield* tryShopify(() =>
+        shopify.webhooks.validate({ rawBody, rawRequest: request }),
+      ).pipe(Effect.orDie);
+      if (!validation.valid) {
+        const invalidHmac = validation.reason === WebhookValidationErrorReason.InvalidHmac;
+        yield* Effect.logDebug(
+          invalidHmac ? "Webhook HMAC validation failed" : "Webhook validation failed",
+        ).pipe(Effect.annotateLogs({ ...validation }));
+        return yield* new WebhookRejected({ status: invalidHmac ? 401 : 400 });
+      }
+      const shop = decodeWebhookShop(validation.domain);
+      const payload = decodeWebhookPayload(rawBody);
+      if (Option.isNone(shop) || Option.isNone(payload)) {
+        yield* Effect.logDebug(
+          `Webhook validation failed: the ${Option.isNone(shop) ? "shop domain" : "body"} does not decode`,
+        ).pipe(Effect.annotateLogs({ topic: validation.topic, domain: validation.domain }));
+        return yield* new WebhookRejected({ status: 400 });
+      }
+      return {
+        shop: shop.value,
+        topic: validation.topic,
+        payload: payload.value,
+        webhookId: validation.webhookId,
+      } satisfies ValidatedWebhook;
+    });
+
     return {
+      validateWebhook,
       decodeSessionToken,
       authenticateAdmin,
       ensureShopSession,

@@ -21,6 +21,7 @@ import { Route as AuthExitIframeRouteImport } from './routes/auth.exit-iframe'
 import { Route as AuthSessionTokenRouteImport } from './routes/auth.session-token'
 import { Route as ShopIndexRouteImport } from './routes/shop.index'
 import { Route as ShopKeyRouteImport } from './routes/shop.$key'
+import { Route as WebhooksSplatRouteImport } from './routes/webhooks.$'
 import { Route as ApiActorKeyRouteImport } from './routes/api.actor.$key'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
 
@@ -84,6 +85,11 @@ const ShopKeyRoute = ShopKeyRouteImport.update({
   path: '/$key',
   getParentRoute: () => ShopRoute,
 } as any)
+const WebhooksSplatRoute = WebhooksSplatRouteImport.update({
+  id: '/webhooks/$',
+  path: '/webhooks/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiActorKeyRoute = ApiActorKeyRouteImport.update({
   id: '/api/actor/$key',
   path: '/api/actor/$key',
@@ -106,6 +112,7 @@ export interface FileRoutesByFullPath {
   '/auth/exit-iframe': typeof AuthExitIframeRoute
   '/auth/session-token': typeof AuthSessionTokenRoute
   '/shop/$key': typeof ShopKeyRoute
+  '/webhooks/$': typeof WebhooksSplatRoute
   '/admin/': typeof AdminIndexRoute
   '/shop/': typeof ShopIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
@@ -120,6 +127,7 @@ export interface FileRoutesByTo {
   '/auth/exit-iframe': typeof AuthExitIframeRoute
   '/auth/session-token': typeof AuthSessionTokenRoute
   '/shop/$key': typeof ShopKeyRoute
+  '/webhooks/$': typeof WebhooksSplatRoute
   '/admin': typeof AdminIndexRoute
   '/shop': typeof ShopIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
@@ -137,6 +145,7 @@ export interface FileRoutesById {
   '/auth/exit-iframe': typeof AuthExitIframeRoute
   '/auth/session-token': typeof AuthSessionTokenRoute
   '/shop/$key': typeof ShopKeyRoute
+  '/webhooks/$': typeof WebhooksSplatRoute
   '/admin/': typeof AdminIndexRoute
   '/shop/': typeof ShopIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
@@ -155,6 +164,7 @@ export interface FileRouteTypes {
     | '/auth/exit-iframe'
     | '/auth/session-token'
     | '/shop/$key'
+    | '/webhooks/$'
     | '/admin/'
     | '/shop/'
     | '/api/actor/$key'
@@ -169,6 +179,7 @@ export interface FileRouteTypes {
     | '/auth/exit-iframe'
     | '/auth/session-token'
     | '/shop/$key'
+    | '/webhooks/$'
     | '/admin'
     | '/shop'
     | '/api/actor/$key'
@@ -185,6 +196,7 @@ export interface FileRouteTypes {
     | '/auth/exit-iframe'
     | '/auth/session-token'
     | '/shop/$key'
+    | '/webhooks/$'
     | '/admin/'
     | '/shop/'
     | '/api/actor/$key'
@@ -200,6 +212,7 @@ export interface RootRouteChildren {
   ApiDevRoute: typeof ApiDevRoute
   AuthExitIframeRoute: typeof AuthExitIframeRoute
   AuthSessionTokenRoute: typeof AuthSessionTokenRoute
+  WebhooksSplatRoute: typeof WebhooksSplatRoute
   ApiActorKeyRoute: typeof ApiActorKeyRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
 }
@@ -290,6 +303,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShopKeyRouteImport
       parentRoute: typeof ShopRoute
     }
+    '/webhooks/$': {
+      id: '/webhooks/$'
+      path: '/webhooks/$'
+      fullPath: '/webhooks/$'
+      preLoaderRoute: typeof WebhooksSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/actor/$key': {
       id: '/api/actor/$key'
       path: '/api/actor/$key'
@@ -340,6 +360,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiDevRoute: ApiDevRoute,
   AuthExitIframeRoute: AuthExitIframeRoute,
   AuthSessionTokenRoute: AuthSessionTokenRoute,
+  WebhooksSplatRoute: WebhooksSplatRoute,
   ApiActorKeyRoute: ApiActorKeyRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
 }
