@@ -161,10 +161,11 @@ export default defineConfig(({ command, mode, isPreview }) => {
           },
         },
         {
-          // Deploys the Backend in workerd through alchemy/Test; one file at a time, and
-          // ALCHEMY_DEV is read by the Worker's init at plan, so the test process must set it.
-          // ALCHEMY_TEST_STAGE is the harness's default stage, so no test file names one; it is
-          // spawned only under test, so `vp build` and `vp run dev` do not run the script.
+          // Deploys the Backend in workerd through alchemy/Test. Files run in parallel, each on
+          // its own stage (`fileStage` in test/integ/), one workerd each. ALCHEMY_DEV is read by
+          // the Worker's init at plan, so the test process must set it. ALCHEMY_TEST_STAGE is
+          // the checkout's `test` stage, which each file's stage extends; it is spawned only
+          // under test, so `vp build` and `vp run dev` do not run the script.
           test: {
             name: "integ",
             include: ["test/integ/**/*.test.ts"],
@@ -178,7 +179,7 @@ export default defineConfig(({ command, mode, isPreview }) => {
             sequence: { hooks: "list" },
             testTimeout: 30_000,
             hookTimeout: 120_000,
-            fileParallelism: false,
+            fileParallelism: true,
             pool: "forks",
           },
         },

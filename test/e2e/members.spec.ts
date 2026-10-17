@@ -1,11 +1,13 @@
-import * as Schema from "effect/Schema";
-import { SEED_SHOP } from "../seed-shops.ts";
-import { E2eEmail } from "../../src/contract/test-control.ts";
-import { control, expect, test } from "./fixtures.ts";
+import { dev, expect, test, testEmail } from "./fixtures.ts";
+import { E2E_SHOP, e2eFixture } from "./shop-fixture.ts";
 
 test.use({ storageState: "playwright/.auth/admin.json" });
 
-test("the admin sees the seed members with their shops", async ({ goto, page }) => {
+/**
+ * Other specs add members to the same shop in parallel, so these assert that their own rows are
+ * there, never how many rows there are.
+ */
+test("the admin sees the e2e fixture's members with their shop", async ({ goto, page }) => {
   await goto("/admin/members");
   // `s-table` exposes the ARIA grid pattern (`grid`, `row`, `columnheader`, `gridcell`) on
   // elements inside its shadow root, with the headers and cells slotted in. A locator chained
@@ -18,22 +20,25 @@ test("the admin sees the seed members with their shops", async ({ goto, page }) 
   for (const [index, name] of ["Shop", "Email", "Added"].entries())
     await expect(headers.nth(index)).toHaveAccessibleName(name);
   const literal = (text: string) => text.replaceAll(".", "\\.");
-  for (const [shop, email] of [
-    ["seed-shop.myshopify.com", "m1@m.com"],
-    ["seed-shop.myshopify.com", "m2@m.com"],
-    ["other-shop.myshopify.com", "m1@m.com"],
-  ] as const)
+  for (const email of e2eFixture.members)
     await expect(
       page.getByRole("row", {
-        name: new RegExp(`^${literal(shop)} ${literal(email)} \\d{4}-\\d{2}-\\d{2}$`, "u"),
+        name: new RegExp(`^${literal(E2E_SHOP)} ${literal(email)} \\d{4}-\\d{2}-\\d{2}$`, "u"),
       }),
       // A row is `display: contents`, with no box of its own, so Playwright counts it hidden.
     ).toHaveCount(1);
 });
 
-test("a member added through test control is listed", async ({ backend, goto, page }) => {
-  const email = Schema.decodeUnknownSync(E2eEmail)(`e2e-${test.info().testId}@e2e.test`);
-  await backend(control((c) => c.AddMember({ shop: SEED_SHOP, email })));
+test("a member added to the shop is listed", async ({ backend, goto, page }) => {
+  const email = testEmail("added");
+  await backend(
+    dev((c) =>
+      c.AddToFixture({
+        shop: E2E_SHOP,
+        fixture: { members: [email], teams: [], workflows: [], orders: [] },
+      }),
+    ),
+  );
   await goto("/admin/members");
   await expect(page.getByRole("gridcell", { name: email })).toBeVisible();
 });

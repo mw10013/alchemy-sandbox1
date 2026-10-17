@@ -9,7 +9,6 @@
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { Rpc, RpcGroup } from "effect/rpc";
 import { Email } from "./auth.ts";
 import { ShopKey } from "./shop.ts";
 
@@ -388,8 +387,17 @@ export class ShopNotInstalled extends Schema.TaggedError<ShopNotInstalled>()("Sh
 }) {}
 
 /**
- * What `LoadFixture` answers: the shop's rows after the load, counted by the stores that hold
- * them, not echoed from the input.
+ * A row `AddToFixture` would add is already in the shop: a member email, team name, workflow
+ * name, workflow tag or order number, each unique in its table. Nothing was written.
+ */
+export class FixtureConflict extends Schema.TaggedError<FixtureConflict>()("FixtureConflict", {
+  shop: ShopKey,
+  reason: Schema.String,
+}) {}
+
+/**
+ * What `LoadFixture` and `AddToFixture` answer: the shop's rows after the write, counted by the
+ * stores that hold them, not echoed from the input.
  */
 export const FixtureCounts = Schema.Struct({
   members: Schema.Int,
@@ -399,16 +407,3 @@ export const FixtureCounts = Schema.Struct({
   lineItems: Schema.Int,
 });
 export type FixtureCounts = typeof FixtureCounts.Type;
-
-/**
- * Loading a fixture. `LoadFixture` replaces one installed shop's members, teams, workflows and
- * orders with `fixture`'s, and touches nothing else: not the shop's session, not another shop,
- * not Better Auth. The Backend serves it only on a stage that mounts it.
- */
-export const FixtureRpcs = RpcGroup.make(
-  Rpc.make("LoadFixture", {
-    payload: { shop: ShopKey, fixture: ShopFixtureData },
-    success: FixtureCounts,
-    error: ShopNotInstalled,
-  }),
-);

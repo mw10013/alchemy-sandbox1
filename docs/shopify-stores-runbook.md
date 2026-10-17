@@ -41,7 +41,7 @@ The e2e store needs only the e2e server (`vp run test:e2e` starts it); it gets n
 
   It only writes what differs, and refuses any store that is not `mw10013-dev-shop-NN`. Cancelled orders stay in the store's history; delete them in the Shopify admin if they get in the way.
 
-- **The shop half**, on the dev server (`http://localhost:$(pnpm port)/api/dev/fixture`): the shop's members, teams, workflows and 42 fixture orders, replaced. Fixture orders are not in Shopify. It needs `vp run dev` running and the app opened in the store once; otherwise it says so.
+- **The shop half**, on the dev server (`LoadFixture` on `http://localhost:$(pnpm port)/api/dev`): the shop's members, teams, workflows and 42 fixture orders, replaced. Fixture orders are not in Shopify. It needs `vp run dev` running and the app opened in the store once; otherwise it says so.
 
 ## Staging's store
 

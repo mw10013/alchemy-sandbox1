@@ -36,7 +36,7 @@ import {
   type ShopSnapshot,
 } from "../contract/shop-actor.ts";
 import * as ActorSocket from "./actor-socket.ts";
-import type { ActorFixtureRows } from "./fixture.ts";
+import type { ActorFixtureAdded, ActorFixtureRows } from "./fixture.ts";
 
 const encodeNotice = Schema.encodeSync(NoticeFrame);
 const decodeConnectionHeader = Schema.decodeUnknownOption(Schema.fromJsonString(ConnectionCaller));
@@ -53,6 +53,14 @@ const decodeCount = Schema.decodeUnknownEffect(
       SchemaTransformation.transform({ decode: ([{ n }]) => n, encode: (n) => [{ n }] as const }),
     ),
   ),
+);
+
+/** `Workflow` rows by name and tag, for a fixture's clash check. */
+const decodeWorkflowNames = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.Struct({ name: Schema.String, tag: Schema.String })),
+);
+const decodeOrderIds = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.Struct({ id: Schema.String })),
 );
 
 /** The close reasons, Baton's. A reason must stay under 123 bytes. */
@@ -288,7 +296,7 @@ const tagsOf = (caller: ConnectionCaller) =>
  *
  * It has two surfaces that never overlap. Browsers call `ShopActorRpcs` with Effect RPC over a
  * hibernating WebSocket; there is no HTTP RPC into the actor. The Backend calls the schemaless
- * methods `revoke`, `snapshot` and `loadFixture` on its stub, which no browser can reach.
+ * methods `revoke`, `snapshot`, `loadFixture` and `addFixture` on its stub, which no browser can reach.
  *
  * Who is on a socket is fixed when the socket is accepted: the Backend's gate resolves the
  * browser and names it in {@link CONNECTION_HEADER} on the upgrade it forwards, and the actor
@@ -486,13 +494,35 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
         return result;
       });
 
+      /** Writes a fixture's rows, each its own insert: a statement binds at most 100 parameters. */
+      const insertFixtureRows = (rows: ActorFixtureRows) =>
+        Effect.gen(function* () {
+          for (const w of rows.workflows)
+            yield* sql`INSERT INTO Workflow (id, name, tag, state, updatedAt, tasks, draftTasks)
+              VALUES (${w.id}, ${w.name}, ${w.tag}, ${w.state}, ${w.updatedAt}, ${w.tasks}, ${w.draftTasks})`;
+          for (const o of rows.orders)
+            yield* sql`INSERT INTO ShopOrder (id, legacyId, name, processedAt, updatedAt, cancelledAt, fulfillmentStatus, fullyPaid, note, syncedAt, countedAt)
+              VALUES (${o.id}, ${o.legacyId}, ${o.name}, ${o.processedAt}, ${o.updatedAt}, ${o.cancelledAt}, ${o.fulfillmentStatus}, ${o.fullyPaid}, ${o.note}, ${o.syncedAt}, ${o.countedAt})`;
+          for (const i of rows.lineItems)
+            yield* sql`INSERT INTO OrderLineItem (id, orderId, title, variantTitle, sku, quantity, currentQuantity, productTags, properties)
+              VALUES (${i.id}, ${i.orderId}, ${i.title}, ${i.variantTitle}, ${i.sku}, ${i.quantity}, ${i.currentQuantity}, ${i.productTags}, ${i.properties})`;
+        });
+
+      /** The shop's work rows, read back. */
+      const countWork = Effect.gen(function* () {
+        return {
+          workflows: yield* decodeCount(yield* sql`SELECT count(*) AS n FROM Workflow`),
+          orders: yield* decodeCount(yield* sql`SELECT count(*) AS n FROM ShopOrder`),
+          lineItems: yield* decodeCount(yield* sql`SELECT count(*) AS n FROM OrderLineItem`),
+        };
+      });
+
       /**
        * Replaces the shop's work with a fixture's rows, in one {@link transaction}: every order,
        * line item, workflow, run, run task and usage event goes, `SyncState` and `ShopUsage` go
        * back to the single rows the migration inserts, and `rows` are written. Not
-       * `storage.deleteAll`, which would also drop the migrator's record of the schema. Each row
-       * is its own insert, because a statement binds at most 100 parameters. Answers the counts
-       * read back inside the transaction.
+       * `storage.deleteAll`, which would also drop the migrator's record of the schema. Answers
+       * the counts read back inside the transaction.
        */
       const loadFixture = Effect.fn("ShopActor.loadFixture")(
         function* (rows: ActorFixtureRows) {
@@ -508,26 +538,65 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
               yield* sql`INSERT INTO SyncState (id) VALUES (1)`;
               yield* sql`DELETE FROM ShopUsage`;
               yield* sql`INSERT INTO ShopUsage (id) VALUES (1)`;
-              for (const w of rows.workflows)
-                yield* sql`INSERT INTO Workflow (id, name, tag, state, updatedAt, tasks, draftTasks)
-                  VALUES (${w.id}, ${w.name}, ${w.tag}, ${w.state}, ${w.updatedAt}, ${w.tasks}, ${w.draftTasks})`;
-              for (const o of rows.orders)
-                yield* sql`INSERT INTO ShopOrder (id, legacyId, name, processedAt, updatedAt, cancelledAt, fulfillmentStatus, fullyPaid, note, syncedAt, countedAt)
-                  VALUES (${o.id}, ${o.legacyId}, ${o.name}, ${o.processedAt}, ${o.updatedAt}, ${o.cancelledAt}, ${o.fulfillmentStatus}, ${o.fullyPaid}, ${o.note}, ${o.syncedAt}, ${o.countedAt})`;
-              for (const i of rows.lineItems)
-                yield* sql`INSERT INTO OrderLineItem (id, orderId, title, variantTitle, sku, quantity, currentQuantity, productTags, properties)
-                  VALUES (${i.id}, ${i.orderId}, ${i.title}, ${i.variantTitle}, ${i.sku}, ${i.quantity}, ${i.currentQuantity}, ${i.productTags}, ${i.properties})`;
-              return {
-                workflows: yield* decodeCount(yield* sql`SELECT count(*) AS n FROM Workflow`),
-                orders: yield* decodeCount(yield* sql`SELECT count(*) AS n FROM ShopOrder`),
-                lineItems: yield* decodeCount(yield* sql`SELECT count(*) AS n FROM OrderLineItem`),
-              };
+              yield* insertFixtureRows(rows);
+              return yield* countWork;
             }),
           );
           yield* Effect.logInfo(
             `ShopActor.loadFixture: shop=${shop} workflows=${counts.workflows} orders=${counts.orders} lineItems=${counts.lineItems}`,
           );
           return counts;
+        },
+        Effect.orDie,
+        Effect.provide(runtime),
+      );
+
+      /**
+       * Adds a fixture's rows beside the shop's work, in one {@link transaction}, deleting
+       * nothing. It first reads for a workflow whose name or tag, or an order whose id, is
+       * already there, and answers the first clash as `Conflict` with nothing written; otherwise
+       * `Added`, with the counts read back inside the transaction. An answer rather than a
+       * failure, because the stub's methods are schemaless.
+       */
+      const addFixture = Effect.fn("ShopActor.addFixture")(
+        function* (rows: ActorFixtureRows) {
+          const added = yield* transaction(
+            Effect.gen(function* () {
+              for (const w of rows.workflows) {
+                const [clash] = yield* decodeWorkflowNames(
+                  yield* sql`SELECT name, tag FROM Workflow WHERE name = ${w.name} OR tag = ${w.tag} LIMIT 1`,
+                );
+                if (clash !== undefined)
+                  return {
+                    _tag: "Conflict" as const,
+                    reason:
+                      clash.name === w.name
+                        ? `workflow ${w.name} already exists`
+                        : `workflow tag ${w.tag} already exists`,
+                  };
+              }
+              for (const o of rows.orders) {
+                const [clash] = yield* decodeOrderIds(
+                  yield* sql`SELECT id FROM ShopOrder WHERE id = ${o.id}`,
+                );
+                if (clash !== undefined)
+                  return { _tag: "Conflict" as const, reason: `order ${o.name} already exists` };
+              }
+              yield* insertFixtureRows(rows);
+              return { _tag: "Added" as const, counts: yield* countWork };
+            }),
+          );
+          const answer: ActorFixtureAdded = added;
+          yield* Effect.logInfo(
+            Match.value(answer).pipe(
+              Match.tagsExhaustive({
+                Added: ({ counts }) =>
+                  `ShopActor.addFixture: shop=${shop} workflows=${counts.workflows} orders=${counts.orders} lineItems=${counts.lineItems}`,
+                Conflict: ({ reason }) => `ShopActor.addFixture: shop=${shop} conflict: ${reason}`,
+              }),
+            ),
+          );
+          return answer;
         },
         Effect.orDie,
         Effect.provide(runtime),
@@ -541,6 +610,7 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
         revoke,
         snapshot,
         loadFixture,
+        addFixture,
       };
     });
   }),

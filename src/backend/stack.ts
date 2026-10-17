@@ -11,10 +11,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
-import type * as Redacted from "effect/Redacted";
+import * as Redacted from "effect/Redacted";
 import type { DeliveryMode } from "./magic-link-delivery.ts";
 import { seed } from "./seed.ts";
-import { SHOPIFY_API_KEY } from "./shopify.ts";
+import { SHOPIFY_API_KEY, SHOPIFY_API_SECRET_FAKE } from "./shopify.ts";
 import { environmentOf } from "./stage.ts";
 import type Backend from "./worker.ts";
 
@@ -110,34 +110,31 @@ export const ShopifyApp: Effect.Effect<
 
 /**
  * Seeds the stage and binds the Backend's configuration. The two stacks differ only in the
- * options; every other binding is here, so a new one is added once. The binding names and the
- * `ShopifyApiSecret` id are logical ids in state: renaming one recreates it on every stage.
+ * options; every other binding is here, so a new one is added once. The binding names are
+ * logical ids in state: renaming one recreates it on every stage.
  *
- * The Shopify API key and secret are the real app's where {@link ShopifyApp} has one and fakes
- * elsewhere: a fixed key and a random secret held in state. The random secret is declared on
- * every stage, so its state record does not come and go with the CLI; only the binding's value
- * differs. `appUrl` is the Website's URL, used unless the real app has its own.
- * `e2eToken`, when some, turns test control on.
+ * The Shopify API key and secret are the real app's where {@link ShopifyApp} has one and the fake
+ * app's elsewhere ({@link SHOPIFY_API_KEY}, {@link SHOPIFY_API_SECRET_FAKE}), so a test signs
+ * merchant tokens the Backend accepts. `appUrl` is the Website's URL, used unless the real app
+ * has its own.
  */
 export const wireBackend = Effect.fn("wireBackend")(function* (
-  backend: Effect.Success<typeof Backend>,
+  backend: Pick<Effect.Success<typeof Backend>, "bind" | "url">,
   options: {
     readonly authOrigin: Alchemy.Output<string | undefined>;
     readonly appUrl: Alchemy.Output<string | undefined>;
     readonly delivery: DeliveryMode;
-    readonly e2eToken: Option.Option<string>;
   },
 ) {
   yield* seed(backend);
   yield* backend.bind("AuthOrigin", { env: { AUTH_ORIGIN: options.authOrigin } });
   yield* backend.bind("MagicLinkDelivery", { env: { MAGIC_LINK_DELIVERY: options.delivery } });
-  const fakeSecret = yield* Alchemy.makeRandom("ShopifyApiSecret");
   const app = yield* ShopifyApp;
   yield* backend.bind("Shopify", {
     env: Option.match(app, {
       onNone: () => ({
         SHOPIFY_API_KEY: SHOPIFY_API_KEY,
-        SHOPIFY_API_SECRET: fakeSecret,
+        SHOPIFY_API_SECRET: Redacted.make(SHOPIFY_API_SECRET_FAKE),
         SHOPIFY_APP_URL: options.appUrl,
       }),
       onSome: ({ apiKey, apiSecret, appUrl }) => ({
@@ -148,24 +145,11 @@ export const wireBackend = Effect.fn("wireBackend")(function* (
     }),
   });
   const environment = yield* environmentOf(yield* Alchemy.Stage).pipe(Effect.orDie);
-  // The fake replaces the Shopify library's one HTTP function, so it must never sit in front of
-  // a real app: only `test`, which always uses the fake app, gets it. The value is "on", not
-  // "1": the runtime reads a numeric-looking binding as a number, which `Config.String` refuses,
-  // and the Worker then fails every request.
+  // The dev procedures replace and age a shop's data, so only the per-developer environments,
+  // whose data is disposable, mount them; staging never does.
   yield* Match.value(environment).pipe(
-    Match.when("test", () => backend.bind("ShopifyFake", { env: { SHOPIFY_FAKE_HTTP: "on" } })),
-    Match.whenOr("dev", "e2e", "staging", () => Effect.void),
-    Match.exhaustive,
-  );
-  // The fixture replaces a shop's data, so only the per-developer environments, whose data is
-  // disposable, mount it; staging never does.
-  yield* Match.value(environment).pipe(
-    Match.whenOr("dev", "test", "e2e", () =>
-      backend.bind("Fixture", { env: { FIXTURE_ENDPOINT: "on" } }),
-    ),
+    Match.whenOr("dev", "test", "e2e", () => backend.bind("Dev", { env: { DEV_ENDPOINT: "on" } })),
     Match.when("staging", () => Effect.void),
     Match.exhaustive,
   );
-  if (Option.isSome(options.e2eToken))
-    yield* backend.bind("TestControl", { env: { E2E_TOKEN: options.e2eToken.value } });
 });

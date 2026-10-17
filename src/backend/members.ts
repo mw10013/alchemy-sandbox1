@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { type Email } from "../contract/auth.ts";
+import { Email } from "../contract/auth.ts";
 import { Member, MemberExists } from "../contract/members.ts";
 import { ShopKey } from "../contract/shop.ts";
 import { AuthDb } from "./resources.ts";
@@ -18,6 +18,10 @@ const decodeTeamIds = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ teamId: Schema.String })),
 );
 const decodeIds = Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ id: Schema.String })));
+const decodeEmails = Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ email: Email })));
+const decodeNames = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.Struct({ name: Schema.String })),
+);
 const decodeCount = Schema.decodeUnknownEffect(
   Schema.Tuple([Schema.Struct({ n: Schema.Number })]).pipe(
     Schema.decodeTo(
@@ -47,6 +51,18 @@ export interface ShopIdentity {
     readonly memberId: string;
     readonly createdAt: number;
   }>;
+}
+
+/** One shop's member emails and team names, each unique in the shop. */
+export interface ShopIdentityNames {
+  readonly emails: ReadonlyArray<Email>;
+  readonly teams: ReadonlyArray<string>;
+}
+
+/** The shop's `Member` and `Team` rows after a write. */
+export interface ShopIdentityCounts {
+  readonly members: number;
+  readonly teams: number;
 }
 
 /** What `replaceShop` answers: the member ids it replaced, and the shop's rows after it. */
@@ -147,7 +163,59 @@ const make = Effect.gen(function* () {
     return replaced;
   }, Effect.orDie);
 
-  return { listShopsOf, find, teamIdsOf, list, add, remove, replaceShop };
+  const identityNames = Effect.fn("Members.identityNames")(function* (shop: ShopKey) {
+    const [emails, teams] = yield* sql.batch([
+      sql`SELECT email FROM Member WHERE shop = ${shop}`,
+      sql`SELECT name FROM Team WHERE shop = ${shop}`,
+    ]);
+    const names: ShopIdentityNames = {
+      emails: (yield* decodeEmails(emails)).map((row) => row.email),
+      teams: (yield* decodeNames(teams)).map((row) => row.name),
+    };
+    return names;
+  }, Effect.orDie);
+
+  /**
+   * Adds `rows` to one shop's `Member`, `Team` and `TeamMember` rows beside what is there: the
+   * insert half of {@link replaceShop}, in one batch, counting the shop's rows last. The unique
+   * (shop, email) and (shop, name) indexes fail the whole batch on a clash, so a caller reads
+   * {@link identityNames} first and treats a clash here as a defect.
+   */
+  const addToShop = Effect.fn("Members.addToShop")(function* (shop: ShopKey, rows: ShopIdentity) {
+    const results = yield* sql.batch([
+      ...rows.members.map(
+        (member) =>
+          sql`INSERT INTO Member (id, shop, email, createdAt) VALUES (${member.id}, ${shop}, ${member.email}, ${member.createdAt})`,
+      ),
+      ...rows.teams.map(
+        (team) =>
+          sql`INSERT INTO Team (id, shop, name, createdAt) VALUES (${team.id}, ${shop}, ${team.name}, ${team.createdAt})`,
+      ),
+      ...rows.teamMembers.map(
+        (edge) =>
+          sql`INSERT INTO TeamMember (teamId, memberId, createdAt) VALUES (${edge.teamId}, ${edge.memberId}, ${edge.createdAt})`,
+      ),
+      sql`SELECT count(*) AS n FROM Member WHERE shop = ${shop}`,
+      sql`SELECT count(*) AS n FROM Team WHERE shop = ${shop}`,
+    ]);
+    const counts: ShopIdentityCounts = {
+      members: yield* decodeCount(results.at(-2)),
+      teams: yield* decodeCount(results.at(-1)),
+    };
+    return counts;
+  }, Effect.orDie);
+
+  return {
+    listShopsOf,
+    find,
+    teamIdsOf,
+    list,
+    add,
+    remove,
+    replaceShop,
+    identityNames,
+    addToShop,
+  };
 });
 
 /**
@@ -166,8 +234,8 @@ export class Members extends Context.Service<Members, Effect.Success<typeof make
 
   /**
    * `Member` rows in memory, for tests, with `teamIds` as `TeamMember` edges by member id.
-   * `add`, `remove` and `replaceShop` edit the layer's own copy; `replaceShop` keeps no team
-   * rows, only their edges, which `teamIdsOf` answers.
+   * `add`, `remove`, `replaceShop` and `addToShop` edit the layer's own copy; teams are kept as
+   * names by shop (for `identityNames` and the counts) and as edges, which `teamIdsOf` answers.
    */
   static readonly layerTest = (
     seed: ReadonlyArray<Member>,
@@ -175,7 +243,12 @@ export class Members extends Context.Service<Members, Effect.Success<typeof make
   ) =>
     Layer.sync(Members, () => {
       let members = [...seed];
+      let teams: Array<{ readonly shop: ShopKey; readonly name: string }> = [];
       const edges: Record<string, ReadonlyArray<string>> = { ...teamIds };
+      const countsOf = (shop: ShopKey): ShopIdentityCounts => ({
+        members: members.filter((member) => member.shop === shop).length,
+        teams: teams.filter((team) => team.shop === shop).length,
+      });
       const find = (shop: ShopKey, email: Email) =>
         Effect.succeed(
           Option.fromUndefinedOr(
@@ -221,13 +294,26 @@ export class Members extends Context.Service<Members, Effect.Success<typeof make
               ...members.filter((member) => member.shop !== shop),
               ...rows.members.map((member) => ({ ...member, shop })),
             ];
+            teams = [
+              ...teams.filter((team) => team.shop !== shop),
+              ...rows.teams.map((team) => ({ shop, name: team.name })),
+            ];
             for (const edge of rows.teamMembers)
               edges[edge.memberId] = [...(edges[edge.memberId] ?? []), edge.teamId];
-            return {
-              priorMemberIds: prior.map((member) => member.id),
-              members: rows.members.length,
-              teams: rows.teams.length,
-            };
+            return { priorMemberIds: prior.map((member) => member.id), ...countsOf(shop) };
+          }),
+        identityNames: (shop: ShopKey) =>
+          Effect.succeed<ShopIdentityNames>({
+            emails: members.filter((member) => member.shop === shop).map((member) => member.email),
+            teams: teams.filter((team) => team.shop === shop).map((team) => team.name),
+          }),
+        addToShop: (shop: ShopKey, rows: ShopIdentity) =>
+          Effect.sync((): ShopIdentityCounts => {
+            members = [...members, ...rows.members.map((member) => ({ ...member, shop }))];
+            teams = [...teams, ...rows.teams.map((team) => ({ shop, name: team.name }))];
+            for (const edge of rows.teamMembers)
+              edges[edge.memberId] = [...(edges[edge.memberId] ?? []), edge.teamId];
+            return countsOf(shop);
           }),
       };
     });

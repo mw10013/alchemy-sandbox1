@@ -7,6 +7,7 @@ import {
   Deployed,
   environmentOf,
   PerDeveloperStage,
+  TestFileStage,
   UnknownStage,
 } from "../../../src/backend/stage.ts";
 
@@ -31,6 +32,8 @@ describe("stage names", () => {
       assert.strictEqual(yield* environmentOf("test-mw"), "test");
       assert.strictEqual(yield* environmentOf("e2e-mw"), "e2e");
       assert.strictEqual(yield* environmentOf("staging"), "staging");
+      assert.strictEqual(yield* environmentOf("test-mw-shopactor"), "test");
+      assert.strictEqual(yield* environmentOf("test-mw-wt-01-socketfacts"), "test");
     }),
   );
 
@@ -43,6 +46,14 @@ describe("stage names", () => {
     "dev-Bad-wt-01",
     "dev-mw-wt-00",
     "dev-mw-wt-100",
+    "dev-mw-shopactor",
+    "e2e-mw-wt-01-shopactor",
+    "test-mw-wt",
+    "test-mw-wt-01-wt",
+    "test-mw-1shop",
+    "test-mw-shop-actor",
+    "test-mw-wt-01-shop-actor",
+    "test-mw-ShopActor",
   ])
     it.effect(`${stage} is an unknown stage`, () =>
       Effect.gen(function* () {
@@ -50,6 +61,25 @@ describe("stage names", () => {
         assert.deepStrictEqual(exit, Exit.fail(new UnknownStage({ stage })));
       }),
     );
+});
+
+describe("test file stages", () => {
+  const decodeFile = Schema.decodeUnknownSync(TestFileStage);
+  const encodeFile = Schema.encodeSync(TestFileStage);
+
+  for (const [stage, parts] of [
+    ["test-mw-shopactor", { user: "mw", checkout: Option.none(), suffix: "shopactor" }],
+    ["test-mw-wt-01-fixture", { user: "mw", checkout: Option.some(1), suffix: "fixture" }],
+    ["test-mw-auth2", { user: "mw", checkout: Option.none(), suffix: "auth2" }],
+  ] as const)
+    it(`${stage} round-trips`, () => {
+      assert.deepStrictEqual(decodeFile(stage), parts);
+      assert.strictEqual(encodeFile(parts), stage);
+    });
+
+  for (const stage of ["test-mw", "test-mw-wt-01", "test-mw-wt", "test-mw-9a", "dev-mw-auth"])
+    it(`${stage} is not a test file stage`, () =>
+      assert.isTrue(Option.isNone(Schema.decodeUnknownOption(TestFileStage)(stage))));
 });
 
 describe("deployed environments", () => {

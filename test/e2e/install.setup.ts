@@ -1,0 +1,21 @@
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import { e2eServerURL } from "../../playwright.config.ts";
+import { loadFixtureWhenInstalled } from "../../scripts/lib/load-fixture.ts";
+import { gotoApp } from "./embedded/app.ts";
+import { test as setup } from "./fixtures.ts";
+import { E2E_SHOP, e2eFixture } from "./shop-fixture.ts";
+
+/**
+ * Installs the app on the e2e store and loads the e2e fixture, once, before any spec: the
+ * embedded load's token exchange writes the shop's `ShopSession`, which `LoadFixture` needs. One
+ * test, so setup's parallelism cannot split the load from the install. The fixture wait fits
+ * inside the test's timeout.
+ */
+setup("install the app and load the e2e fixture", async ({ page }) => {
+  setup.setTimeout(60_000);
+  await gotoApp(page);
+  await Effect.runPromise(
+    loadFixtureWhenInstalled(`${e2eServerURL}/api/dev`, E2E_SHOP, e2eFixture, Duration.seconds(30)),
+  );
+});

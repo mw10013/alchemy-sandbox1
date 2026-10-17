@@ -1,6 +1,7 @@
 /**
- * The fake shops of `seed/test.sql`, which the integration and e2e tests run against. They are
- * placeholders, not real stores, and exist only on the `test` and `e2e` environments.
+ * The fake shops of `seed/test.sql`, which the integration tests run against. They are
+ * placeholders, not real stores, and exist only on the `test` environment; e2e runs on the real
+ * e2e store.
  *
  * @module
  */

@@ -52,12 +52,8 @@ export type WebsiteEnv = Cloudflare.InferEnv<typeof Website>;
 /**
  * The state store follows the stage's environment ({@link stageState}).
  *
- * `E2E_TOKEN`, when the environment has it, is bound to the Backend, which then serves the
- * test-control procedures. Whoever runs the tests supplies it; the stack never generates or
- * stores it.
- *
- * Magic links are delivered inline under `alchemy dev` and on a stage with `E2E_TOKEN`, where
- * a sign-in page or a test runner takes them; every other stage mails them.
+ * Magic links are delivered inline under `alchemy dev`, where the sign-in page shows them to the
+ * developer and to the e2e specs; every deployed stage mails them.
  */
 export default Alchemy.Stack(
   "baton",
@@ -65,9 +61,7 @@ export default Alchemy.Stack(
   Effect.gen(function* () {
     const website = yield* Website;
     const backend = yield* Backend;
-    const e2eToken = yield* Config.option(Config.String("E2E_TOKEN"));
-    const delivery: DeliveryMode =
-      (yield* Alchemy.ALCHEMY_DEV) || Option.isSome(e2eToken) ? "inline" : "mailed";
+    const delivery: DeliveryMode = (yield* Alchemy.ALCHEMY_DEV) ? "inline" : "mailed";
     yield* wireBackend(backend, {
       // Better Auth in the Backend builds magic links on the Website's origin. The Website
       // already binds the Backend, so its URL is attached as a binding, which may form a
@@ -75,7 +69,6 @@ export default Alchemy.Stack(
       authOrigin: website.url,
       appUrl: website.url,
       delivery,
-      e2eToken,
     });
     return { websiteUrl: website.url.as<string>(), backendUrl: backend.url.as<string>() };
   }),

@@ -10,7 +10,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
-import { RpcClient, type RpcClientError, type RpcGroup, RpcSerialization } from "effect/rpc";
+import { RpcClient, type RpcClientError, RpcSerialization } from "effect/rpc";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Socket from "effect/socket/Socket";
@@ -26,41 +26,58 @@ import {
   NoticeFrame,
   ShopActorRpcs,
 } from "../../src/contract/shop-actor.ts";
-import { TestControlRpcs } from "../../src/contract/test-control.ts";
+import { DevRpcs } from "../../src/contract/dev.ts";
+import type { ShopFixtureData } from "../../src/contract/fixture.ts";
+import { IntegRpcs } from "./rpcs.ts";
 
 /**
  * Clients for the integ tests, straight at the Backend (no Website or Vite in front): Better
- * Auth sign-in, test control, and the actor's socket as a browser opens it.
+ * Auth sign-in, `DevRpcs` and `IntegRpcs`, and the actor's socket as a browser opens it.
  */
 
 export const email = Schema.decodeUnknownSync(EmailFromInput);
 
-/** One call against test control with the stage's token. */
-export const control = <A, E>(
+/** One call against the Backend's `DevRpcs`. */
+export const dev = <A, E>(
   backendUrl: string,
-  e2eToken: string,
   f: (
-    client: RpcClient.RpcClient<
-      RpcGroup.Rpcs<typeof TestControlRpcs>,
-      RpcClientError.RpcClientError
-    >,
+    client: RpcClient.FromGroup<typeof DevRpcs, RpcClientError.RpcClientError>,
   ) => Effect.Effect<A, E>,
 ) =>
   Effect.gen(function* () {
-    const client = yield* RpcClient.make(TestControlRpcs);
-    return yield* f(client).pipe(RpcClient.withHeaders({ "x-e2e-token": e2eToken }));
-  }).pipe(Effect.scoped, Effect.provide(Test.rpcClientLayer(`${backendUrl}/api/test-control`)));
+    return yield* f(yield* RpcClient.make(DevRpcs));
+  }).pipe(Effect.scoped, Effect.provide(Test.rpcClientLayer(`${backendUrl}/api/dev`)));
 
-/** A magic link for `address` from test control's `IssueMagicLink`. */
-const magicLink = (backendUrl: string, e2eToken: string, address: Email) =>
-  control(backendUrl, e2eToken, (c) => c.IssueMagicLink({ email: address })).pipe(
+/** One call against the test Backend's `IntegRpcs`. */
+export const integ = <A, E>(
+  backendUrl: string,
+  f: (
+    client: RpcClient.FromGroup<typeof IntegRpcs, RpcClientError.RpcClientError>,
+  ) => Effect.Effect<A, E>,
+) =>
+  Effect.gen(function* () {
+    return yield* f(yield* RpcClient.make(IntegRpcs));
+  }).pipe(Effect.scoped, Effect.provide(Test.rpcClientLayer(`${backendUrl}/api/integ`)));
+
+/** `AddToFixture` with only the parts named; the rest empty. */
+export const addToFixture = (backendUrl: string, shop: ShopKey, parts: Partial<ShopFixtureData>) =>
+  dev(backendUrl, (client) =>
+    client.AddToFixture({
+      shop,
+      fixture: { members: [], teams: [], workflows: [], orders: [], ...parts },
+    }),
+  );
+
+/** A magic link for `address` from `IssueMagicLink`. */
+const magicLink = (backendUrl: string, address: Email) =>
+  integ(backendUrl, (c) => c.IssueMagicLink({ email: address })).pipe(
     Effect.map(({ link }) => new URL(link)),
   );
 
 /** Signs in through an inline magic link and returns the session cookie. */
-export const signIn = (backendUrl: string, e2eToken: string, address: Email) =>
+export const signIn = (backendUrl: string, address: Email) =>
   Effect.gen(function* () {
-    const url = yield* magicLink(backendUrl, e2eToken, address);
+    const url = yield* magicLink(backendUrl, address);
     const verify = yield* HttpClient.get(url).pipe(
       Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
     );
@@ -73,8 +90,8 @@ export const signIn = (backendUrl: string, e2eToken: string, address: Email) =>
  * assumed to be the Backend's URL; a POST to Better Auth with a cookie must name it as its
  * `Origin`.
  */
-export const authOrigin = (backendUrl: string, e2eToken: string, address: Email) =>
-  magicLink(backendUrl, e2eToken, address).pipe(Effect.map((url) => url.origin));
+export const authOrigin = (backendUrl: string, address: Email) =>
+  magicLink(backendUrl, address).pipe(Effect.map((url) => url.origin));
 
 /** How a browser proves itself to the Backend: a member's cookie or a merchant's token. */
 export type Credential = { readonly cookie: string } | { readonly token: string };
@@ -171,19 +188,13 @@ export const connectAs = (backendUrl: string, key: ShopKey, credential: Credenti
   );
 
 /**
- * A socket opened as any caller through test control's upgrade route, skipping the gate: how
- * a test gets an identity no sign-in produces, such as an expired session.
+ * A socket opened as any caller through the test Backend's forged-caller route, skipping the
+ * gate: how a test gets an identity no sign-in produces, such as an expired session.
  */
-export const openAs = (
-  backendUrl: string,
-  e2eToken: string,
-  key: ShopKey,
-  caller: ConnectionCaller,
-) =>
-  connect(
-    new URL(`/api/test-control/actor/${key}`, backendUrl.replace(/^http/u, "ws")).toString(),
-    { "x-e2e-token": e2eToken, "x-test-caller": JSON.stringify(caller) },
-  );
+export const openAs = (backendUrl: string, key: ShopKey, caller: ConnectionCaller) =>
+  connect(new URL(`/api/integ/actor/${key}`, backendUrl.replace(/^http/u, "ws")).toString(), {
+    "x-test-caller": JSON.stringify(caller),
+  });
 
 /** The next close code a socket saw, within a few seconds. */
 export const nextCloseCode = (closes: Queue.Dequeue<Socket.SocketError>) =>

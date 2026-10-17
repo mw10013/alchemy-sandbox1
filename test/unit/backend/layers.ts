@@ -10,13 +10,19 @@ import { MagicLinkDelivery } from "../../../src/backend/magic-link-delivery.ts";
 import { Mailer } from "../../../src/backend/mailer.ts";
 import { Members } from "../../../src/backend/members.ts";
 import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
-import { Shopify } from "../../../src/backend/shopify.ts";
+import { SHOPIFY_API_KEY, SHOPIFY_API_SECRET_FAKE, Shopify } from "../../../src/backend/shopify.ts";
 
 /** The `AUTH_ORIGIN` the test Backend's Better Auth runs under, so links resolve against it. */
 export const TEST_ORIGIN = "http://test.local";
 
-/** The test app's API key and secret, which {@link testShopify} verifies tokens against. */
-export const TEST_SHOPIFY_APP = { apiKey: "fake-api-key", apiSecret: "fake-api-secret" } as const;
+/**
+ * The test app's API key and secret, which {@link testShopify} verifies tokens against: the fake
+ * app's, so `mintSessionToken`'s defaults sign for it.
+ */
+export const TEST_SHOPIFY_APP = {
+  apiKey: SHOPIFY_API_KEY,
+  apiSecret: SHOPIFY_API_SECRET_FAKE,
+} as const;
 
 /**
  * {@link Shopify} over {@link TEST_SHOPIFY_APP} and an in-memory {@link ShopSessions} holding

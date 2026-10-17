@@ -16,15 +16,13 @@ import { Route as ShopRouteImport } from './routes/shop'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminMembersRouteImport } from './routes/admin.members'
-import { Route as ApiTestControlRouteImport } from './routes/api.test-control'
+import { Route as ApiDevRouteImport } from './routes/api.dev'
 import { Route as AuthExitIframeRouteImport } from './routes/auth.exit-iframe'
 import { Route as AuthSessionTokenRouteImport } from './routes/auth.session-token'
-import { Route as MerchantKeyRouteImport } from './routes/merchant.$key'
 import { Route as ShopIndexRouteImport } from './routes/shop.index'
 import { Route as ShopKeyRouteImport } from './routes/shop.$key'
 import { Route as ApiActorKeyRouteImport } from './routes/api.actor.$key'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
-import { Route as ApiDevFixtureRouteImport } from './routes/api.dev.fixture'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -61,9 +59,9 @@ const AdminMembersRoute = AdminMembersRouteImport.update({
   path: '/members',
   getParentRoute: () => AdminRoute,
 } as any)
-const ApiTestControlRoute = ApiTestControlRouteImport.update({
-  id: '/api/test-control',
-  path: '/api/test-control',
+const ApiDevRoute = ApiDevRouteImport.update({
+  id: '/api/dev',
+  path: '/api/dev',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthExitIframeRoute = AuthExitIframeRouteImport.update({
@@ -74,11 +72,6 @@ const AuthExitIframeRoute = AuthExitIframeRouteImport.update({
 const AuthSessionTokenRoute = AuthSessionTokenRouteImport.update({
   id: '/auth/session-token',
   path: '/auth/session-token',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MerchantKeyRoute = MerchantKeyRouteImport.update({
-  id: '/merchant/$key',
-  path: '/merchant/$key',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ShopIndexRoute = ShopIndexRouteImport.update({
@@ -101,11 +94,6 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiDevFixtureRoute = ApiDevFixtureRouteImport.update({
-  id: '/api/dev/fixture',
-  path: '/api/dev/fixture',
-  getParentRoute: () => rootRouteImport,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -114,32 +102,28 @@ export interface FileRoutesByFullPath {
   '/shop': typeof ShopRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
-  '/api/test-control': typeof ApiTestControlRoute
+  '/api/dev': typeof ApiDevRoute
   '/auth/exit-iframe': typeof AuthExitIframeRoute
   '/auth/session-token': typeof AuthSessionTokenRoute
-  '/merchant/$key': typeof MerchantKeyRoute
   '/shop/$key': typeof ShopKeyRoute
   '/admin/': typeof AdminIndexRoute
   '/shop/': typeof ShopIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
-  '/api/dev/fixture': typeof ApiDevFixtureRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/app': typeof AppRoute
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
-  '/api/test-control': typeof ApiTestControlRoute
+  '/api/dev': typeof ApiDevRoute
   '/auth/exit-iframe': typeof AuthExitIframeRoute
   '/auth/session-token': typeof AuthSessionTokenRoute
-  '/merchant/$key': typeof MerchantKeyRoute
   '/shop/$key': typeof ShopKeyRoute
   '/admin': typeof AdminIndexRoute
   '/shop': typeof ShopIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
-  '/api/dev/fixture': typeof ApiDevFixtureRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -149,16 +133,14 @@ export interface FileRoutesById {
   '/shop': typeof ShopRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/admin/members': typeof AdminMembersRoute
-  '/api/test-control': typeof ApiTestControlRoute
+  '/api/dev': typeof ApiDevRoute
   '/auth/exit-iframe': typeof AuthExitIframeRoute
   '/auth/session-token': typeof AuthSessionTokenRoute
-  '/merchant/$key': typeof MerchantKeyRoute
   '/shop/$key': typeof ShopKeyRoute
   '/admin/': typeof AdminIndexRoute
   '/shop/': typeof ShopIndexRoute
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
-  '/api/dev/fixture': typeof ApiDevFixtureRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -169,32 +151,28 @@ export interface FileRouteTypes {
     | '/shop'
     | '/sign-in'
     | '/admin/members'
-    | '/api/test-control'
+    | '/api/dev'
     | '/auth/exit-iframe'
     | '/auth/session-token'
-    | '/merchant/$key'
     | '/shop/$key'
     | '/admin/'
     | '/shop/'
     | '/api/actor/$key'
     | '/api/auth/$'
-    | '/api/dev/fixture'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/app'
     | '/sign-in'
     | '/admin/members'
-    | '/api/test-control'
+    | '/api/dev'
     | '/auth/exit-iframe'
     | '/auth/session-token'
-    | '/merchant/$key'
     | '/shop/$key'
     | '/admin'
     | '/shop'
     | '/api/actor/$key'
     | '/api/auth/$'
-    | '/api/dev/fixture'
   id:
     | '__root__'
     | '/'
@@ -203,16 +181,14 @@ export interface FileRouteTypes {
     | '/shop'
     | '/sign-in'
     | '/admin/members'
-    | '/api/test-control'
+    | '/api/dev'
     | '/auth/exit-iframe'
     | '/auth/session-token'
-    | '/merchant/$key'
     | '/shop/$key'
     | '/admin/'
     | '/shop/'
     | '/api/actor/$key'
     | '/api/auth/$'
-    | '/api/dev/fixture'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -221,13 +197,11 @@ export interface RootRouteChildren {
   AppRoute: typeof AppRoute
   ShopRoute: typeof ShopRouteWithChildren
   SignInRoute: typeof SignInRoute
-  ApiTestControlRoute: typeof ApiTestControlRoute
+  ApiDevRoute: typeof ApiDevRoute
   AuthExitIframeRoute: typeof AuthExitIframeRoute
   AuthSessionTokenRoute: typeof AuthSessionTokenRoute
-  MerchantKeyRoute: typeof MerchantKeyRoute
   ApiActorKeyRoute: typeof ApiActorKeyRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
-  ApiDevFixtureRoute: typeof ApiDevFixtureRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -281,11 +255,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminMembersRouteImport
       parentRoute: typeof AdminRoute
     }
-    '/api/test-control': {
-      id: '/api/test-control'
-      path: '/api/test-control'
-      fullPath: '/api/test-control'
-      preLoaderRoute: typeof ApiTestControlRouteImport
+    '/api/dev': {
+      id: '/api/dev'
+      path: '/api/dev'
+      fullPath: '/api/dev'
+      preLoaderRoute: typeof ApiDevRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/auth/exit-iframe': {
@@ -300,13 +274,6 @@ declare module '@tanstack/react-router' {
       path: '/auth/session-token'
       fullPath: '/auth/session-token'
       preLoaderRoute: typeof AuthSessionTokenRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/merchant/$key': {
-      id: '/merchant/$key'
-      path: '/merchant/$key'
-      fullPath: '/merchant/$key'
-      preLoaderRoute: typeof MerchantKeyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/shop/': {
@@ -335,13 +302,6 @@ declare module '@tanstack/react-router' {
       path: '/api/auth/$'
       fullPath: '/api/auth/$'
       preLoaderRoute: typeof ApiAuthSplatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/dev/fixture': {
-      id: '/api/dev/fixture'
-      path: '/api/dev/fixture'
-      fullPath: '/api/dev/fixture'
-      preLoaderRoute: typeof ApiDevFixtureRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -377,13 +337,11 @@ const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRoute,
   ShopRoute: ShopRouteWithChildren,
   SignInRoute: SignInRoute,
-  ApiTestControlRoute: ApiTestControlRoute,
+  ApiDevRoute: ApiDevRoute,
   AuthExitIframeRoute: AuthExitIframeRoute,
   AuthSessionTokenRoute: AuthSessionTokenRoute,
-  MerchantKeyRoute: MerchantKeyRoute,
   ApiActorKeyRoute: ApiActorKeyRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
-  ApiDevFixtureRoute: ApiDevFixtureRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

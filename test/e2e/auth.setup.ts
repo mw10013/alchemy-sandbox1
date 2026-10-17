@@ -1,17 +1,12 @@
-import * as Schema from "effect/Schema";
-import { EmailFromInput } from "../../src/contract/auth.ts";
-import { control, test as setup } from "./fixtures.ts";
-import { followMagicLink } from "./screens.ts";
+import { test as setup } from "./fixtures.ts";
+import { signInWithForm } from "./screens.ts";
 
-for (const [role, email] of [
-  ["admin", "a@a.com"],
-  ["member", "m1@m.com"],
+for (const [role, email, landing] of [
+  ["admin", "a@a.com", /\/admin$/],
+  ["member", "m1@m.com", /\/shop$/],
 ] as const)
-  setup(`sign in ${role}`, async ({ backend, page }) => {
-    const { link } = await backend(
-      control((c) => c.IssueMagicLink({ email: Schema.decodeUnknownSync(EmailFromInput)(email) })),
-    );
-    await followMagicLink(page, link);
-    await page.waitForURL(role === "admin" ? /\/admin$/ : /\/shop$/);
+  setup(`sign in ${role}`, async ({ page }) => {
+    await signInWithForm(page, email);
+    await page.waitForURL(landing);
     await page.context().storageState({ path: `playwright/.auth/${role}.json` });
   });

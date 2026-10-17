@@ -16,14 +16,11 @@ export const shell = (page: Page) => ({
 export const shop = (page: Page) => ({
   count: page.getByRole("status", { name: "Count" }),
   increment: page.getByRole("button", { name: "Increment" }),
-  reset: page.getByRole("button", { name: "Reset" }),
   activation: page.getByText(/^Activation /),
   signedInAs: (email: string) => page.getByText(`Signed in as ${email} (member)`),
-  merchantOf: (shop: string) => page.getByText(`Merchant of ${shop}`),
   signedInElsewhere: page.getByText("Signed in elsewhere"),
   reconnect: page.getByRole("button", { name: "Reconnect" }),
   notAMember: page.getByText("You're not a member of this shop."),
-  expired: page.getByText("Your Shopify session expired."),
 });
 
 /** Submits the sign-in form on a hydrated `/sign-in` and waits for the confirmation. */
@@ -34,8 +31,16 @@ export const requestMagicLink = async (page: Page, email: string) => {
   await expect(screen.checkEmail).toBeVisible();
 };
 
-/** Follows a magic link: a full page load that ends wherever the verify redirect lands. */
-export const followMagicLink = async (page: Page, link: string) => {
-  await page.goto(link);
+/**
+ * Signs `email` in as a person would: fills `/sign-in`, then opens the link the page shows (inline
+ * delivery, which `alchemy dev` uses), and waits for the page the verify redirect lands on. The
+ * caller asserts which page that is.
+ */
+export const signInWithForm = async (page: Page, email: string) => {
+  await page.goto("/sign-in");
+  await awaitHydration(page);
+  await requestMagicLink(page, email);
+  await signIn(page).openLink.click();
+  await page.waitForURL(/\/(?:shop|admin)$/u);
   await awaitHydration(page);
 };

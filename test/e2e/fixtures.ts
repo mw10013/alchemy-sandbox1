@@ -7,17 +7,16 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { RpcClient, type RpcClientError, type RpcGroup, RpcSerialization } from "effect/rpc";
 import * as Schema from "effect/Schema";
-import { EmailFromInput } from "../../src/contract/auth.ts";
-import { type ShopKey } from "../../src/contract/shop.ts";
-import { SEED_SHOP } from "../seed-shops.ts";
-import { E2eEmail, TestControlRpcs } from "../../src/contract/test-control.ts";
-import { e2eServerURL, e2eToken } from "../../playwright.config.ts";
+import { DevRpcs } from "../../src/contract/dev.ts";
+import { e2eServerURL } from "../../playwright.config.ts";
+import { E2E_SHOP, E2eEmail } from "./shop-fixture.ts";
+import { signInWithForm } from "./screens.ts";
 
 type Run = <A, E>(effect: Effect.Effect<A, E, RpcClient.Protocol>) => Promise<A>;
 
-/** The test-control client, through the Website's proxy route, as the browser would reach the Backend. */
+/** The dev client, through the Website's forwarder, as `vp run fixture` reaches the Backend. */
 const protocol = (baseURL: string) =>
-  RpcClient.layerProtocolHttp({ url: `${baseURL}/api/test-control` }).pipe(
+  RpcClient.layerProtocolHttp({ url: `${baseURL}/api/dev` }).pipe(
     Layer.provide(RpcSerialization.layerNdjson),
     Layer.provide(FetchHttpClient.layer),
   );
@@ -31,19 +30,12 @@ export const awaitHydration = async (page: Page) => {
 };
 
 /**
- * `backend` runs an Effect against the test-control procedures and resolves with its value or
- * rejects with the pretty cause; it is the only place the specs touch Effect. It always talks
- * to {@link e2eServerURL}, never the project's `baseURL`, which in the `embedded` project is the
- * Shopify admin.
- *
- * `signIn` signs a seeded or `@e2e.test` user in on the test's `request` context, without a
- * browser: a link from `IssueMagicLink`, fetched with redirects off so the verify response's
- * session cookie lands in the context.
+ * `backend` runs an Effect against the dev procedures ({@link DevRpcs}) and resolves with its
+ * value or rejects with the pretty cause; it is the only place the specs touch Effect. It always
+ * talks to {@link e2eServerURL}, never the project's `baseURL`, which in the `embedded` project
+ * is the Shopify admin.
  */
-export const test = base.extend<
-  { goto: (path: string) => Promise<void>; signIn: (email: string) => Promise<void> },
-  { backend: Run }
->({
+export const test = base.extend<{ goto: (path: string) => Promise<void> }, { backend: Run }>({
   backend: [
     // Playwright reads a fixture's dependencies from this pattern, so it must be `{}`, not `_`.
     // oxlint-disable-next-line no-empty-pattern
@@ -59,14 +51,6 @@ export const test = base.extend<
     },
     { scope: "worker" },
   ],
-  signIn: async ({ backend, request }, use) => {
-    await use(async (address) => {
-      const email = Schema.decodeUnknownSync(EmailFromInput)(address);
-      const { link } = await backend(control((c) => c.IssueMagicLink({ email })));
-      const verify = await request.get(link, { maxRedirects: 0 });
-      expect(verify.status()).toBe(302);
-    });
-  },
   /** Navigates and waits for hydration; a click before the marker is lost. */
   goto: async ({ page }, use) => {
     await use(async (path) => {
@@ -77,42 +61,46 @@ export const test = base.extend<
 });
 export { expect };
 
-/** One call against the test-control group with the token header. */
-export const control = <A, E>(
+/** One call against {@link DevRpcs}. */
+export const dev = <A, E>(
   f: (
-    client: RpcClient.RpcClient<
-      RpcGroup.Rpcs<typeof TestControlRpcs>,
-      RpcClientError.RpcClientError
-    >,
+    client: RpcClient.RpcClient<RpcGroup.Rpcs<typeof DevRpcs>, RpcClientError.RpcClientError>,
   ) => Effect.Effect<A, E>,
 ) =>
   Effect.gen(function* () {
-    const client = yield* RpcClient.make(TestControlRpcs);
-    return yield* f(client).pipe(RpcClient.withHeaders({ "x-e2e-token": e2eToken }));
+    return yield* f(yield* RpcClient.make(DevRpcs));
   }).pipe(Effect.scoped);
 
 /**
- * A member of its own: an `@e2e.test` address added to the seed shop through test control
- * and signed in, in a fresh browser context. A test that signs out, is removed or opens several
- * windows uses one, so it never touches the shared member's session or sockets.
+ * An `@e2e.test` address of the running test's own, `<name>-<test id>-<retry>`: no other test
+ * shares it, and a retry does not reuse the address its failed attempt may have added.
  */
-export const ownMember = async (browser: Browser, backend: Run, name: string) => {
-  const email = Schema.decodeUnknownSync(E2eEmail)(`${name}@e2e.test`);
-  await backend(control((c) => c.AddMember({ shop: SEED_SHOP, email }).pipe(Effect.ignore)));
-  const { link } = await backend(control((c) => c.IssueMagicLink({ email })));
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  await page.goto(link);
-  await awaitHydration(page);
-  await page.waitForURL(/\/shop$/);
-  return { email, context, page };
+export const testEmail = (name: string): E2eEmail => {
+  const { testId, retry } = test.info();
+  return Schema.decodeUnknownSync(E2eEmail)(`${name}-${testId}-${retry}@e2e.test`);
 };
 
-/** Opens a shop's merchant page with a Shopify session token minted through test control. */
-export const merchant = async (page: Page, backend: Run, shop: ShopKey) => {
-  const { token } = await backend(control((c) => c.IssueMerchantSessionToken({ shop })));
-  await page.goto(`/merchant/${shop}?token=${encodeURIComponent(token)}`);
-  await awaitHydration(page);
+/**
+ * A member of its own: a {@link testEmail} address added to {@link E2E_SHOP} with `AddToFixture`
+ * and signed in through the sign-in form, in a fresh browser context. A test that signs out, is
+ * removed or opens several windows uses one, so it never touches the shared member's session or
+ * sockets. A `FixtureConflict` fails the test: the address is the test's own, so a clash is a bug.
+ */
+export const ownMember = async (browser: Browser, backend: Run, name: string) => {
+  const email = testEmail(name);
+  await backend(
+    dev((c) =>
+      c.AddToFixture({
+        shop: E2E_SHOP,
+        fixture: { members: [email], teams: [], workflows: [], orders: [] },
+      }),
+    ),
+  );
+  const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  const page = await context.newPage();
+  await signInWithForm(page, email);
+  await page.waitForURL(/\/shop$/);
+  return { email, context, page };
 };
 
 /**

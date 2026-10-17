@@ -1,18 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import { abstractFetch } from "@shopify/shopify-api/runtime";
-import * as Cause from "effect/Cause";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
-import { FAKE_SHOP_GID, ShopifyFake } from "../../../src/backend/shopify-fake.ts";
-
-const enabled = ShopifyFake.layer.pipe(
-  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ SHOPIFY_FAKE_HTTP: "1" }))),
-);
-const disabled = ShopifyFake.layer.pipe(
-  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}))),
-);
+import { FAKE_SHOP_GID, ShopifyFake } from "../../integ/shopify-fake.ts";
 
 const TOKEN_URL = "https://a-shop.myshopify.com/admin/oauth/access_token";
 const GRAPHQL_URL = "https://a-shop.myshopify.com/admin/api/2026-10/graphql.json";
@@ -46,7 +35,7 @@ describe("ShopifyFake", () => {
       ]);
       assert.notInclude(JSON.stringify(calls), "shprt_secret_value");
       assert.deepStrictEqual(yield* fake.takeCalls, []);
-    }).pipe(Effect.provide(enabled)),
+    }).pipe(Effect.provide(ShopifyFake.layer)),
   );
 
   it.effect("serves scripted replies per route in order, and a new script replaces the old", () =>
@@ -61,7 +50,7 @@ describe("ShopifyFake", () => {
       yield* fake.script([{ route: "token", status: 401, body: {} }]);
       assert.strictEqual((yield* call(GRAPHQL_URL, { method: "POST", body: "{}" })).status, 200);
       assert.strictEqual((yield* call(TOKEN_URL, refreshGrant("a"))).status, 401);
-    }).pipe(Effect.provide(enabled)),
+    }).pipe(Effect.provide(ShopifyFake.layer)),
   );
 
   it.effect("answers 599 to anything it does not serve", () =>
@@ -71,16 +60,6 @@ describe("ShopifyFake", () => {
         (yield* call("https://a-shop.myshopify.com/admin/other.json")).status,
         599,
       );
-    }).pipe(Effect.provide(enabled)),
-  );
-
-  it.effect("without the binding every method is a defect", () =>
-    Effect.gen(function* () {
-      const fake = yield* ShopifyFake;
-      const exit = yield* Effect.exit(fake.script([]));
-      assert.isTrue(Exit.isFailure(exit) && Cause.hasDies(exit.cause));
-      const read = yield* Effect.exit(fake.takeCalls);
-      assert.isTrue(Exit.isFailure(read) && Cause.hasDies(read.cause));
-    }).pipe(Effect.provide(disabled)),
+    }).pipe(Effect.provide(ShopifyFake.layer)),
   );
 });

@@ -1,8 +1,6 @@
-import * as Schema from "effect/Schema";
-import { EmailFromInput } from "../../src/contract/auth.ts";
-import { control, expect, test } from "./fixtures.ts";
-import { followMagicLink, shell } from "./screens.ts";
-import { OTHER_SHOP, SEED_SHOP } from "../seed-shops.ts";
+import { expect, test } from "./fixtures.ts";
+import { shell, signInWithForm } from "./screens.ts";
+import { E2E_SHOP } from "./shop-fixture.ts";
 
 test.describe("as a member", () => {
   test.use({ storageState: "playwright/.auth/member.json" });
@@ -12,13 +10,12 @@ test.describe("as a member", () => {
     await expect(page).toHaveURL(/\/shop$/);
   });
 
-  test("the member home lists the member's shops and opens one", async ({ goto, page }) => {
+  test("the member home lists the member's one shop and opens it", async ({ goto, page }) => {
     await goto("/shop");
     // Polaris renders the link text in a shadow root, so the links are found by accessible name.
-    await expect(page.getByRole("link", { name: /\.myshopify\.com$/ })).toHaveCount(2);
-    await expect(page.getByRole("link", { name: OTHER_SHOP })).toBeVisible();
-    await page.getByRole("link", { name: SEED_SHOP }).click();
-    await expect(page).toHaveURL(new RegExp(`/shop/${SEED_SHOP}$`));
+    await expect(page.getByRole("link", { name: /\.myshopify\.com$/ })).toHaveCount(1);
+    await page.getByRole("link", { name: E2E_SHOP }).click();
+    await expect(page).toHaveURL(new RegExp(`/shop/${E2E_SHOP}$`));
   });
 });
 
@@ -36,13 +33,8 @@ test.describe("as an admin", () => {
 
   // Signing out deletes the session, so this test signs in its own instead of ending the one in
   // the shared admin storage state that other specs run on in parallel.
-  test("sign out ends the session", async ({ backend, page }) => {
-    const { link } = await backend(
-      control((c) =>
-        c.IssueMagicLink({ email: Schema.decodeUnknownSync(EmailFromInput)("a@a.com") }),
-      ),
-    );
-    await followMagicLink(page, link);
+  test("sign out ends the session", async ({ page }) => {
+    await signInWithForm(page, "a@a.com");
     await page.waitForURL(/\/admin$/);
     await shell(page).signOut.click();
     await page.waitForURL(/\/$/);

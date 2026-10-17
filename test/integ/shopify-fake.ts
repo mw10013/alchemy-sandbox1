@@ -1,13 +1,12 @@
 import { setAbstractFetchFunc } from "@shopify/shopify-api/runtime";
-import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { ShopKey } from "../contract/shop.ts";
-import type { ShopifyFakeCall, ShopifyFakeReply } from "../contract/test-control.ts";
+import { ShopKey } from "../../src/contract/shop.ts";
+import type { ShopifyFakeCall, ShopifyFakeReply } from "./rpcs.ts";
 
 type Route = ShopifyFakeReply["route"];
 
@@ -67,8 +66,7 @@ export const FAKE_SHOP_GID = "gid://shopify/Shop/0";
 
 const unscripted = (reason: string) => Response.json({ error: reason }, { status: 599 });
 
-const make = Effect.gen(function* () {
-  const enabled = Option.isSome(yield* Config.option(Config.String("SHOPIFY_FAKE_HTTP")));
+const make = Effect.sync(() => {
   const queues: Record<Route, Array<ShopifyFakeReply>> = { token: [], graphql: [] };
   let calls: Array<ShopifyFakeCall> = [];
   const refreshTokenLabels = new Map<string, string>();
@@ -119,53 +117,36 @@ const make = Effect.gen(function* () {
     );
   };
 
-  if (enabled) setAbstractFetchFunc(fake as never);
-
-  const requireEnabled = Effect.suspend(() =>
-    enabled
-      ? Effect.void
-      : Effect.die(new Error("the fake Shopify HTTP layer is off: SHOPIFY_FAKE_HTTP is not bound")),
-  );
+  setAbstractFetchFunc(fake as never);
 
   return {
     /** Replaces both queues and clears the call log. */
     script: (replies: ReadonlyArray<ShopifyFakeReply>) =>
-      requireEnabled.pipe(
-        Effect.andThen(
-          Effect.sync(() => {
-            queues.token = replies.filter((reply) => reply.route === "token");
-            queues.graphql = replies.filter((reply) => reply.route === "graphql");
-            calls = [];
-            refreshTokenLabels.clear();
-          }),
-        ),
-      ),
+      Effect.sync(() => {
+        queues.token = replies.filter((reply) => reply.route === "token");
+        queues.graphql = replies.filter((reply) => reply.route === "graphql");
+        calls = [];
+        refreshTokenLabels.clear();
+      }),
     /** The calls served since the last script or read, which it clears. */
-    takeCalls: requireEnabled.pipe(
-      Effect.andThen(
-        Effect.sync(() => {
-          const taken = calls;
-          calls = [];
-          return taken;
-        }),
-      ),
-    ),
+    takeCalls: Effect.sync(() => {
+      const taken = calls;
+      calls = [];
+      return taken;
+    }),
   };
 });
 
 /**
- * The fake Shopify HTTP layer for the `test` environment's integ runs. The library's only HTTP
- * seam is one module-global fetch, so when `SHOPIFY_FAKE_HTTP` is bound, building this layer
- * (once per isolate, in the Worker's init) replaces it with a function that answers
- * `https://<shop>.myshopify.com`'s token endpoint and Admin GraphQL endpoint from replies a test
- * scripts through test control, and records what it served. An empty queue answers a default: fresh
- * tokens (an hour, ninety days) for the token endpoint, and {@link FAKE_SHOP_GID} for GraphQL,
- * which has no database to read the shop's real id from. Anything else is answered 599 and never
- * reaches the network.
- *
- * Without the binding the layer installs nothing and every method but the layer itself is a
- * defect. The module ships in every Backend bundle and is inert there. The stack binds
- * `SHOPIFY_FAKE_HTTP` only on `test` stages, never in front of a real app.
+ * The fake Shopify HTTP layer, for the test Backend only. The library's only HTTP seam is one
+ * module-global fetch per isolate, so building this layer (once, in the test Backend's init)
+ * replaces it with a function that answers `https://<shop>.myshopify.com`'s token endpoint and
+ * Admin GraphQL endpoint from replies a test scripts through `ScriptShopify`, and records what it
+ * served. The last install wins, so the test Backend builds it after the shared wiring, whose
+ * Shopify library installs its own on import. An empty queue answers a default: fresh tokens (an
+ * hour, ninety days) for the token endpoint, and {@link FAKE_SHOP_GID} for GraphQL, which has no
+ * database to read the shop's real id from. Anything else is answered 599 and never reaches the
+ * network.
  */
 export class ShopifyFake extends Context.Service<ShopifyFake, Effect.Success<typeof make>>()(
   "app/ShopifyFake",

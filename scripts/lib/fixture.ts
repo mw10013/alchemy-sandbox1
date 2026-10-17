@@ -6,8 +6,8 @@
  * - the store half, {@link applyStoreFixture}: the fixture's products and three real orders,
  *   written into `SHOPIFY_DEV_STORE` through Shopify CLI;
  * - the D1 and actor half: `LoadFixture` on this checkout's dev server
- *   (`http://localhost:$WEBSITE_PORT/api/dev/fixture`), which replaces the shop's members, teams,
- *   workflows and orders.
+ *   (`http://localhost:$WEBSITE_PORT/api/dev`, {@link loadFixtureWhenInstalled}), which replaces
+ *   the shop's members, teams, workflows and orders.
  *
  * @module
  */
@@ -15,17 +15,14 @@ import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Result from "effect/Result";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
-import { RpcClient, RpcSerialization } from "effect/rpc";
 
 import { fixture } from "../../fixture.ts";
-import { FixtureRpcs, ShopFixtureData } from "../../src/contract/fixture.ts";
+import type { ShopFixtureData } from "../../src/contract/fixture.ts";
 import { ShopKey } from "../../src/contract/shop.ts";
+import { loadFixtureWhenInstalled } from "./load-fixture.ts";
 import { applyStoreFixture, domainOf, requireFixtureStore } from "./stores.ts";
 import { storeNameOf } from "./worktree.ts";
 
@@ -41,35 +38,13 @@ const decodeShopKey = Schema.decodeUnknownEffect(ShopKey);
  */
 const INSTALL_WAIT = Duration.minutes(3);
 
-/** `LoadFixture` with the fixture's D1 and actor half, for `shop`, on the dev server at `url`. */
-const loadData = (url: string, shop: ShopKey) =>
-  Effect.gen(function* () {
-    const client = yield* RpcClient.make(FixtureRpcs);
-    const data: ShopFixtureData = {
-      members: fixture.members,
-      teams: fixture.teams,
-      workflows: fixture.workflows,
-      orders: fixture.orders,
-    };
-    return yield* client.LoadFixture({ shop, fixture: data });
-  }).pipe(
-    Effect.scoped,
-    Effect.provide(
-      RpcClient.layerProtocolHttp({ url }).pipe(
-        Layer.provide(RpcSerialization.layerNdjson),
-        Layer.provide(FetchHttpClient.layer),
-      ),
-    ),
-  );
-
 /**
  * Applies the dev fixture to `SHOPIFY_DEV_STORE` and prints one summary line per half; either half
  * failing fails it, after both lines are printed.
  *
  * The shop half needs the shop's `ShopSession`, which only an embedded load writes. With
- * `waitForInstall`, a shop that is not installed yet is asked again every two seconds, up to
- * {@link INSTALL_WAIT}, for a caller that has just opened the app in a browser; without it, it
- * fails at once with what to do.
+ * `waitForInstall`, it waits up to {@link INSTALL_WAIT} for one; without it, it fails at once
+ * with what to do.
  */
 export const applyFixture = Effect.fn("applyFixture")(function* (options: {
   readonly waitForInstall: boolean;
@@ -86,22 +61,20 @@ export const applyFixture = Effect.fn("applyFixture")(function* (options: {
   const shop = yield* decodeShopKey(domainOf(storeNameOf(environment, index))).pipe(
     Effect.mapError((error) => new FixtureError({ message: error.message })),
   );
-  const url = `http://localhost:${port}/api/dev/fixture`;
+  const url = `http://localhost:${port}/api/dev`;
 
-  const shopHalf = loadData(url, shop).pipe(
-    options.waitForInstall
-      ? Effect.retry({
-          while: (error) => error._tag === "ShopNotInstalled",
-          schedule: Schedule.spaced("2 seconds").pipe(
-            Schedule.upTo({ duration: INSTALL_WAIT }),
-            Schedule.tap(({ attempt }) =>
-              attempt === 1
-                ? Console.log(`wait  ${shop} is not installed yet: waiting for the app to load`)
-                : Effect.void,
-            ),
-          ),
-        })
-      : (effect) => effect,
+  const data: ShopFixtureData = {
+    members: fixture.members,
+    teams: fixture.teams,
+    workflows: fixture.workflows,
+    orders: fixture.orders,
+  };
+  const shopHalf = loadFixtureWhenInstalled(
+    url,
+    shop,
+    data,
+    options.waitForInstall ? INSTALL_WAIT : Duration.zero,
+  ).pipe(
     Effect.mapError((error) =>
       Match.value(error).pipe(
         Match.tagsExhaustive({

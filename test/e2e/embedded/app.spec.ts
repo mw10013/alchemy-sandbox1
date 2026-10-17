@@ -1,13 +1,10 @@
-import * as Schema from "effect/Schema";
 import type { BrowserContext, FrameLocator } from "playwright/test";
 
-import { ShopKey } from "../../../src/contract/shop.ts";
-import { control, expect, test } from "../fixtures.ts";
+import { dev, expect, test } from "../fixtures.ts";
+import { E2E_SHOP as shop } from "../shop-fixture.ts";
 import { openApp } from "./app.ts";
 
 test.describe.configure({ mode: "serial" });
-
-const shop = Schema.decodeUnknownSync(ShopKey)(`${process.env.SHOPIFY_E2E_STORE}.myshopify.com`);
 
 let context: BrowserContext;
 let frame: FrameLocator;
@@ -26,7 +23,7 @@ test("the app loads embedded and shows the e2e store's domain", async () => {
 });
 
 test("the exchange stored a real session", async ({ backend }) => {
-  const session = await backend(control((c) => c.GetShopSession({ shop })));
+  const session = await backend(dev((c) => c.GetShopSession({ shop })));
   expect(session).not.toBeNull();
   expect(session?.shopGid).toMatch(/^gid:\/\/shopify\/Shop\/\d+$/u);
   expect(session?.scope).toBe("read_orders,read_products");

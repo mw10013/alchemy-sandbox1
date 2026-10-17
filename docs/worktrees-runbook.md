@@ -96,17 +96,17 @@ vp run test:e2e:headed      # same suite with visible browsers
 vp run test:e2e:ui          # Playwright UI
 ```
 
-The server starts Shopify CLI and its tunnel, destroys the checkout's E2E stage before rebuilding it, and writes logs to `.logs/e2e/current`. Playwright supplies `E2E_TOKEN`; no token needs adding to `.env`. The embedded project uses installed Google Chrome and a Shopify admin login; see [the E2E admin login](./shopify-stores-runbook.md#the-e2e-admin-login) for cookie export and Keychain access. The other browser project uses Playwright Chromium (`vp exec playwright install chromium` if missing).
+The server starts Shopify CLI and its tunnel, destroys the checkout's E2E stage before rebuilding it, and writes logs to `.logs/e2e/current`. Every run opens the app in the E2E store first and loads the E2E fixture, so every project needs the Shopify admin login. That project and the embedded one use installed Google Chrome; see [the E2E admin login](./shopify-stores-runbook.md#the-e2e-admin-login) for cookie export and Keychain access. The other browser project uses Playwright Chromium (`vp exec playwright install chromium` if missing).
 
 For iteration, start a server in its own terminal, then opt into reusing it:
 
 ```sh
-E2E_TOKEN=e2e vp run test:e2e:server
+vp run test:e2e:server
 # In another terminal in the same checkout:
 E2E_REUSE_SERVER=1 vp run test:e2e
 ```
 
-Stop a manually started server with Ctrl-C. Reuse keeps its data; omit `E2E_REUSE_SERVER` for a fresh server and stage. Auth exports, results and reports live under ignored `playwright/`.
+Stop a manually started server with Ctrl-C. Reuse keeps its sign-in sessions and actor state (each run reloads the E2E fixture); omit `E2E_REUSE_SERVER` for a fresh server and stage. Auth exports, results and reports live under ignored `playwright/`.
 
 ## Working across checkouts
 

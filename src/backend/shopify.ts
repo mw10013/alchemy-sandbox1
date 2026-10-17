@@ -31,6 +31,13 @@ import { ShopSessions, ShopSessionUpsert, type ShopSessionRow } from "./shop-ses
 export const SHOPIFY_API_KEY = "fake-api-key";
 
 /**
+ * The fake Shopify app's API secret, bound beside {@link SHOPIFY_API_KEY}. A constant, so a test
+ * signs a merchant's session token with it as Shopify would with the real app's; it protects
+ * nothing, because no real app uses it.
+ */
+export const SHOPIFY_API_SECRET_FAKE = "fake-api-secret";
+
+/**
  * How close to its expiry a stored access token may be and still be reused by
  * `authenticateAdmin`; nearer than this, the session token is exchanged again (Baton's
  * `EMBEDDED_SESSION_REEXCHANGE_BUFFER_MS`).
@@ -189,31 +196,6 @@ const RefreshedSession = Schema.Struct({
 });
 const decodeRefreshedSession = Schema.decodeUnknownEffect(RefreshedSession);
 
-/** A JSON object as one base64url JWT segment. */
-const jsonSegment = <S extends Schema.Constraint>(schema: S) =>
-  Schema.StringFromBase64Url.pipe(Schema.decodeTo(Schema.fromJsonString(schema)));
-
-const Header = Schema.Struct({ alg: Schema.Literal("HS256"), typ: Schema.optional(Schema.String) });
-const HeaderSegment = jsonSegment(Header);
-
-/** The claims Shopify puts in a session token (an ID token). Times are UNIX seconds. */
-const Payload = Schema.Struct({
-  iss: Schema.String,
-  dest: Schema.String,
-  aud: Schema.String,
-  sub: Schema.String,
-  exp: Schema.Number,
-  nbf: Schema.Number,
-  iat: Schema.Number,
-  jti: Schema.String,
-  sid: Schema.String,
-});
-type Payload = typeof Payload.Type;
-const PayloadSegment = jsonSegment(Payload);
-const encodeHeader = Schema.encodeSync(HeaderSegment);
-const encodePayload = Schema.encodeSync(PayloadSegment);
-const encodeSignature = Schema.encodeSync(Schema.Uint8ArrayFromBase64Url);
-
 /** The claims `decodeSessionToken` hands on, as the library returns them. */
 const DecodedClaims = Schema.Struct({ dest: Schema.String, exp: Schema.Number });
 const decodeClaims = Schema.decodeUnknownEffect(DecodedClaims);
@@ -264,11 +246,6 @@ const isInvalidSubjectToken = Schema.is(InvalidSubjectToken);
 const tryShopify = <A>(evaluate: () => Promise<A>) =>
   Effect.tryPromise({ try: evaluate, catch: (cause) => cause });
 
-const encoder = new TextEncoder();
-
-/** A day: long enough for a merchant window opened by a test to outlive the run. */
-const DEFAULT_EXPIRES_IN_SECONDS = 24 * 60 * 60;
-
 const make = (options: {
   readonly apiKey: string;
   readonly apiSecret: Redacted.Redacted<string>;
@@ -293,18 +270,6 @@ const make = (options: {
         });
       }),
     );
-    const key = yield* Effect.cached(
-      Effect.promise(() =>
-        crypto.subtle.importKey(
-          "raw",
-          encoder.encode(Redacted.value(options.apiSecret)),
-          { name: "HMAC", hash: "SHA-256" },
-          false,
-          ["sign"],
-        ),
-      ),
-    );
-
     const decodeSessionToken = Effect.fn("Shopify.decodeSessionToken")(
       function* (token: string) {
         const shopify = yield* api;
@@ -317,30 +282,6 @@ const make = (options: {
           : Effect.die(cause),
       ),
     );
-
-    const signSessionToken = Effect.fn("Shopify.signSessionToken")(function* (input: {
-      readonly shop: ShopKey;
-      readonly expiresIn?: number | undefined;
-    }) {
-      const now = Math.floor(Date.now() / 1000);
-      const claims: Payload = {
-        iss: `https://${input.shop}/admin`,
-        dest: `https://${input.shop}`,
-        aud: options.apiKey,
-        sub: "1",
-        exp: now + (input.expiresIn ?? DEFAULT_EXPIRES_IN_SECONDS),
-        nbf: now,
-        iat: now,
-        jti: crypto.randomUUID(),
-        sid: crypto.randomUUID(),
-      };
-      const signed = `${encodeHeader({ alg: "HS256", typ: "JWT" })}.${encodePayload(claims)}`;
-      const hmac = yield* key;
-      const signature = yield* Effect.promise(() =>
-        crypto.subtle.sign("HMAC", hmac, encoder.encode(signed)),
-      );
-      return `${signed}.${encodeSignature(new Uint8Array(signature))}`;
-    });
 
     /** A stored row as the library's offline `Session`. */
     const sessionOf = Effect.fn("Shopify.sessionOf")(function* (row: ShopSessionRow) {
@@ -704,7 +645,6 @@ const make = (options: {
 
     return {
       decodeSessionToken,
-      signSessionToken,
       authenticateAdmin,
       ensureShopSession,
       adminRequest,
@@ -717,10 +657,8 @@ const make = (options: {
  * app's API key (`SHOPIFY_API_KEY`), `exp` and `nbf` with ten seconds of clock tolerance.
  * `authenticateAdmin` exchanges a session token for the shop's offline access token and keeps it
  * in {@link ShopSessions}. The key and secret are the real app's under `shopify app dev` and
- * fakes elsewhere, where no Shopify token verifies and the seeded rows stand in for exchanges.
- *
- * `signSessionToken` is test-only and has no counterpart in Shopify's library: test control
- * mints a token as Shopify would, which is how a merchant window exists in dev and e2e.
+ * fakes elsewhere ({@link SHOPIFY_API_SECRET_FAKE}), where only a token a test signs verifies and
+ * the seeded rows stand in for exchanges.
  */
 export class Shopify extends Context.Service<Shopify, Effect.Success<ReturnType<typeof make>>>()(
   "app/Shopify",

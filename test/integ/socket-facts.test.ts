@@ -6,7 +6,16 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { ShopKey } from "../../src/contract/shop.ts";
 import { CONNECTION_CLOSE_REVOKED, type MemberCaller } from "../../src/contract/shop-actor.ts";
-import { control, email, nextCloseCode, openAs } from "./actor-clients.ts";
+import {
+  addToFixture,
+  connectAs,
+  dev,
+  email,
+  nextCloseCode,
+  openAs,
+  signIn,
+} from "./actor-clients.ts";
+import { fileStage } from "./file-stage.ts";
 import Stack from "./stack.ts";
 
 /**
@@ -17,6 +26,7 @@ import Stack from "./stack.ts";
  */
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),
+  stage: fileStage("socketfacts"),
 });
 
 /** A fresh stage per file, destroyed afterwards; see the same declaration in `auth.test.ts`. */
@@ -26,7 +36,7 @@ afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
 /** A seeded shop of its own, so no other file shares its actor. */
 const key = Schema.decodeUnknownSync(ShopKey)("other-shop.myshopify.com");
 
-/** A member identity no sign-in produces, for test control's upgrade route. */
+/** A member identity no sign-in produces, for the test Backend's forged-caller route. */
 const memberAs = (memberId: string, sessionExpiresAt: number): MemberCaller => ({
   role: "member",
   memberId,
@@ -40,16 +50,15 @@ const memberAs = (memberId: string, sessionExpiresAt: number): MemberCaller => (
 test(
   "a socket's identity and tags survive Alchemy's writes and a hibernation",
   Effect.gen(function* () {
-    const { backendUrl, e2eToken } = yield* stack;
+    const { backendUrl } = yield* stack;
     const address = email("facts-hibernate@e2e.test");
-    const added = yield* control(backendUrl, e2eToken, (c) =>
-      c.AddMember({ shop: key, email: address }),
-    );
+    yield* addToFixture(backendUrl, key, { members: [address] });
+    const cookie = yield* signIn(backendUrl, address);
     yield* Effect.gen(function* () {
-      const caller = { ...memberAs(added.id, Date.now() + 600_000), memberEmail: address };
-      const a = yield* openAs(backendUrl, e2eToken, key, caller);
+      const a = yield* connectAs(backendUrl, key, { cookie });
       // Every call goes through the middleware that dies without the socket's identity.
-      assert.deepStrictEqual(yield* a.client.MemberWhoAmI(), caller);
+      const caller = yield* a.client.MemberWhoAmI();
+      assert.strictEqual(caller.role === "member" && caller.memberEmail, address);
       const first = yield* a.client.MemberActivation();
       // Each call is an event that keeps the object awake, and local workerd evicts an idle
       // one after about 10 s, so the polls are spaced wider than that. The clients' pings are
@@ -64,9 +73,7 @@ test(
       assert.notStrictEqual(later.id, first.id, "the actor hibernated");
       assert.deepStrictEqual(yield* a.client.MemberWhoAmI(), caller, "the attachment survived");
       // A revoke selects sockets by the `member:<id>` tag, so a close proves the tag survived.
-      const removed = yield* control(backendUrl, e2eToken, (c) =>
-        c.RemoveMember({ shop: key, email: address }),
-      );
+      const removed = yield* dev(backendUrl, (c) => c.RemoveMember({ shop: key, email: address }));
       assert.deepStrictEqual(removed, { removed: true, closed: 1 });
       assert.strictEqual(yield* nextCloseCode(a.closes), CONNECTION_CLOSE_REVOKED);
     }).pipe(Effect.scoped);
@@ -77,12 +84,12 @@ test(
 test(
   "a socket closed before its message is dispatched leaves the transport and the object clean",
   Effect.gen(function* () {
-    const { backendUrl, e2eToken } = yield* stack;
+    const { backendUrl } = yield* stack;
     yield* Effect.gen(function* () {
-      const b = yield* openAs(backendUrl, e2eToken, key, memberAs("facts-b", Date.now() + 600_000));
+      const b = yield* openAs(backendUrl, key, memberAs("facts-b", Date.now() + 600_000));
       const before = yield* b.client.MemberActivation();
 
-      const a = yield* openAs(backendUrl, e2eToken, key, memberAs("facts-a", Date.now() - 1));
+      const a = yield* openAs(backendUrl, key, memberAs("facts-a", Date.now() - 1));
       // The message is never dispatched, so the call has no answer; only the close arrives.
       yield* a.client.MemberWhoAmI().pipe(Effect.forkScoped);
       assert.strictEqual(yield* nextCloseCode(a.closes), CONNECTION_CLOSE_REVOKED);
@@ -90,7 +97,7 @@ test(
       const count = yield* b.client.MemberIncrement();
       assert.deepStrictEqual(yield* b.client.MemberGetCount(), count);
       assert.strictEqual((yield* b.client.MemberActivation()).id, before.id, "no reset");
-      const c = yield* openAs(backendUrl, e2eToken, key, memberAs("facts-c", Date.now() + 600_000));
+      const c = yield* openAs(backendUrl, key, memberAs("facts-c", Date.now() + 600_000));
       assert.strictEqual(
         (yield* c.client.MemberActivation()).id,
         before.id,

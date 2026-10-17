@@ -171,4 +171,22 @@ describe("ShopPage", () => {
       .toHaveTextContent("You're not a member of this shop.");
     await expect.element(screen.getByRole("status", { name: "Count" })).not.toBeInTheDocument();
   });
+
+  it("a merchant whose Shopify session expired is told so by the loader, and no socket is opened", async () => {
+    const registry = shopTestRegistry({});
+    const screen = await renderInApp(
+      <ShopPage
+        role="merchant"
+        shop={SEED_SHOP}
+        merchantToken={Option.some("token")}
+        data={{ _tag: "Expired" }}
+      />,
+      registry,
+    );
+
+    await expect
+      .element(screen.getByRole("alert"))
+      .toHaveTextContent("Your Shopify session expired.");
+    await expect.element(screen.getByRole("status", { name: "Count" })).not.toBeInTheDocument();
+  });
 });

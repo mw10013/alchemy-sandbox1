@@ -7,7 +7,6 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import {
@@ -17,16 +16,16 @@ import {
 } from "../../../src/contract/auth.ts";
 import { type Member } from "../../../src/contract/members.ts";
 import { type ShopKey } from "../../../src/contract/shop.ts";
-import { SEED_SHOP } from "../../seed-shops.ts";
+import { OTHER_SHOP, SEED_SHOP } from "../../seed-shops.ts";
 import type { ConnectionCaller } from "../../../src/contract/shop-actor.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
+import { mintSessionToken } from "../../shopify-session-token.ts";
 import { QuietLogs, TEST_SHOPIFY_APP, testAuth, testShopify } from "./layers.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopAccess, ShopAccessDenied } from "../../../src/backend/shop-access.ts";
 import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
-import { Shopify } from "../../../src/backend/shopify.ts";
 
 const email = Schema.decodeUnknownSync(EmailFromInput);
 const decodeRequested = Schema.decodeSync(MagicLinkRequested);
@@ -67,15 +66,17 @@ const TestBackend = ({
   delivery = "inline",
   allow = true,
   gate = Effect.succeed(merchant),
+  memberRows = members,
 }: {
   delivery?: "inline" | "mailed";
   allow?: boolean;
   gate?: Effect.Effect<ConnectionCaller, ShopAccessDenied>;
+  memberRows?: ReadonlyArray<Member>;
 } = {}) =>
   BackendApi.layer.pipe(
     Layer.provideMerge(
       testAuth({
-        members,
+        members: memberRows,
         actors: ShopActors.layerTest([], snapshot),
         delivery,
         extra: Layer.mergeAll(
@@ -159,16 +160,22 @@ describe("BackendApi sessions", () => {
 });
 
 describe("BackendApi.myShops", () => {
-  it.live("answers a member's shops and is Forbidden to an admin", () =>
+  it.live("answers every shop of a member of two, by key, and is Forbidden to an admin", () =>
     Effect.gen(function* () {
       const api = yield* BackendApi;
       const asMember = yield* signIn(member);
-      assert.deepStrictEqual(yield* api.myShops(withCookie(asMember)), [SEED_SHOP]);
+      assert.deepStrictEqual(yield* api.myShops(withCookie(asMember)), [OTHER_SHOP, SEED_SHOP]);
       yield* seedAdmin;
       const asAdmin = yield* signIn(admin);
       const error = yield* api.myShops(withCookie(asAdmin)).pipe(Effect.flip);
       assert.strictEqual(error._tag, "Forbidden");
-    }).pipe(Effect.provide(TestBackend())),
+    }).pipe(
+      Effect.provide(
+        TestBackend({
+          memberRows: [...members, { id: "mem-3", shop: OTHER_SHOP, email: member, createdAt: 1 }],
+        }),
+      ),
+    ),
   );
 });
 
@@ -231,15 +238,7 @@ describe("BackendApi.shopSnapshot", () => {
 describe("BackendApi.authenticateAdmin", () => {
   /** A session token for the seed shop, signed by the app `options` names. */
   const tokenFrom = (options: { apiKey: string; apiSecret: string }) =>
-    Effect.flatMap(Shopify, (shopify) => shopify.signSessionToken({ shop: SEED_SHOP })).pipe(
-      Effect.provide(
-        Shopify.layerWith({
-          apiKey: options.apiKey,
-          apiSecret: Redacted.make(options.apiSecret),
-          appUrl: "http://localhost",
-        }).pipe(Layer.provide(ShopSessions.layerTest([]))),
-      ),
-    );
+    mintSessionToken({ shop: SEED_SHOP, ...options });
 
   it.live("a stored, active session is reused: the shop comes back and the row is untouched", () =>
     Effect.gen(function* () {

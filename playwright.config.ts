@@ -14,17 +14,12 @@ if (!Number.isInteger(websitePort))
 /** The e2e server's port: above the dev server's, as the server's own script computes it. */
 const port = e2ePortOf(websitePort);
 /**
- * The e2e server's own URL, or the deployed target's. The test-control client uses it in every
- * project, because the `embedded` project's `baseURL` is the Shopify admin.
+ * The e2e server's own URL. The dev client and the install's fixture load use it in every
+ * project, because the `embedded` and `install` projects' `baseURL` is the Shopify admin.
  */
-export const e2eServerURL = process.env.PLAYWRIGHT_TEST_BASE_URL ?? `http://localhost:${port}`;
+export const e2eServerURL = `http://localhost:${port}`;
 /** Where the Shopify admin cookie export lives; it holds a login, so it stays under `playwright/.auth/`. */
 export const storageStatePath = "playwright/.auth/shopify-admin.json";
-/**
- * The runner supplies the token; the stack binds it to the Backend. A deployed target sets it in
- * the environment.
- */
-export const e2eToken = process.env.E2E_TOKEN ?? "e2e";
 
 const AppHandleLine = Schema.TemplateLiteralParser(['handle = "', Schema.String, '"']);
 const decodeAppHandleLine = Schema.decodeUnknownOption(AppHandleLine);
@@ -46,12 +41,26 @@ const embeddedURL = () => {
 };
 
 /**
+ * The browser settings of a project that opens the app inside the e2e store's admin: real Chrome,
+ * under the exported Shopify admin login.
+ */
+const embeddedUse = () => ({
+  channel: "chrome",
+  baseURL: embeddedURL(),
+  storageState: storageStatePath,
+  actionTimeout: 10_000,
+  navigationTimeout: 30_000,
+});
+
+/**
  * Runs the e2e specs against the e2e server (`scripts/e2e-server.ts`): Shopify CLI on this
  * checkout's e2e store, serving the e2e stage on its own port. The server script destroys the
- * stage before starting it, so every run begins from the seed alone. A reused server keeps the
- * last run's data, so reuse is opt-in for iterating (`E2E_REUSE_SERVER=1`). The top-level `use.baseURL` is set
- * explicitly because Playwright derives it only from the deprecated `webServer.port`. With
- * `PLAYWRIGHT_TEST_BASE_URL` the specs run against that target and no server is started.
+ * stage before starting it, so every run begins from the seed alone. The setup chain then opens
+ * the app in the store (`install`, which also loads the e2e fixture), signs each role in
+ * (`setup`), and only then starts the specs. A reused server keeps the last run's sessions and
+ * actor state, though `install` replaces the fixture's rows, so reuse is opt-in for iterating
+ * (`E2E_REUSE_SERVER=1`). The top-level `use.baseURL` is set explicitly because Playwright
+ * derives it only from the deprecated `webServer.port`.
  */
 export default defineConfig({
   testDir: "test/e2e",
@@ -63,48 +72,41 @@ export default defineConfig({
   reporter: process.env.CI ? [["html", { outputFolder: "playwright/report" }]] : "list",
   use: { baseURL: e2eServerURL, trace: "on-first-retry" },
   projects: [
-    { name: "setup", testMatch: /auth\.setup\.ts/ },
+    { name: "setup", testMatch: /auth\.setup\.ts/, dependencies: ["install"] },
     {
       name: "chromium",
       testIgnore: "**/embedded/**",
       use: { ...devices["Desktop Chrome"] },
       dependencies: ["setup"],
     },
-    // The embedded project and its login exist only against the local e2e server: a deployed
-    // target has no e2e store yet.
-    ...(process.env.PLAYWRIGHT_TEST_BASE_URL
-      ? []
-      : [
-          { name: "shopify-admin", testMatch: /shopify-admin\.setup\.ts/ },
-          {
-            name: "embedded",
-            testMatch: "**/embedded/**/*.spec.ts",
-            dependencies: ["shopify-admin"],
-            // Per-file serial mode and one admin boot per file; files must not share a worker's page.
-            fullyParallel: false,
-            // One store row serves every embedded spec: a load in one file exchanges a token,
-            // which would break the refresh spec's steps mid-run if two files ran at once.
-            workers: 1,
-            timeout: 60_000,
-            expect: { timeout: 10_000 },
-            use: {
-              channel: "chrome",
-              baseURL: embeddedURL(),
-              storageState: storageStatePath,
-              actionTimeout: 10_000,
-              navigationTimeout: 30_000,
-            },
-          },
-        ]),
+    { name: "shopify-admin", testMatch: /shopify-admin\.setup\.ts/ },
+    {
+      name: "install",
+      testMatch: /install\.setup\.ts/,
+      dependencies: ["shopify-admin"],
+      use: embeddedUse(),
+    },
+    {
+      name: "embedded",
+      testMatch: "**/embedded/**/*.spec.ts",
+      // Not `shopify-admin`: the install's load and this project's first load would exchange
+      // tokens on the one session row at once.
+      dependencies: ["install"],
+      // Per-file serial mode and one admin boot per file; files must not share a worker's page.
+      fullyParallel: false,
+      // One store row serves every embedded spec: a load in one file exchanges a token, which
+      // would break the refresh spec's steps mid-run if two files ran at once.
+      workers: 1,
+      timeout: 60_000,
+      expect: { timeout: 10_000 },
+      use: embeddedUse(),
+    },
   ],
-  webServer: process.env.PLAYWRIGHT_TEST_BASE_URL
-    ? undefined
-    : {
-        command: "vp run test:e2e:server",
-        env: { E2E_TOKEN: e2eToken },
-        url: `${e2eServerURL}/`,
-        reuseExistingServer: process.env.E2E_REUSE_SERVER === "1",
-        timeout: 180_000,
-        gracefulShutdown: { signal: "SIGTERM", timeout: 20_000 },
-      },
+  webServer: {
+    command: "vp run test:e2e:server",
+    url: `${e2eServerURL}/`,
+    reuseExistingServer: process.env.E2E_REUSE_SERVER === "1",
+    timeout: 180_000,
+    gracefulShutdown: { signal: "SIGTERM", timeout: 20_000 },
+  },
 });

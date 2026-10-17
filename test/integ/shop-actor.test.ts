@@ -25,13 +25,16 @@ import {
   type Credential,
   connect,
   connectAs,
-  control,
+  addToFixture,
+  dev,
   email,
   nextCloseCode,
   openAs,
   signIn,
   socketUrl,
 } from "./actor-clients.ts";
+import { fileStage } from "./file-stage.ts";
+import { mintSessionToken } from "../shopify-session-token.ts";
 import Stack from "./stack.ts";
 
 /**
@@ -42,6 +45,7 @@ import Stack from "./stack.ts";
  */
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),
+  stage: fileStage("shopactor"),
 });
 
 /** A fresh stage per file, destroyed afterwards; see the same declaration in `auth.test.ts`. */
@@ -61,11 +65,8 @@ const open = (backendUrl: string, credential: Credential) =>
     return socket;
   });
 
-/** A merchant's Shopify session token for a shop, minted as Shopify would. */
-const merchantToken = (backendUrl: string, e2eToken: string, shop: ShopKey = key) =>
-  control(backendUrl, e2eToken, (c) => c.IssueMerchantSessionToken({ shop })).pipe(
-    Effect.map(({ token }) => token),
-  );
+/** A merchant's Shopify session token for a shop, signed with the fake app's secret. */
+const merchantToken = (shop: ShopKey = key) => mintSessionToken({ shop });
 
 /** No close arrives within a moment. */
 const assertOpen = (closes: Queue.Dequeue<unknown>) =>
@@ -77,8 +78,8 @@ const assertOpen = (closes: Queue.Dequeue<unknown>) =>
 test(
   "two sockets share one actor: a write on one notifies both",
   Effect.gen(function* () {
-    const { backendUrl, e2eToken } = yield* stack;
-    const cookie = yield* signIn(backendUrl, e2eToken, m1);
+    const { backendUrl } = yield* stack;
+    const cookie = yield* signIn(backendUrl, m1);
     yield* Effect.gen(function* () {
       const a = yield* open(backendUrl, { cookie });
       const b = yield* open(backendUrl, { cookie });
@@ -96,9 +97,9 @@ test(
 test(
   "roles: a merchant resets and a member may not; a member increments and a merchant may not",
   Effect.gen(function* () {
-    const { backendUrl, e2eToken } = yield* stack;
-    const cookie = yield* signIn(backendUrl, e2eToken, m1);
-    const token = yield* merchantToken(backendUrl, e2eToken);
+    const { backendUrl } = yield* stack;
+    const cookie = yield* signIn(backendUrl, m1);
+    const token = yield* merchantToken();
     yield* Effect.gen(function* () {
       const merchant = yield* open(backendUrl, { token });
       const member = yield* open(backendUrl, { cookie });
@@ -117,8 +118,8 @@ test(
 test(
   "a forged connection header on the browser's upgrade is dropped by the gate",
   Effect.gen(function* () {
-    const { backendUrl, e2eToken } = yield* stack;
-    const cookie = yield* signIn(backendUrl, e2eToken, m1);
+    const { backendUrl } = yield* stack;
+    const cookie = yield* signIn(backendUrl, m1);
     yield* Effect.gen(function* () {
       const socket = yield* connect(socketUrl(backendUrl, key), {
         cookie,
@@ -136,13 +137,13 @@ test(
 test(
   "sign-out closes only that session's sockets with 3401",
   Effect.gen(function* () {
-    const { backendUrl, e2eToken } = yield* stack;
-    const first = yield* signIn(backendUrl, e2eToken, m1);
-    const second = yield* signIn(backendUrl, e2eToken, m1);
+    const { backendUrl } = yield* stack;
+    const first = yield* signIn(backendUrl, m1);
+    const second = yield* signIn(backendUrl, m1);
     yield* Effect.gen(function* () {
       const a = yield* open(backendUrl, { cookie: first });
       const b = yield* open(backendUrl, { cookie: second });
-      const origin = yield* authOrigin(backendUrl, e2eToken, m1);
+      const origin = yield* authOrigin(backendUrl, m1);
       const signOut = yield* HttpClient.execute(
         HttpClientRequest.post(`${backendUrl}/api/auth/sign-out`).pipe(
           HttpClientRequest.setHeaders({ cookie: first, origin }),
@@ -160,17 +161,15 @@ test(
 test(
   "RemoveMember closes the member's sockets with 3401 and the gate then refuses it with 4404",
   Effect.gen(function* () {
-    const { backendUrl, e2eToken } = yield* stack;
+    const { backendUrl } = yield* stack;
     const removed = email("integ-removed@e2e.test");
-    yield* control(backendUrl, e2eToken, (c) => c.AddMember({ shop: key, email: removed }));
-    const cookie = yield* signIn(backendUrl, e2eToken, removed);
-    const other = yield* signIn(backendUrl, e2eToken, m2);
+    yield* addToFixture(backendUrl, key, { members: [removed] });
+    const cookie = yield* signIn(backendUrl, removed);
+    const other = yield* signIn(backendUrl, m2);
     yield* Effect.gen(function* () {
       const a = yield* open(backendUrl, { cookie });
       const b = yield* open(backendUrl, { cookie: other });
-      const result = yield* control(backendUrl, e2eToken, (c) =>
-        c.RemoveMember({ shop: key, email: removed }),
-      );
+      const result = yield* dev(backendUrl, (c) => c.RemoveMember({ shop: key, email: removed }));
       assert.deepStrictEqual(result, { removed: true, closed: 1 });
       assert.strictEqual(yield* nextCloseCode(a.closes), CONNECTION_CLOSE_REVOKED);
       // The reconnect goes back through the gate, which no longer finds the member.
@@ -184,9 +183,9 @@ test(
 test(
   "a member's third socket displaces the oldest with 4409; merchants are not capped",
   Effect.gen(function* () {
-    const { backendUrl, e2eToken } = yield* stack;
-    const cookie = yield* signIn(backendUrl, e2eToken, m1);
-    const token = yield* merchantToken(backendUrl, e2eToken);
+    const { backendUrl } = yield* stack;
+    const cookie = yield* signIn(backendUrl, m1);
+    const token = yield* merchantToken();
     yield* Effect.gen(function* () {
       const a = yield* open(backendUrl, { cookie });
       const b = yield* open(backendUrl, { cookie });
@@ -212,9 +211,9 @@ test(
 test(
   "a socket whose session has expired is closed with 3401 on its next message",
   Effect.gen(function* () {
-    const { backendUrl, e2eToken } = yield* stack;
+    const { backendUrl } = yield* stack;
     yield* Effect.gen(function* () {
-      const socket = yield* openAs(backendUrl, e2eToken, key, {
+      const socket = yield* openAs(backendUrl, key, {
         role: "member",
         memberId: "mem-1",
         memberEmail: m1,
@@ -230,12 +229,12 @@ test(
 );
 
 test(
-  "the gate: 4401, 4403 and 4404 close a refused upgrade",
+  "the gate: 4401, 4403 and 4404 close a refused upgrade, an expired merchant token included",
   Effect.gen(function* () {
-    const { backendUrl, e2eToken } = yield* stack;
-    const admin = yield* signIn(backendUrl, e2eToken, email("a@a.com"));
-    const member2 = yield* signIn(backendUrl, e2eToken, m2);
-    const otherShopToken = yield* merchantToken(backendUrl, e2eToken, otherShop);
+    const { backendUrl } = yield* stack;
+    const admin = yield* signIn(backendUrl, email("a@a.com"));
+    const member2 = yield* signIn(backendUrl, m2);
+    const otherShopToken = yield* merchantToken(otherShop);
     const closeCode = (shop: ShopKey, credential?: Credential) =>
       Effect.gen(function* () {
         const socket = yield* connect(
@@ -265,6 +264,11 @@ test(
       yield* closeCode(key, { token: "bad" }),
       CONNECTION_CLOSE_UNAUTHENTICATED,
       "a bad token",
+    );
+    assert.strictEqual(
+      yield* closeCode(key, { token: yield* mintSessionToken({ shop: key, expiresIn: -60 }) }),
+      CONNECTION_CLOSE_UNAUTHENTICATED,
+      "an expired token",
     );
   }),
 );

@@ -9,7 +9,8 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Schema from "effect/Schema";
 import { EmailFromInput } from "../../src/contract/auth.ts";
-import { control } from "./actor-clients.ts";
+import { integ } from "./actor-clients.ts";
+import { fileStage } from "./file-stage.ts";
 import Stack from "./stack.ts";
 
 /**
@@ -19,10 +20,11 @@ import Stack from "./stack.ts";
  */
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),
+  stage: fileStage("auth"),
 });
 
 /**
- * Each file deploys a fresh stage and destroys it when done: the seed is the only data a file
+ * Each file deploys its own stage ({@link fileStage}) and destroys it when done: the seed is the only data a file
  * starts with, so nothing one run changes reaches the next. `NO_DESTROY=1` keeps the stage for
  * inspecting after a failure.
  */
@@ -39,10 +41,8 @@ const Session = Schema.Struct({
 test(
   "a seeded member signs in with a magic link and the session names them",
   Effect.gen(function* () {
-    const { backendUrl, e2eToken } = yield* stack;
-    const { link } = yield* control(backendUrl, e2eToken, (c) =>
-      c.IssueMagicLink({ email: member }),
-    );
+    const { backendUrl } = yield* stack;
+    const { link } = yield* integ(backendUrl, (c) => c.IssueMagicLink({ email: member }));
 
     // The verify response is a redirect that sets the session cookie; do not follow it.
     const verify = yield* HttpClient.get(link).pipe(

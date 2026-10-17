@@ -13,6 +13,7 @@ import {
   type ShopSessionRow,
 } from "../../../src/backend/shop-sessions.ts";
 import { Shopify } from "../../../src/backend/shopify.ts";
+import { mintSessionToken } from "../../shopify-session-token.ts";
 import { QuietLogs, testShopify } from "./layers.ts";
 import { accessTokenBody, jsonResponse, withShopifyStub } from "./shopify-stub.ts";
 
@@ -435,7 +436,7 @@ describe("Shopify.ensureShopSession and the lease", () => {
 describe("Shopify.authenticateAdmin and the lease", () => {
   const authenticate = Effect.gen(function* () {
     const shopify = yield* Shopify;
-    const token = yield* shopify.signSessionToken({ shop: SEED_SHOP });
+    const token = yield* mintSessionToken({ shop: SEED_SHOP });
     return yield* shopify.authenticateAdmin(token);
   });
 

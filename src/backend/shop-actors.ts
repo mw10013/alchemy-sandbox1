@@ -3,6 +3,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { ShopKey } from "../contract/shop.ts";
 import type { ShopSnapshot } from "../contract/shop-actor.ts";
+import * as Match from "effect/Match";
+import { FixtureConflict } from "../contract/fixture.ts";
 import type { ActorFixtureRows } from "./fixture.ts";
 import ShopActor from "./shop-actor.ts";
 
@@ -43,7 +45,24 @@ const make = Effect.gen(function* () {
     return yield* actors.getByName(key).loadFixture(rows);
   });
 
-  return { revoke, snapshot, loadFixture };
+  /**
+   * Adds `rows` beside the shop's work; see `addFixture` on {@link ShopActor}. Its `Conflict`
+   * answer is {@link FixtureConflict}.
+   */
+  const addFixture = Effect.fn("ShopActors.addFixture")(function* (
+    key: ShopKey,
+    rows: ActorFixtureRows,
+  ) {
+    const answer = yield* actors.getByName(key).addFixture(rows);
+    return yield* Match.value(answer).pipe(
+      Match.tagsExhaustive({
+        Added: ({ counts }) => Effect.succeed(counts),
+        Conflict: ({ reason }) => Effect.fail(new FixtureConflict({ shop: key, reason })),
+      }),
+    );
+  });
+
+  return { revoke, snapshot, loadFixture, addFixture };
 });
 
 /**
@@ -57,12 +76,14 @@ export class ShopActors extends Context.Service<ShopActors, Effect.Success<typeo
 
   /**
    * Records each revoke and closes nothing, answers every snapshot with `snapshot`, and records
-   * each fixture load in `loaded`, answering the counts of its rows.
+   * each fixture load in `loaded` and each fixture add in `added`, answering the counts of its
+   * rows; it never finds a clash.
    */
   static readonly layerTest = (
     revoked: Array<{ key: ShopKey; by: "member" | "session"; id: string }>,
     snapshot: ShopSnapshot = { count: { value: 0 }, activation: { id: "test" } },
     loaded: Array<{ key: ShopKey; rows: ActorFixtureRows }> = [],
+    added: Array<{ key: ShopKey; rows: ActorFixtureRows }> = [],
   ) =>
     Layer.succeed(ShopActors, {
       revoke: (key, by, id) =>
@@ -74,6 +95,15 @@ export class ShopActors extends Context.Service<ShopActors, Effect.Success<typeo
       loadFixture: (key, rows) =>
         Effect.sync(() => {
           loaded.push({ key, rows });
+          return {
+            workflows: rows.workflows.length,
+            orders: rows.orders.length,
+            lineItems: rows.lineItems.length,
+          };
+        }),
+      addFixture: (key, rows) =>
+        Effect.sync(() => {
+          added.push({ key, rows });
           return {
             workflows: rows.workflows.length,
             orders: rows.orders.length,

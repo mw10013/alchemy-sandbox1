@@ -76,6 +76,55 @@ export const PerDeveloperStage = PerDeveloperStageParts.pipe(
 );
 export type PerDeveloperStage = typeof PerDeveloperStage.Type;
 
+/**
+ * The last part of a {@link TestFileStage}: lowercase letters and digits, starting with a letter,
+ * and never `wt`, which would read as the start of a {@link Checkout}.
+ */
+const TestFileSuffix = Schema.String.check(
+  Schema.isPattern(/^[a-z][a-z0-9]*$/u),
+  Schema.makeFilter((suffix) => suffix !== "wt" || "`wt` names a worktree, not a test file."),
+);
+
+const TestFileStageParts = Schema.Union([
+  Schema.TemplateLiteralParser([Schema.Literal("test"), "-", User, "-", TestFileSuffix]),
+  Schema.TemplateLiteralParser([
+    Schema.Literal("test"),
+    "-",
+    User,
+    "-",
+    Checkout,
+    "-",
+    TestFileSuffix,
+  ]),
+]);
+
+/**
+ * One integ file's own `test` stage, `test-<user>[-<checkout>]-<suffix>`: `test-mw-shopactor`, or
+ * `test-mw-wt-01-shopactor` in worktree `wt-01`. Each file deploys and destroys its own, so files
+ * run side by side without sharing state, ports or data.
+ */
+export const TestFileStage = TestFileStageParts.pipe(
+  Schema.decodeTo(
+    Schema.Struct({
+      user: Schema.String,
+      checkout: Schema.Option(Schema.Int),
+      suffix: Schema.String,
+    }),
+    SchemaTransformation.transform({
+      decode: (parts) =>
+        parts.length === 7
+          ? { user: parts[2], checkout: Option.some(parts[4]), suffix: parts[6] }
+          : { user: parts[2], checkout: Option.none(), suffix: parts[4] },
+      encode: ({ user, checkout, suffix }) =>
+        Option.match(checkout, {
+          onNone: () => ["test", "-", user, "-", suffix] as const,
+          onSome: (index) => ["test", "-", user, "-", index, "-", suffix] as const,
+        }),
+    }),
+  ),
+);
+export type TestFileStage = typeof TestFileStage.Type;
+
 export class UnknownStage extends Schema.TaggedError<UnknownStage>()("UnknownStage", {
   stage: Schema.String,
 }) {
@@ -85,22 +134,26 @@ export class UnknownStage extends Schema.TaggedError<UnknownStage>()("UnknownSta
 }
 
 const decodePerDeveloper = Schema.decodeUnknownOption(PerDeveloperStage);
+const decodeTestFileStage = Schema.decodeUnknownOption(TestFileStage);
 
 const isDeployed = Schema.is(Deployed);
 
 /**
  * The environment a stage belongs to: a {@link Deployed} stage is its own, a per-developer
- * stage's is its first part. Any other stage fails rather than falling back: an environment not listed in
- * {@link Environment} is one nobody has thought through (its seed, its state store, its policy).
+ * stage's is its first part, and a {@link TestFileStage} is `test`. Any other stage fails rather
+ * than falling back: an environment not listed in {@link Environment} is one nobody has thought
+ * through (its seed, its state store, its policy).
  * `live` and `production` are added when they are designed.
  */
 export const environmentOf = (stage: string): Effect.Effect<Environment, UnknownStage> =>
   isDeployed(stage)
     ? Effect.succeed(stage)
-    : Option.match(decodePerDeveloper(stage), {
-        onNone: () => Effect.fail(new UnknownStage({ stage })),
-        onSome: ({ environment }) => Effect.succeed(environment),
-      });
+    : Option.isSome(decodeTestFileStage(stage))
+      ? Effect.succeed("test")
+      : Option.match(decodePerDeveloper(stage), {
+          onNone: () => Effect.fail(new UnknownStage({ stage })),
+          onSome: ({ environment }) => Effect.succeed(environment),
+        });
 
 /**
  * A Worker's name on a {@link Deployed} stage, `baton-<worker>-<stage>`: fixed, so its

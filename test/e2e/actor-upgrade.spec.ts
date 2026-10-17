@@ -1,10 +1,10 @@
 import * as Schema from "effect/Schema";
 import http from "node:http";
 import { ShopKey } from "../../src/contract/shop.ts";
-import { SEED_SHOP } from "../seed-shops.ts";
 import { CONNECTION_CLOSE_NOT_A_MEMBER } from "../../src/contract/shop-actor.ts";
 import { awaitHydration, expect, ownMember, test } from "./fixtures.ts";
 import { shop } from "./screens.ts";
+import { E2E_SHOP } from "./shop-fixture.ts";
 
 test.use({ storageState: "playwright/.auth/member.json" });
 
@@ -41,7 +41,7 @@ test("an upgrade from another site is refused, and the same one from this site o
   context,
 }) => {
   if (baseURL === undefined) throw new Error("use.baseURL is not set");
-  const url = new URL(`/api/actor/${SEED_SHOP}`, baseURL);
+  const url = new URL(`/api/actor/${E2E_SHOP}`, baseURL);
   const cookie = (await context.cookies(url.toString()))
     .map(({ name, value }) => `${name}=${value}`)
     .join("; ");
@@ -56,13 +56,10 @@ test("a visitor who is not a member sees the not-a-member page, and the gate clo
   backend,
   browser,
 }) => {
-  // An own member is a member of the seed shop only.
-  const { context, page } = await ownMember(
-    browser,
-    backend,
-    `not-a-member-${test.info().workerIndex}`,
-  );
-  const otherShop = Schema.decodeUnknownSync(ShopKey)("other-shop.myshopify.com");
+  // An own member is a member of the e2e store only; this shop has no rows at all, which the
+  // gate answers as it answers a non-member.
+  const { context, page } = await ownMember(browser, backend, "not-a-member");
+  const otherShop = Schema.decodeUnknownSync(ShopKey)("no-such-shop.myshopify.com");
   await page.goto(`/shop/${otherShop}`);
   await awaitHydration(page);
   await expect(shop(page).notAMember).toBeVisible();

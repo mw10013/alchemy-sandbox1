@@ -26,8 +26,8 @@ export const text = (status: number, body: string, headers?: Record<string, stri
   new Response(body, { status, headers: { "content-type": "text/plain", ...headers } });
 
 /**
- * Rejects bad requests before an RPC route (test control, the fixture) forwards them to the
- * Backend; they are the only Effect RPC on the Website. `content-length` can lie and the Backend
+ * Rejects bad requests before an RPC route (`/api/dev`) forwards them to the Backend; it is the
+ * only Effect RPC on the Website. `content-length` can lie and the Backend
  * still reads the body, so this stops honest oversize requests and garbage; it is not a hard
  * memory limit.
  */

@@ -1,10 +1,11 @@
--- The test and e2e environments' one seed: the admin (a@a.com, a Better Auth user with the role
--- admin) and the integration tests' fake shops, members and team, which the integration and e2e
--- tests read. The `Seed` Action runs it after Better Auth's migration, so it may fill Baton's
--- tables and Better Auth's alike. Rows are idempotent (INSERT OR IGNORE) and shaped as Better Auth
--- stores them: ISO text dates, 0/1 booleans. Tokens are fakes shaped like Shopify's; shop times
--- are epoch ms, 2100-01-01 for "never expires". The admin's timestamp is fixed so the file's
--- content, which `Seed` hashes, stays stable.
+-- The test environment's one seed: the admin (a@a.com, a Better Auth user with the role admin)
+-- and the integration tests' fake shops, members and team, which only the integration tests read
+-- (e2e runs on the real e2e store, seeded by `seed/e2e.sql`). The `Seed` Action runs it after
+-- Better Auth's migration, so it may fill Baton's tables and Better Auth's alike. Rows are
+-- idempotent (INSERT OR IGNORE) and shaped as Better Auth stores them: ISO text dates, 0/1
+-- booleans. Tokens are fakes shaped like Shopify's; shop times are epoch ms, 2100-01-01 for "never
+-- expires". The admin's timestamp is fixed so the file's content, which `Seed` hashes, stays
+-- stable.
 INSERT OR IGNORE INTO ShopSession (shop, shopGid, shopActorId, scope, accessTokenExpiresAt, accessToken, refreshToken, refreshTokenExpiresAt, planHandle, planHandleExpiresAt, planBoundaryAt) VALUES
   ('seed-shop.myshopify.com', 'gid://shopify/Shop/1', 'seed-shop.myshopify.com', 'read_orders,write_orders', 4102444800000, 'shpat_fake_seed_shop', 'shprt_fake_seed_shop', 4102444800000, 'basic', 4102444800000, NULL),
   ('other-shop.myshopify.com', 'gid://shopify/Shop/2', 'other-shop.myshopify.com', 'read_orders,write_orders', 4102444800000, 'shpat_fake_other_shop', 'shprt_fake_other_shop', 4102444800000, 'basic', 4102444800000, NULL);

@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
-  FixtureRpcs,
+  FixtureConflict,
   type FixtureCounts,
   type FixtureTask,
   LineItemProperty,
@@ -84,6 +84,18 @@ export interface ActorFixtureRows {
   readonly orders: ReadonlyArray<OrderRow>;
   readonly lineItems: ReadonlyArray<LineItemRow>;
 }
+
+/** The shop actor's work rows, counted after a fixture write. */
+export interface ActorFixtureCounts {
+  readonly workflows: number;
+  readonly orders: number;
+  readonly lineItems: number;
+}
+
+/** What the shop actor's `addFixture` answers: the counts, or the first clash it found. */
+export type ActorFixtureAdded =
+  | { readonly _tag: "Added"; readonly counts: ActorFixtureCounts }
+  | { readonly _tag: "Conflict"; readonly reason: string };
 
 const DAY_MS = 86_400_000;
 
@@ -218,19 +230,43 @@ const make = Effect.gen(function* () {
     return counts;
   });
 
-  return { load };
+  /**
+   * Adds `data` to one installed shop beside its data, revoking nothing. It reads D1 for a
+   * member email or team name already in the shop and fails with {@link FixtureConflict} before
+   * anything is written; then the actor adds its rows, failing the same way on a clashing
+   * workflow or order with nothing written; then D1's identity rows go in, in one batch, whose
+   * unique indexes are only the backstop for a race (a clash there is a defect). As with
+   * {@link load}, each store is atomic on its own.
+   */
+  const add = Effect.fn("Fixtures.add")(function* (shop: ShopKey, data: ShopFixtureData) {
+    if (Option.isNone(yield* sessions.find(shop))) return yield* new ShopNotInstalled({ shop });
+    const names = yield* members.identityNames(shop);
+    const email = data.members.find((address) => names.emails.includes(address));
+    if (email !== undefined)
+      return yield* new FixtureConflict({ shop, reason: `member ${email} already exists` });
+    const team = data.teams.find(({ name }) => names.teams.includes(name));
+    if (team !== undefined)
+      return yield* new FixtureConflict({ shop, reason: `team ${team.name} already exists` });
+    const now = yield* Clock.currentTimeMillis;
+    const rows = yield* Effect.sync(() => fixtureRows(data, now, () => crypto.randomUUID()));
+    const work = yield* actors.addFixture(shop, rows.actor);
+    const identity = yield* members.addToShop(shop, rows.identity);
+    const counts: FixtureCounts = { members: identity.members, teams: identity.teams, ...work };
+    yield* Effect.logInfo(
+      `Fixtures.add: shop=${shop} members=${counts.members} teams=${counts.teams} workflows=${counts.workflows} orders=${counts.orders} lineItems=${counts.lineItems}`,
+    );
+    return counts;
+  });
+
+  return { load, add };
 });
 
-/** Loading a {@link ShopFixtureData} into one installed shop, over D1 and the shop's actor. */
+/**
+ * Loading or adding a {@link ShopFixtureData} into one installed shop, over D1 and the shop's
+ * actor.
+ */
 export class Fixtures extends Context.Service<Fixtures, Effect.Success<typeof make>>()(
   "app/Fixtures",
 ) {
   static readonly layer = Layer.effect(Fixtures, make);
 }
-
-export const FixtureHandlers = FixtureRpcs.toLayer(
-  Effect.gen(function* () {
-    const fixtures = yield* Fixtures;
-    return FixtureRpcs.of({ LoadFixture: ({ shop, fixture }) => fixtures.load(shop, fixture) });
-  }),
-);

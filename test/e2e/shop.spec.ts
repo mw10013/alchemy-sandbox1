@@ -1,24 +1,14 @@
-import * as Schema from "effect/Schema";
-import { EmailFromInput } from "../../src/contract/auth.ts";
-import { SEED_SHOP } from "../seed-shops.ts";
-import {
-  awaitHydration,
-  control,
-  expect,
-  merchant,
-  nextOpenSocket,
-  ownMember,
-  test,
-} from "./fixtures.ts";
+import { awaitHydration, dev, expect, nextOpenSocket, ownMember, test } from "./fixtures.ts";
 import type { Page } from "playwright/test";
-import { followMagicLink, shell, shop } from "./screens.ts";
+import { shell, shop, signInWithForm } from "./screens.ts";
+import { E2E_SHOP } from "./shop-fixture.ts";
 
 test.use({ storageState: "playwright/.auth/member.json" });
 
 /** Every test here reads or writes the one shop's count, so they take turns. */
 test.describe.configure({ mode: "serial" });
 
-const path = `/shop/${SEED_SHOP}`;
+const path = `/shop/${E2E_SHOP}`;
 
 test("an increment in one window updates the count in another", async ({ context, goto, page }) => {
   await goto(path);
@@ -36,33 +26,11 @@ test("an increment in one window updates the count in another", async ({ context
   await expect(shop(page).count).toHaveText(String(before + 1));
 });
 
-test("the merchant resets the count and a member sees it", async ({
-  backend,
-  browser,
-  goto,
-  page,
-}) => {
-  await goto(path);
-  await shop(page).increment.click();
-  await expect(shop(page).count).not.toHaveText("0");
-
-  const merchantContext = await browser.newContext({ storageState: { cookies: [], origins: [] } });
-  const merchantPage = await merchantContext.newPage();
-  await merchant(merchantPage, backend, SEED_SHOP);
-  await expect(shop(merchantPage).merchantOf(SEED_SHOP)).toBeVisible();
-  await expect(shop(merchantPage).increment).toHaveCount(0);
-  await shop(merchantPage).reset.click();
-
-  await expect(shop(merchantPage).count).toHaveText("0");
-  await expect(shop(page).count).toHaveText("0");
-  await merchantContext.close();
-});
-
 test("sign-out in one window sends the other to sign-in; an admin is untouched", async ({
   backend,
   browser,
 }) => {
-  const { context, page } = await ownMember(browser, backend, `signout-${test.info().workerIndex}`);
+  const { context, page } = await ownMember(browser, backend, "signout");
   await page.goto(path);
   await awaitHydration(page);
   const other = await context.newPage();
@@ -73,12 +41,7 @@ test("sign-out in one window sends the other to sign-in; an admin is untouched",
 
   const adminContext = await browser.newContext({ storageState: { cookies: [], origins: [] } });
   const admin = await adminContext.newPage();
-  const { link } = await backend(
-    control((c) =>
-      c.IssueMagicLink({ email: Schema.decodeUnknownSync(EmailFromInput)("a@a.com") }),
-    ),
-  );
-  await followMagicLink(admin, link);
+  await signInWithForm(admin, "a@a.com");
   await admin.waitForURL(/\/admin$/);
 
   await shell(page).signOut.click();
@@ -91,17 +54,13 @@ test("sign-out in one window sends the other to sign-in; an admin is untouched",
 });
 
 test("a member removed while the page is open is told so", async ({ backend, browser }) => {
-  const { email, context, page } = await ownMember(
-    browser,
-    backend,
-    `removed-${test.info().workerIndex}`,
-  );
+  const { email, context, page } = await ownMember(browser, backend, "removed");
   const opened = nextOpenSocket(page);
   await page.goto(path);
   await awaitHydration(page);
   await opened;
 
-  await backend(control((c) => c.RemoveMember({ shop: SEED_SHOP, email })));
+  await backend(dev((c) => c.RemoveMember({ shop: E2E_SHOP, email })));
 
   await expect(shop(page).notAMember).toBeVisible();
   await context.close();
@@ -111,11 +70,7 @@ test("a third window displaces the oldest, and Reconnect there takes it back", a
   backend,
   browser,
 }) => {
-  const { context, page: first } = await ownMember(
-    browser,
-    backend,
-    `displaced-${test.info().workerIndex}`,
-  );
+  const { context, page: first } = await ownMember(browser, backend, "displaced");
   const open = async (page: Page) => {
     const opened = nextOpenSocket(page);
     await page.goto(path);
@@ -137,17 +92,4 @@ test("a third window displaces the oldest, and Reconnect there takes it back", a
   await expect(shop(second).signedInElsewhere).toBeVisible();
   await expect(shop(third).signedInElsewhere).toHaveCount(0);
   await context.close();
-});
-
-test("a merchant whose Shopify session expired is told so", async ({ backend, browser }) => {
-  const merchantContext = await browser.newContext({ storageState: { cookies: [], origins: [] } });
-  const page = await merchantContext.newPage();
-  const { token } = await backend(
-    control((c) => c.IssueMerchantSessionToken({ shop: SEED_SHOP, expiresInSeconds: -60 })),
-  );
-  await page.goto(`/merchant/${SEED_SHOP}?token=${encodeURIComponent(token)}`);
-  await awaitHydration(page);
-  await expect(shop(page).expired).toBeVisible();
-  await expect(shop(page).count).toHaveCount(0);
-  await merchantContext.close();
 });
