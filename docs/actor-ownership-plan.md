@@ -222,6 +222,8 @@ S2 and S1 detail (Alchemy, `refs/alchemy/packages/alchemy/src/Cloudflare/Workers
   - Production bundle, walked from `.alchemy/bundles/Backend/worker.js` through its relative imports (11 files, built 17:44 by the Step 4 e2e run, after the last code commit at 17:43): `IntegRpcs` 0, `ShopifyFake` 0; `OrdersSyncWorkflow` 28 and `OrdersAgent.syncOpenOrders` 6 (controls). `SyncOpenOrders` 3 is now `MerchantSyncOpenOrders`, a production procedure, so it no longer marks test code. `ShopifyFake` is present in `.alchemy/bundles/TestBackend/` entry chunks, so a hit would show.
   - e2e socket count: 1 (Step 4). Dev-store check: requested of a person (Human steps requested), not done.
 
+CHECKPOINT: ready for staging (0859657). Open before staging: the Step 4 dev-store check (Human steps requested).
+
 ### Human steps requested
 
 - 2026-10-17 [Step 4] The dev-store check (research §10), not attempted here by instruction. In the main checkout, on `main` at or after the Step 4 commit (e121244): start the dev server with `vp run dev`; in the dev store's admin (`mw10013-dev-shop-00`) open Baton and its Orders page (`/app/orders`), leave the tab open and untouched for five minutes; then create an order in the Shopify admin (any draft order, marked paid). Expected: its row appears on the open Orders page without a reload, within a few seconds of the `Webhooks.ordersWebhook: shop=mw10013-dev-shop-00.myshopify.com topic=ORDERS_CREATE … status=stored` line in `.logs/dev/current`. Record the time from create to row, and the actor's `ShopActor.fetch: … role=merchant: socket accepted` and any `ShopActor.webSocketClose: … role=merchant` lines for the shop over the five minutes (one accept and no close is the pass). This closes §5's last item and Step 4's check.
