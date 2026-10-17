@@ -347,6 +347,12 @@ Needs a decision:
 - The user's dev server took this round's edits and now runs the new code on `dev-mw` (Issues); a dev-store check window over 19:01–19:03 is void.
 - The Workflow's outer phase now re-runs on each actor activation (Alchemy's yield, research §6 cost); nothing in the suites showed a cost, and staging's logs are the place to watch for one.
 
+### Staging (round 3, 2026-10-17)
+
+- Orchestrator, through a subagent. `vp run deploy:staging` at 2876948+058ec6c (not pushed): `[Backend/ShopActor] update` (one binding change), DO reconciliation unchanged (`newSqliteClasses: []`, nothing renamed, deleted or transferred). Cloudflare's version 5 of `baton-backend-staging` has exactly one `durable_object_namespace` binding `ShopActor`, the same `namespace_id` as version 4, and no `script_name` (the self name is normalized away or never sent). The Workflow binding is unchanged.
+- `mw10013-staging-shop-00`, in the user's Chrome: Sync open orders toasted "Syncing open orders" and listed #1001–#1003; logs `23:19:27.644 OrdersAgent.syncOpenOrders … status=started workflowId=ebeee4f3-…`, `23:19:33.019 OrdersSyncWorkflow.run … workflowId=ebeee4f3-…`, `23:19:39.038 ShopActor.onOrdersStream … ordersSeen=3 ordersUpserted=3`, `23:19:39.075 OrdersSyncWorkflow.run … status=complete objectCount=7`. Sync from Shopify on #1002: `OrdersAgent.syncOrder … status=stored`. In-app navigation App Home ↔ Orders kept one socket; the admin's breadcrumb and Back reload the iframe, which closes (1001) and reopens one socket, as a new document should. No error or warning events.
+- Watch: the first Sync from Shopify (#1003, 23:20:01) reached the actor (its trace holds only `[shopify-api/INFO] version 15.0.1`) but logged no `syncOrder` line; the UI showed no error, and the repeat on #1002 logged fully. Telemetry drop or a call that stopped after building the Shopify client; not reproduced.
+
 ## 8. Out of scope
 
 - Slice C (members, teams, `Members` in the actor) and its revised questions.
