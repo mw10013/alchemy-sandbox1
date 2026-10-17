@@ -21,6 +21,7 @@ dist-ssr
 !.env.example
 *.local
 playwright/
+.playwright-cli/
 .vitest/
 
 # Editor directories and files
