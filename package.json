@@ -12,6 +12,7 @@
     "dev:stop": "node --env-file=.env scripts/dev.ts stop",
     "dev:status": "node --env-file=.env scripts/dev.ts status",
     "dev:logs": "node scripts/dev.ts logs",
+    "browser": "node --env-file=.env scripts/browser.ts",
     "clean:playwright-cli": "find .playwright-cli -type f -mtime +1 -delete 2>/dev/null || true",
     "db:reset": "node --env-file=.env scripts/dev.ts db:reset",
     "worktree:init": "node scripts/worktree.ts init",

@@ -1,0 +1,4 @@
+{
+  "outputMaxSize": 104857600,
+  "timeouts": { "action": 10000 }
+}
