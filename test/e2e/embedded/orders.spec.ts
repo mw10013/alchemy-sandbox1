@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import type { BrowserContext, FrameLocator, Page } from "playwright/test";
 import * as Schema from "effect/Schema";
@@ -10,8 +11,9 @@ import { gotoApp, openApp } from "./app.ts";
  * The orders screen against Shopify itself: the spec creates its own order on the e2e store
  * (`scripts/test-order.ts`, a child process, since the runner is plain Node and the CLI's store
  * auth is the credential), sees it arrive by webhook, cancels it and sees the row follow, then
- * runs Sync open orders. The order is tagged with the test's id, so no other run's order is
- * mistaken for it. The store needs the one-time `shopify store auth` in the stores runbook.
+ * runs Sync open orders. The order is tagged with a fresh id that fits Shopify's 40-character
+ * tag limit, and its row is found by the order's own name, so no other run's order is mistaken
+ * for it. The store needs the one-time `shopify store auth` in the stores runbook.
  */
 test.describe.configure({ mode: "serial" });
 
@@ -46,8 +48,7 @@ test.afterAll(async () => {
 const row = () => frame.locator("s-table-row", { hasText: order.name });
 
 test("the orders screen shows an order Shopify sends by webhook", async () => {
-  const { testId, retry } = test.info();
-  order = decodeCreated(await testOrder("create", `e2e-${testId}-${retry}`));
+  order = decodeCreated(await testOrder("create", `e2e-${randomUUID()}`));
   await expect(row()).toBeVisible({ timeout: 60_000 });
   await expect(row().getByText("Paid")).toBeVisible();
 });

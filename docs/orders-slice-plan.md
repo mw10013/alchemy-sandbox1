@@ -334,6 +334,7 @@ Step 7
 - 2026-10-17 [Step 7] The fixture order the refresh spec syncs (`gid://shopify/Order/fixture-<n>`) goes to Shopify, against the JSDoc on `FIXTURE_ORDER_PREFIX` ("nothing may sync it, link to it in the Shopify admin, or ask Shopify about it"). Shopify answers `order: null` for it (checked on the dev store; also for `gid://shopify/Order/1`), so it is harmless, and the screen also shows a broken admin link on fixture rows. Left for the lead: hide both buttons on fixture rows and give the refresh spec another order, or relax the rule.
 - 2026-10-17 [Step 7] App Bridge toasts and the hoisted "Sync open orders" render in the admin's top document, not the iframe: the e2e specs read them on `page`, the rows on the frame.
 - 2026-10-17 [Step 7] `vite.config.ts` browser `optimizeDeps.include` gains `effect/DateTime` (the first browser run re-optimized it mid-run, as in Step 2).
+- 2026-10-17 [Step 7] The spec's third case passed in 91 ms: `toBeEnabled` on "Sync open orders" holds before the click's disable lands, so the case shows only that the press raised no banner, not that a sync ran. The screen shows nothing that marks a finished sync. Left as a decision.
 - 2026-10-17 [Step 7] Not looked at in the dev store (Step 8's check); the screen was seen only through e2e on the e2e store.
 
 ### Command results
@@ -371,6 +372,8 @@ Step 7
 
 - 2026-10-17 [Step 7] Lead verification: `vp check` green (244 files, 200 linted); `vp test` 44 files, 504 tests, 38.2 s. e2e (the agent's run): 29 passed, `embedded/orders.spec.ts` failed at order creation (no e2e store auth), 2 did not run. **Step 7 is not green until the human step below is done and `vp run test:e2e` passes.** Steps 8–9 wait for it.
 
+- 2026-10-17 [Step 7] After the store auth, `embedded/orders.spec.ts` failed on Shopify's tag limit: `draftOrderCreate e2e-dc9a45f9a00bc2e25c82-8c40b4a7b798f220a1de-0: Title Tag exceeds the maximum length of 40 characters`. Fixed by the lead: the order's tag is `e2e-<randomUUID>` (40 characters); the row is found by the order's name as before. Then `vp check` green; `vp run test:e2e` 32 passed, 1.6 min (`orders.spec.ts` 3/3: webhook row 8.0 s, Cancelled 5.0 s, Sync open orders 91 ms). **Step 7 is green.**
+
 ### Human steps requested
 
 - 2026-10-17 [Step 7] `embedded/orders.spec.ts` needs store auth on the e2e store. Run once, approve the Shopify CLI Connector App install in the browser page it opens:
@@ -380,6 +383,7 @@ Step 7
   ```
 
   The exact failure without it: `Command failed: node --env-file=.env scripts/test-order.ts create e2e-…` / `mw10013-e2e-shop-00.myshopify.com has no store auth with the scopes the fixture needs.` Then rerun `vp run test:e2e`.
+- 2026-10-17 [Step 7] Done by the human; the next e2e run got past the auth.
 
 ### Implementation review
 
