@@ -429,6 +429,11 @@ STAGING: ready for the orchestrator (head 4e4d0c6, after Follow-up round 1).
 
 - 2026-10-17 [Follow-up 1] Lead verification of (1), (2), (7): diff read (the removal's line items go by the `OrderLineItem` cascade; rewrapped one JSDoc line); `vp check` green (246 files, 202 linted); `vp test` 44 files, 517 tests, 44.9 s; `vp run test:e2e` 34 passed, 2.7 min. Needs a decision: pagination is a plain "Next page" link per the decision, where legacy used `s-table paginate` (Previous disabled on page one); `RemoveOrder` is a new dev-endpoint procedure (dev, test and e2e stages only).
 
+### Follow-up round 2
+
+- 2026-10-17 Orchestrator decisions: the socket accept and close logs go to Info (one line per connection, visible in dev and staging without `DEBUG`); the "Next page" link and `RemoveOrder` are accepted as built.
+- 2026-10-17 [Follow-up 2] Lead: `ShopActor.fetch`'s "socket accepted" and `ShopActor.webSocketClose`'s lines are `Effect.logInfo`, the close JSDoc says Info; no test names the level. `vp check` green (246 files, 202 linted); `vp test` 44 files, 517 tests, 45.5 s.
+
 ### Human steps requested
 
 - 2026-10-17 [Step 7] `embedded/orders.spec.ts` needs store auth on the e2e store. Run once, approve the Shopify CLI Connector App install in the browser page it opens:
