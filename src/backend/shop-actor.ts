@@ -326,6 +326,23 @@ export const syncTransaction = (sql: SqlClient.SqlClient): Transaction => {
     sql.withTransaction(body).pipe(Effect.provideService(Scheduler.Scheduler, scheduler));
 };
 
+/**
+ * Writes a fixture's rows, each its own insert: a statement binds at most 100 parameters. The
+ * order rows carry `countedAt`, the one column the order repository never writes.
+ */
+export const insertFixtureRows = (sql: SqlClient.SqlClient, rows: ActorFixtureRows) =>
+  Effect.gen(function* () {
+    for (const w of rows.workflows)
+      yield* sql`INSERT INTO Workflow (id, name, tag, state, updatedAt, tasks, draftTasks)
+        VALUES (${w.id}, ${w.name}, ${w.tag}, ${w.state}, ${w.updatedAt}, ${w.tasks}, ${w.draftTasks})`;
+    for (const o of rows.orders)
+      yield* sql`INSERT INTO ShopOrder (id, legacyId, name, processedAt, updatedAt, cancelledAt, fulfillmentStatus, fullyPaid, note, syncedAt, countedAt)
+        VALUES (${o.id}, ${o.legacyId}, ${o.name}, ${o.processedAt}, ${o.updatedAt}, ${o.cancelledAt}, ${o.fulfillmentStatus}, ${o.fullyPaid}, ${o.note}, ${o.syncedAt}, ${o.countedAt})`;
+    for (const i of rows.lineItems)
+      yield* sql`INSERT INTO OrderLineItem (id, orderId, title, variantTitle, sku, quantity, currentQuantity, productTags, properties)
+        VALUES (${i.id}, ${i.orderId}, ${i.title}, ${i.variantTitle}, ${i.sku}, ${i.quantity}, ${i.currentQuantity}, ${i.productTags}, ${i.properties})`;
+  });
+
 /** Each role middleware admits exactly its role; see `MemberRpcs`. */
 const requireRole = (role: ConnectionCaller["role"]) =>
   Effect.gen(function* () {
@@ -572,20 +589,6 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
         return result;
       });
 
-      /** Writes a fixture's rows, each its own insert: a statement binds at most 100 parameters. */
-      const insertFixtureRows = (rows: ActorFixtureRows) =>
-        Effect.gen(function* () {
-          for (const w of rows.workflows)
-            yield* sql`INSERT INTO Workflow (id, name, tag, state, updatedAt, tasks, draftTasks)
-              VALUES (${w.id}, ${w.name}, ${w.tag}, ${w.state}, ${w.updatedAt}, ${w.tasks}, ${w.draftTasks})`;
-          for (const o of rows.orders)
-            yield* sql`INSERT INTO ShopOrder (id, legacyId, name, processedAt, updatedAt, cancelledAt, fulfillmentStatus, fullyPaid, note, syncedAt, countedAt)
-              VALUES (${o.id}, ${o.legacyId}, ${o.name}, ${o.processedAt}, ${o.updatedAt}, ${o.cancelledAt}, ${o.fulfillmentStatus}, ${o.fullyPaid}, ${o.note}, ${o.syncedAt}, ${o.countedAt})`;
-          for (const i of rows.lineItems)
-            yield* sql`INSERT INTO OrderLineItem (id, orderId, title, variantTitle, sku, quantity, currentQuantity, productTags, properties)
-              VALUES (${i.id}, ${i.orderId}, ${i.title}, ${i.variantTitle}, ${i.sku}, ${i.quantity}, ${i.currentQuantity}, ${i.productTags}, ${i.properties})`;
-        });
-
       /** The shop's work rows, read back. */
       const countWork = Effect.gen(function* () {
         return {
@@ -616,7 +619,7 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
               yield* sql`INSERT INTO SyncState (id) VALUES (1)`;
               yield* sql`DELETE FROM ShopUsage`;
               yield* sql`INSERT INTO ShopUsage (id) VALUES (1)`;
-              yield* insertFixtureRows(rows);
+              yield* insertFixtureRows(sql, rows);
               return yield* countWork;
             }),
           );
@@ -660,7 +663,7 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
                 if (clash !== undefined)
                   return { _tag: "Conflict" as const, reason: `order ${o.name} already exists` };
               }
-              yield* insertFixtureRows(rows);
+              yield* insertFixtureRows(sql, rows);
               return { _tag: "Added" as const, counts: yield* countWork };
             }),
           );

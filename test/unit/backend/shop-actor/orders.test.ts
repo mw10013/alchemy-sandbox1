@@ -2,6 +2,9 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
+import { fixture } from "../../../../fixture.ts";
+import { fixtureRows } from "../../../../src/backend/fixture.ts";
+import { insertFixtureRows } from "../../../../src/backend/shop-actor.ts";
 import type { OrderRepository } from "../../../../src/backend/shop-actor/orders.ts";
 import type { OrderLineItem, ShopOrder } from "../../../../src/domain/orders.ts";
 import { ShopLimits } from "../../../../src/domain/platform.ts";
@@ -219,6 +222,45 @@ describe("OrderRepository.upsertOrder columns", () => {
           syncedAt: changed.syncedAt,
           countedAt: 1200,
         });
+      }),
+    ),
+  );
+});
+
+/**
+ * The rows `LoadFixture` and `AddToFixture` write are the repository's rows: the dev fixture,
+ * written by the actor's own inserts, decodes through the same `ShopOrder` and `OrderLineItem`
+ * schemas a sync stores, and the fixture's `countedAt` of 0 survives a sync.
+ */
+describe("fixture rows", () => {
+  it.effect("the dev fixture's rows decode through the repository and keep countedAt 0", () =>
+    runInRepository((repository, sql) =>
+      Effect.gen(function* () {
+        let next = 0;
+        const { actor } = fixtureRows(fixture, CYCLE_START, () => `id-${String(++next)}`);
+        yield* insertFixtureRows(sql, actor);
+        const page = yield* repository.listOrders({ limit: actor.orders.length, cursor: null });
+        const listed = page.orders.map(({ order }) => order);
+        assert.strictEqual(listed.length, actor.orders.length);
+        assert.strictEqual(page.nextCursor, null);
+        assert.strictEqual(
+          page.orders.flatMap(({ lineItems }) => lineItems).length,
+          actor.lineItems.length,
+        );
+        assert.isTrue(listed.some(({ cancelledAt }) => cancelledAt !== null));
+        assert.isTrue(listed.some(({ fullyPaid }) => !fullyPaid));
+
+        const [newest] = page.orders;
+        assert.isDefined(newest);
+        if (newest === undefined) return;
+        const synced = yield* upsert(
+          repository,
+          { ...newest.order, updatedAt: newest.order.updatedAt + 1 },
+          newest.lineItems,
+        );
+        assert.deepStrictEqual([synced.written, synced.fresh, synced.changed], [true, false, true]);
+        const counted = yield* sql`select distinct countedAt from ShopOrder`.values;
+        assert.deepStrictEqual(counted, [[0]]);
       }),
     ),
   );

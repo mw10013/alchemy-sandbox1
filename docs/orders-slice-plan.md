@@ -304,6 +304,9 @@ Step 7
 - 2026-10-17 [Step 7] Tests. Unit: `BackendApi orders` (3) in `api.test.ts`, over a new `testOrders` layer (`layers.ts`), which `auth.test.ts`' backend also needs now; `requireTestOrderStore` (2). Browser: `OrdersPage.test.tsx` (5): a page of orders, the empty state, the `InFlight` toast, the Gone toast, the `lastError` banner. App Bridge is stubbed by setting `globalThis.shopify` (recording toasts) per test; nothing stubbed it before. The InFlight case presses the empty state's twin: outside the admin the slotted title-bar button sits in `s-page`'s folded actions. Integ (`orders.test.ts`, +2): `IntegRpcs` `ApiListOrders`/`ApiSyncOpenOrders`/`ApiSyncOrder` call the real `BackendApi` (bad token refused by all three, rows and `Gone` for a good one, `ShopNotInstalled` for a shop with no session), and a forged member socket is `Forbidden` on `MerchantListOrders`. e2e: `app.spec.ts` asserts the Orders link instead of "We got here", plus "the Orders link opens the orders screen inside the admin"; new `orders.spec.ts` (webhook, cancel, Sync open orders).
 - 2026-10-17 [Step 7] Store helpers: `createTestOrder(store, tag)` (a draft order with one custom line, "Baton e2e" ×2 at 1.00, completed paid; no product needed) and `cancelTestOrder(store, id)` in `scripts/lib/stores.ts`, guarded by `requireTestOrderStore` (e2e stores only) and `requireStoreAuth`; `ORDER_CANCEL` takes `$staffNote`. `scripts/test-order.ts` (`create <tag>` prints `{"id","name"}`, `cancel <id>`) is what the spec runs as a child process. The spec's third case asserts the sync completes with the row still listed and no banner: after the cancel, the row would be listed whether or not the sync returned it.
 
+- 2026-10-17 [Step 8] The fixture rows already matched: `OrderRow` is the `ShopOrder` columns plus `countedAt` (always 0), and the repository's `orderColumns` select list leaves `countedAt` out, so it is never read into `ShopOrder` and never written (`grep countedAt src/backend/shop-actor/orders.ts`: the JSDoc line only). No fix needed. To pin it, the actor's `insertFixtureRows` moved from a closure in the actor body to an exported `insertFixtureRows(sql, rows)` beside `syncTransaction` in `shop-actor.ts`; `loadFixture` and `addFixture` call it unchanged.
+- 2026-10-17 [Step 8] New unit test in `test/unit/backend/shop-actor/orders.test.ts` ("fixture rows", 1 test): the whole dev fixture (`fixture.ts`, 42 orders, 47 items) through `fixtureRows` and `insertFixtureRows` into `ActorSqliteTest`, read back by `listOrders` (every order and item decodes; a cancelled and an unpaid one among them), then a newer sync of one order (`written`, `changed`) leaves every `countedAt` at 0.
+
 ### Issues
 
 - 2026-10-17 setup: baseline `vp check` green. The first `vp test` failed with an unhandled "Port 63315 is already in use" (all 26 files that ran passed). A rerun was green: 30 files, 270 tests, 23.2 s. Transient; likely a concurrent run in `wt-01`.
@@ -336,6 +339,10 @@ Step 7
 - 2026-10-17 [Step 7] `vite.config.ts` browser `optimizeDeps.include` gains `effect/DateTime` (the first browser run re-optimized it mid-run, as in Step 2).
 - 2026-10-17 [Step 7] The spec's third case passed in 91 ms: `toBeEnabled` on "Sync open orders" holds before the click's disable lands, so the case shows only that the press raised no banner, not that a sync ran. The screen shows nothing that marks a finished sync. Left as a decision.
 - 2026-10-17 [Step 7] Not looked at in the dev store (Step 8's check); the screen was seen only through e2e on the e2e store.
+
+- 2026-10-17 [Step 8] The dev store's `/app/orders` shows 25 of the fixture's 42 orders (#1242 down to #1218) and nothing reaches the rest: Step 7's one page, no pagination. The fixture's cancelled, fulfilled and changed orders are all older than the first page, so the screen shows only "Paid / No workflow" rows and one "Unpaid".
+- 2026-10-17 [Step 8] `LoadFixture` replaces the actor's orders, so the dev store's three real store orders (seed-board, seed-journal, seed-clock-and-blanket) are not listed after `vp run fixture` until a sync brings them in. As built; noted because the store and the screen disagree right after the fixture.
+- 2026-10-17 [Step 8] First live check: the first order (#1008) was stored by the `ORDERS_PAID` webhook 4.3 s after "Create order" (log `ShopActor.storeOrder … written=true changed=true`, `ORDERS_CREATE` then `stale`), but the `/app/orders` tab opened about 80 s earlier did not show it; a reload did. After that reload, the cancel of #1008 and a second order (#1009) and its cancel all updated the open page live. The first page's socket state was not visible (the iframe's requests do not show in the top page's network list, and the actor logs no connect), so the cause is unknown. Not reproduced.
 
 ### Command results
 
@@ -374,6 +381,12 @@ Step 7
 
 - 2026-10-17 [Step 7] After the store auth, `embedded/orders.spec.ts` failed on Shopify's tag limit: `draftOrderCreate e2e-dc9a45f9a00bc2e25c82-8c40b4a7b798f220a1de-0: Title Tag exceeds the maximum length of 40 characters`. Fixed by the lead: the order's tag is `e2e-<randomUUID>` (40 characters); the row is found by the order's name as before. Then `vp check` green; `vp run test:e2e` 32 passed, 1.6 min (`orders.spec.ts` 3/3: webhook row 8.0 s, Cancelled 5.0 s, Sync open orders 91 ms). **Step 7 is green.**
 
+- 2026-10-17 [Step 8] `vp run fixture` (dev server running, not restarted): 3.5 s; "store ok: mw10013-dev-shop-00.myshopify.com has the fixture's 8 products and 3 orders"; "shop ok: … has 7 members, 8 teams, 8 workflows, 42 orders, 47 line items".
+- 2026-10-17 [Step 8] Dev store, through the chrome-devtools MCP in the Shopify admin: `/app/orders` lists the fixture's orders newest first, #1242 to #1218 (25 rows; #1230 Unpaid, #1235 3 items, #1229 and #1224 2 items). Live check, two draft orders with one custom item at $1.00, marked paid: #1008 (`gid://shopify/Order/18959475507429`) stored 4.3 s after the click (seen only after a reload, see Issues); cancelled, stored 4 s after, row turned Cancelled with 0 items without a reload. #1009 (`…/18959481176293`) stored 3.2 s after the click and appeared on the open page without a reload; cancelled, stored 4 s after, row Cancelled. Both orders are cancelled in the store.
+- 2026-10-17 [Step 8] `vp check --fix` then `vp check`: green, 244 files formatted, 200 linted and type-checked. `vp test`: green first run, 44 files, 505 tests, 46.6 s (was 504). `vp run test:e2e`: green, 32 passed, 2.5 min. Nine leaked `.alchemy/local/baton-test-…-ShopActor` directories deleted; the e2e run left one new `baton-backend-e2e-mw-…-ShopActor`, not deleted.
+
+- 2026-10-17 [Step 8] Lead verification: diff read (`insertFixtureRows` moved to module scope unchanged, plus the "fixture rows" unit test); `vp check` green (244 files, 200 linted); `vp test` 44 files, 505 tests, 42.3 s; `vp run test:e2e` 32 passed, 1.8 min. **Step 8 is green.**
+
 ### Human steps requested
 
 - 2026-10-17 [Step 7] `embedded/orders.spec.ts` needs store auth on the e2e store. Run once, approve the Shopify CLI Connector App install in the browser page it opens:
@@ -383,6 +396,7 @@ Step 7
   ```
 
   The exact failure without it: `Command failed: node --env-file=.env scripts/test-order.ts create e2e-…` / `mw10013-e2e-shop-00.myshopify.com has no store auth with the scopes the fixture needs.` Then rerun `vp run test:e2e`.
+
 - 2026-10-17 [Step 7] Done by the human; the next e2e run got past the auth.
 
 ### Implementation review
