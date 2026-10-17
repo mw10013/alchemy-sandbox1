@@ -13,21 +13,21 @@ vp run browser open
 If login is missing or expired, run `vp run e2e:auth`, then reopen. This exports a
 Shopify login from macOS Keychain and can require a person. Chrome must be installed.
 
-`open` restarts this checkout's `admin` session, loads the login, opens the dev store,
+`open` restarts this checkout's `dev` session, loads the login, opens the dev store,
 waits for hydration and collapses Dev Console. It reloads once if hydration stalls.
-Read `.playwright-cli/admin-ready.yml` for element references.
+Read `.playwright-cli/dev-ready.yml` for element references.
 
 ## Drive and verify
 
 ```sh
-vp exec playwright cli -s=admin click f1e14
+vp exec playwright cli -s=dev click f1e14
 vp run browser ready
-vp exec playwright cli -s=admin screenshot --filename=.playwright-cli/check.png
+vp exec playwright cli -s=dev screenshot --filename=.playwright-cli/check.png
 ```
 
 Replace `f1e14` with a current snapshot reference; `f…` references identify iframe content.
 Run `ready` after navigation: it repeats the readiness checks and replaces
-`admin-ready.yml`. Verify the resulting content, not just that a click returned.
+`dev-ready.yml`. Verify the resulting content, not just that a click returned.
 Use snapshots or role locators for Polaris; DOM text checks can miss its shadow content.
 
 `run-code` executes Playwright JavaScript against the current `page`; use it for
@@ -45,10 +45,11 @@ vp run browser close
   action timeout. The directory separates browser sessions between checkouts. No login here.
 - `.playwright-cli/`: ignored snapshots, screenshots, console logs and traces, retained
   for debugging. Oldest files are pruned as CLI commands run; the budget is best-effort.
-- `admin-ready.yml`: latest prepared snapshot; overwritten by `open` and `ready`.
+- `dev-ready.yml`: latest prepared snapshot; overwritten by `open` and `ready`.
 - `playwright/.auth/shopify-admin.json`: ignored login export, outside that cleanup budget.
-- Keep important exports under `playwright/exports/` (ignored, not pruned). Explicit
-  filenames resolve from the checkout root, not automatically from `.playwright-cli/`.
+
+Verification evidence storage is undecided.
+Explicit filenames resolve from the checkout root, not automatically from `.playwright-cli/`.
 
 Snapshots and logs can contain login tokens. Do not commit or share them unredacted.
 `close` stops the browser; it does not delete artifacts. Manual fallback:

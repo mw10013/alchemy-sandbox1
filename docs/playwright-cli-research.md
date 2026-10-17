@@ -12,7 +12,7 @@ Chrome MCP according to the task. **Headless by default; headed when helpful.**
 - `.playwright-cli/` contains snapshots, screenshots, logs and traces.
 - The CLI can automatically delete oldest files as commands run.
 - No scheduled cleanup process needed. The budget is approximate, not a strict ceiling.
-- Save important recordings elsewhere; automatic cleanup can remove old traces.
+- Automatic cleanup can remove old traces. Verification evidence storage is undecided.
 - Current manual cleanup removes files roughly 48 hours old.
 
 ## 2. Driving the app
@@ -40,7 +40,7 @@ overlays and hide problems.
 - A 10-second action timeout: how long a click waits for its target to become ready.
 
 That directory also keeps each checkout’s browser sessions separate, so commands
-in one worktree cannot accidentally drive another’s browser. Name the session `admin`.
+in one worktree cannot accidentally drive another’s browser. Name the session `dev`.
 
 The opening command handles login loading. No environment variables to type manually.
 Keep admin authentication out of the shared defaults.

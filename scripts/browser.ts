@@ -24,7 +24,7 @@ class BrowserError extends Schema.TaggedError<BrowserError>()("BrowserError", {
 }) {}
 
 const storageState = "playwright/.auth/shopify-admin.json";
-const session = "admin";
+const session = "dev";
 const HandleLine = Schema.Trim.pipe(
   Schema.decodeTo(Schema.TemplateLiteralParser(['handle = "', Schema.NonEmptyString, '"'])),
 );
@@ -69,7 +69,7 @@ const readinessCode = (url?: string) => `async (page) => {
 
 const ready = Effect.gen(function* () {
   yield* runCLI(["--raw", "run-code", readinessCode()]);
-  yield* runCLI(["snapshot", "--filename=.playwright-cli/admin-ready.yml"]);
+  yield* runCLI(["snapshot", "--filename=.playwright-cli/dev-ready.yml"]);
 });
 
 const open = Effect.fn("browser.open")(function* (headed: boolean) {
@@ -117,8 +117,8 @@ const open = Effect.fn("browser.open")(function* (headed: boolean) {
       PLAYWRIGHT_MCP_HEADLESS: headed ? "false" : "true",
     });
     yield* runCLI(["--raw", "run-code", readinessCode(url)]);
-    yield* runCLI(["snapshot", "--filename=.playwright-cli/admin-ready.yml"]);
-    yield* Console.log("Ready: session=admin; snapshot=.playwright-cli/admin-ready.yml");
+    yield* runCLI(["snapshot", "--filename=.playwright-cli/dev-ready.yml"]);
+    yield* Console.log("Ready: session=dev; snapshot=.playwright-cli/dev-ready.yml");
   }).pipe(Effect.onError(() => runCLI(["close"]).pipe(Effect.ignore)));
 });
 
