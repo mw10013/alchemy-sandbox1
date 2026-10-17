@@ -1,5 +1,9 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import { ShopKey } from "../../contract/shop.ts";
+import { mintSessionToken } from "../client/app-bridge.ts";
+import { ShopSocket } from "../components/ShopSocket.tsx";
 import { APP_BRIDGE_URL } from "../components/polaris.ts";
 import { authenticateApp, getShopifyApp } from "../server/shopify.ts";
 import { appSearch } from "./-app-search.ts";
@@ -12,7 +16,8 @@ import { embeddedAppUrl, frameAncestors, sessionTokenBounce } from "../server/sh
  * re-embeds; `embedded !== "1"` goes to the app inside the Shopify admin; no `id_token` goes to the
  * session-token bounce; otherwise the token is authenticated (`authenticateApp`). App Bridge is
  * the document's first script, which the Shopify admin requires; the root document places
- * `HeadContent` ahead of Polaris for it.
+ * `HeadContent` ahead of Polaris for it. It holds the merchant's socket ({@link ShopSocket}) for
+ * every page under it, its token minted from App Bridge per connect.
  */
 export const Route = createFileRoute("/app")({
   beforeLoad: async ({ location }) => {
@@ -37,5 +42,15 @@ export const Route = createFileRoute("/app")({
       onNone: () => ({}),
       onSome: (csp): Record<string, string> => ({ "Content-Security-Policy": csp }),
     }),
-  component: Outlet,
+  component: function AppLayout() {
+    const { shop } = Route.useRouteContext();
+    return (
+      <ShopSocket
+        shop={Schema.decodeUnknownSync(ShopKey)(shop)}
+        merchantToken={Option.some(mintSessionToken)}
+      >
+        <Outlet />
+      </ShopSocket>
+    );
+  },
 });

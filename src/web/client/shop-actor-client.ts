@@ -159,7 +159,8 @@ const browserProtocol = (input: ProtocolInput) => {
 
 /**
  * Browser: {@link browserProtocol}. The server never reads a socket atom: a shop page renders
- * its loader's snapshot until it is hydrated, and `seedShop` fills the atoms in the browser.
+ * its loader's snapshot until it is hydrated, and the holder and the page fill the atoms in the
+ * browser.
  */
 const protocol = createIsomorphicFn()
   .client((input: ProtocolInput) => browserProtocol(input))
@@ -170,10 +171,10 @@ const protocol = createIsomorphicFn()
     ),
   );
 
-/** A socket atom read before `seedShop` named the shop: a broken invariant. */
+/** A socket atom read before the socket holder named the shop: a broken invariant. */
 const unnamedShop = Layer.effect(
   RpcClient.Protocol,
-  Effect.die(new Error("a socket atom was read before seedShop named the shop")),
+  Effect.die(new Error("a socket atom was read before the socket holder named the shop")),
 );
 
 /**
@@ -256,10 +257,11 @@ const seed = <A, E>(
 };
 
 /**
- * Names the shop and credential the protocol connects with, and starts the page's connection
- * state afresh. Run once, in the browser, before the page reads any socket atom.
+ * Names the shop and credential the protocol connects with, and starts the connection state
+ * afresh. Only the socket holder (`ShopSocket`, in the layout) runs it, once per shop and
+ * credential, in the browser, before anything reads a socket atom; a page never does.
  */
-const nameSocket = (
+export const nameSocket = (
   registry: AtomRegistry.AtomRegistry,
   key: ShopKey,
   merchantToken: Option.Option<Effect.Effect<string>>,
@@ -273,24 +275,22 @@ const nameSocket = (
 };
 
 /**
- * Seeds the socket's atoms from a shop page's loader data: the shop and credential the protocol
- * connects with ({@link nameSocket}), and the role's count, who-am-I and (for a member)
- * activation, so the page shows them at once and the socket only keeps them current. Run it
- * once, in the browser, before the page reads any socket atom. A second run on the same
- * registry (React's StrictMode doubles a state initializer in development) finds the nodes and
- * refetches instead, which costs one round trip and nothing else.
+ * Seeds the socket's atoms from a shop page's loader data: the role's count, who-am-I and (for a
+ * member) activation, so the page shows them at once and the socket only keeps them current.
+ * Run it once, in the browser, under the socket holder that named the socket ({@link nameSocket})
+ * and before the page reads any socket atom. A second run on the same registry (React's
+ * StrictMode doubles a state initializer in development, and a page shown again within the idle
+ * TTL) finds the nodes and refetches instead, which costs one round trip and nothing else.
  */
 export const seedShop = (
   registry: AtomRegistry.AtomRegistry,
   input: {
-    readonly key: ShopKey;
-    readonly merchantToken: Option.Option<Effect.Effect<string>>;
+    readonly role: ConnectionCaller["role"];
     readonly caller: ConnectionCaller;
     readonly snapshot: ShopSnapshot;
   },
 ) => {
-  nameSocket(registry, input.key, input.merchantToken);
-  if (Option.isSome(input.merchantToken)) {
+  if (input.role === "merchant") {
     seed(registry, merchantCountQuery, input.snapshot.count);
     seed(registry, merchantWhoAmIAtom, input.caller);
   } else {
@@ -353,16 +353,6 @@ export const syncOrderAtom = Atom.family((orderId: string) =>
 );
 
 /**
- * Names the merchant orders screen's socket: the shop and the token source ({@link nameSocket}).
- * Run once, in the browser, before the screen reads any socket atom; {@link seedOrders} then
- * fills each page it shows.
- */
-export const nameOrdersSocket = (
-  registry: AtomRegistry.AtomRegistry,
-  input: { readonly key: ShopKey; readonly merchantToken: Effect.Effect<string> },
-) => nameSocket(registry, input.key, Option.some(input.merchantToken));
-
-/**
  * Seeds one page of the merchant orders screen from the loader, so the table shows at once and
  * the socket only keeps it current. Run it for each page the screen shows, before the screen
  * reads that page's atom; the same rules as {@link seedShop}.
@@ -373,7 +363,8 @@ export const seedOrders = (
 ) => seed(registry, merchantOrdersQuery(input.cursor), input.page);
 
 /**
- * Turns notices into invalidations; mounted by the page. The stream never ends. It sees the
+ * Turns notices into invalidations; mounted by the socket holder for as long as the layout is,
+ * which is also what keeps the client's runtime, and so the socket, alive. The stream never ends. It sees the
  * last notice published before it subscribed (see {@link noticeBus}), so every connect, the
  * first included, refetches what the page shows.
  */

@@ -1,0 +1,52 @@
+import type { WebSocket } from "playwright/test";
+
+import { storageStatePath } from "../../../playwright.config.ts";
+import { expect, test } from "../fixtures.ts";
+import { gotoApp } from "./app.ts";
+
+/**
+ * One socket per tab: the `/app` layout holds the merchant's socket, so moving between the App
+ * Home and Orders inside the admin keeps the one it opened. Orders has no link to the App Home
+ * (there is no app nav), so the way back is the app's router navigating inside the frame, a
+ * navigation in the same document, as the Orders link is. Not `history.back()`: in the admin that
+ * moves the admin's own history, and App Bridge loads the frame afresh, a new document and so a
+ * new socket. The way forward again is the App Home's Orders link. `page.on("websocket")` sees
+ * the app frame's sockets.
+ */
+test("Orders, the App Home and Orders again share one socket", async ({ browser }) => {
+  const context = await browser.newContext({ storageState: storageStatePath });
+  try {
+    const page = await context.newPage();
+    const sockets: Array<WebSocket> = [];
+    page.on("websocket", (socket) => {
+      if (socket.url().includes("/api/actor/")) sockets.push(socket);
+    });
+    const frame = await gotoApp(page);
+    const orders = frame.getByText(/^(No open orders|Sync from Shopify)$/u).first();
+    const home = frame.getByRole("link", { name: "Orders" });
+
+    await home.click();
+    await expect(orders).toBeVisible();
+    await expect.poll(() => sockets.length).toBeGreaterThan(0);
+
+    // The router TanStack Router registers on the window, navigating to the App Home with the
+    // raw search the `/app` guards read.
+    await frame.locator("body").evaluate(() =>
+      Reflect.get(globalThis, "__TSR_ROUTER__").navigate({
+        href: `/app${globalThis.location.search}`,
+      }),
+    );
+    await expect(home).toBeVisible();
+    // Past the client's 400 ms idle release, so a socket held by the page alone would be gone.
+    await page.waitForTimeout(1_500);
+
+    await home.click();
+    await expect(orders).toBeVisible();
+    await page.waitForTimeout(1_500);
+
+    expect(sockets.map((socket) => socket.url().replace(/\?.*$/u, ""))).toHaveLength(1);
+    expect(sockets.filter((socket) => socket.isClosed())).toHaveLength(0);
+  } finally {
+    await context.close();
+  }
+});

@@ -1,23 +1,13 @@
-import {
-  RegistryContext,
-  useAtom,
-  useAtomMount,
-  useAtomSet,
-  useAtomValue,
-} from "@effect/atom-react";
+import { RegistryContext, useAtom, useAtomValue } from "@effect/atom-react";
 import { useHydrated } from "@tanstack/react-router";
-import * as Effect from "effect/Effect";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
 import { type ReactNode, useContext, useId, useState } from "react";
 import {
-  connectionStateAtom,
-  lostAtom,
   merchantExpiredAtom,
   notAMemberAtom,
-  reconnectAtom,
   uninstalledAtom,
 } from "../client/actor-connection.ts";
 import type { ShopKey } from "../../contract/shop.ts";
@@ -29,7 +19,6 @@ import {
   incrementAtom,
   merchantCountAtom,
   merchantWhoAmIAtom,
-  noticesAtom,
   resetCountAtom,
   seedShop,
   whoAmIAtom,
@@ -155,25 +144,18 @@ type Snapshot = Extract<ShopPageData, { readonly _tag: "Snapshot" }>;
 /**
  * The page once hydrated: the socket's atoms, seeded from the loader's snapshot before the
  * first read, so the first live render shows what the server rendered and the socket only
- * keeps it current. {@link noticesAtom} is mounted while the page is, so a write in any
- * browser refetches the count here.
+ * keeps it current. The layout's socket holder (`ShopSocket`) named the socket and keeps its
+ * notices flowing, so a write in any browser refetches the count here.
  */
-function LiveShop(props: {
-  readonly role: Role;
-  readonly shop: ShopKey;
-  readonly merchantToken: Option.Option<string>;
-  readonly data: Snapshot;
-}) {
+function LiveShop(props: { readonly role: Role; readonly shop: ShopKey; readonly data: Snapshot }) {
   const registry = useContext(RegistryContext);
   useState(() =>
     seedShop(registry, {
-      key: props.shop,
-      merchantToken: Option.map(props.merchantToken, (token) => Effect.succeed(token)),
+      role: props.role,
       caller: props.data.caller,
       snapshot: props.data.snapshot,
     }),
   );
-  useAtomMount(noticesAtom);
   const atoms = ROLES[props.role];
   const count = useAtomValue(atoms.count);
   const whoAmI = useAtomValue(atoms.whoAmI);
@@ -182,38 +164,21 @@ function LiveShop(props: {
   const notAMember = useAtomValue(notAMemberAtom);
   const merchantExpired = useAtomValue(merchantExpiredAtom);
   const uninstalled = useAtomValue(uninstalledAtom);
-  const connection = useAtomValue(connectionStateAtom);
-  const lost = useAtomValue(lostAtom);
-  const reconnect = useAtomSet(reconnectAtom);
 
   if (notAMember) return <Refusal text={NOT_A_MEMBER} />;
   if (merchantExpired) return <Refusal text={EXPIRED} />;
   if (uninstalled) return <Refusal text={UNINSTALLED} />;
   return (
-    <>
-      {connection === "displaced" && (
-        <s-banner tone="warning" heading="Signed in elsewhere">
-          <s-button
-            slot="secondary-actions"
-            variant="secondary"
-            onClick={() => reconnect((n) => n + 1)}
-          >
-            Reconnect
-          </s-button>
-        </s-banner>
-      )}
-      {connection === "lost" && lost && <s-banner tone="info" heading="Reconnecting…" />}
-      <ShopCard
-        role={props.role}
-        shop={props.shop}
-        caller={AsyncResult.value(whoAmI)}
-        count={count}
-        activation={AsyncResult.value(activation)}
-        writing={writeResult.waiting}
-        writeFailed={AsyncResult.isFailure(writeResult)}
-        onWrite={() => write({ payload: undefined })}
-      />
-    </>
+    <ShopCard
+      role={props.role}
+      shop={props.shop}
+      caller={AsyncResult.value(whoAmI)}
+      count={count}
+      activation={AsyncResult.value(activation)}
+      writing={writeResult.waiting}
+      writeFailed={AsyncResult.isFailure(writeResult)}
+      onWrite={() => write({ payload: undefined })}
+    />
   );
 }
 
@@ -226,14 +191,12 @@ function LiveShop(props: {
  * first client render agree and no socket is built on the server; after that, {@link LiveShop}
  * renders the socket's atoms.
  *
- * The socket's state shows as a banner: "Reconnecting…" once it has been lost for a few
- * seconds, and "Signed in elsewhere" with Reconnect when a newer window displaced it. When the
- * gate refuses a reconnect, or the shop uninstalls Baton, the card gives way to why.
+ * The socket's health is the layout's banner (`SocketBanner`). When the gate refuses a
+ * reconnect, or the shop uninstalls Baton, the card gives way to why.
  */
 export default function ShopPage(props: {
   readonly role: Role;
   readonly shop: ShopKey;
-  readonly merchantToken: Option.Option<string>;
   readonly data: ShopPageData;
 }) {
   const hydrated = useHydrated();

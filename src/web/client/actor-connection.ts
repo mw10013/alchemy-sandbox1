@@ -17,7 +17,7 @@ import {
 } from "../../contract/shop-actor.ts";
 
 /**
- * The shop whose actor this registry's client talks to; None until `seedShop` names it, which it
+ * The shop whose actor this registry's client talks to; None until the socket holder names it (`nameSocket`), which it
  * does before the page reads any socket atom. There is no default shop: a member may belong to
  * any number. This and the other plain state atoms here are kept alive: they are set while
  * nothing on the page reads them yet, and an unread atom would drop the value.

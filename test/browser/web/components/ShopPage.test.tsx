@@ -7,15 +7,10 @@ import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 import { renderInApp } from "../../render.tsx";
 import { shopTestRegistry } from "../../shop-actor.ts";
-import {
-  applyCloseOutcome,
-  closeOutcome,
-  reconnectAtom,
-} from "../../../../src/web/client/actor-connection.ts";
+import { applyCloseOutcome, closeOutcome } from "../../../../src/web/client/actor-connection.ts";
 import { EmailFromInput } from "../../../../src/contract/auth.ts";
 import { SEED_SHOP } from "../../../seed-shops.ts";
 import {
-  CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_NOT_A_MEMBER,
   COUNT_KEY,
   type ConnectionCaller,
@@ -23,6 +18,7 @@ import {
 import type { ShopPageData } from "../../../../src/web/server/shop.ts";
 import { noticeBus } from "../../../../src/web/client/shop-actor-client.ts";
 import ShopPage from "../../../../src/web/components/ShopPage.tsx";
+import { ShopSocket } from "../../../../src/web/components/ShopSocket.tsx";
 
 const member: ConnectionCaller = {
   role: "member",
@@ -41,8 +37,18 @@ const snapshotOf = (caller: ConnectionCaller, value: number): ShopPageData => ({
   snapshot: { count: { value }, activation: { id: "activation-1" } },
 });
 
+/** The member's shop page under the layout's socket holder, as the route renders it. */
 const memberPage = (data: ShopPageData) => (
-  <ShopPage role="member" shop={SEED_SHOP} merchantToken={Option.none()} data={data} />
+  <ShopSocket shop={SEED_SHOP} merchantToken={Option.none()}>
+    <ShopPage role="member" shop={SEED_SHOP} data={data} />
+  </ShopSocket>
+);
+
+/** A merchant's shop page under a merchant socket holder. */
+const merchantPage = (data: ShopPageData) => (
+  <ShopSocket shop={SEED_SHOP} merchantToken={Option.some(Effect.succeed("token"))}>
+    <ShopPage role="merchant" shop={SEED_SHOP} data={data} />
+  </ShopSocket>
 );
 
 /** A notice from the actor, as the socket would deliver it to this registry's page. */
@@ -111,15 +117,7 @@ describe("ShopPage", () => {
       MerchantGetCount: () => Effect.sync(() => ({ value })),
       MerchantResetCount: () => Effect.sync(() => ({ value: (value = 0) })),
     });
-    const screen = await renderInApp(
-      <ShopPage
-        role="merchant"
-        shop={SEED_SHOP}
-        merchantToken={Option.some("token")}
-        data={snapshotOf(merchant, 5)}
-      />,
-      registry,
-    );
+    const screen = await renderInApp(merchantPage(snapshotOf(merchant, 5)), registry);
     await expect.element(screen.getByRole("status", { name: "Count" })).toHaveTextContent("5");
     await expect.element(screen.getByText(`Merchant of ${SEED_SHOP}`)).toBeVisible();
     await expect.element(screen.getByRole("button", { name: "Increment" })).not.toBeInTheDocument();
@@ -138,17 +136,6 @@ describe("ShopPage", () => {
     await expect
       .element(screen.getByRole("alert"))
       .toHaveTextContent("Couldn't reach the shop. Try again.");
-  });
-
-  it("a displaced socket (4409) shows Signed in elsewhere, and Reconnect asks again", async () => {
-    const registry = shopTestRegistry({});
-    const screen = await renderInApp(memberPage(snapshotOf(member, 1)), registry);
-    await closeWith(registry, CONNECTION_CLOSE_DISPLACED);
-    await expect.element(screen.getByText("Signed in elsewhere")).toBeVisible();
-
-    const before = registry.get(reconnectAtom);
-    await screen.getByRole("button", { name: "Reconnect" }).click();
-    expect(registry.get(reconnectAtom)).toBe(before + 1);
   });
 
   it("a member removed while the page is open (4404) is told so instead of the count", async () => {
@@ -174,15 +161,7 @@ describe("ShopPage", () => {
 
   it("a merchant whose Shopify session expired is told so by the loader, and no socket is opened", async () => {
     const registry = shopTestRegistry({});
-    const screen = await renderInApp(
-      <ShopPage
-        role="merchant"
-        shop={SEED_SHOP}
-        merchantToken={Option.some("token")}
-        data={{ _tag: "Expired" }}
-      />,
-      registry,
-    );
+    const screen = await renderInApp(merchantPage({ _tag: "Expired" }), registry);
 
     await expect
       .element(screen.getByRole("alert"))

@@ -27,6 +27,7 @@ import { Route as WebhooksSplatRouteImport } from './routes/webhooks.$'
 import { Route as ApiActorKeyRouteImport } from './routes/api.actor.$key'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
 import { Route as AppOrdersFromShopifyRouteImport } from './routes/app.orders.from-shopify'
+import { Route as ShopKeyIndexRouteImport } from './routes/shop.$key.index'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -118,6 +119,11 @@ const AppOrdersFromShopifyRoute = AppOrdersFromShopifyRouteImport.update({
   path: '/from-shopify',
   getParentRoute: () => AppOrdersRoute,
 } as any)
+const ShopKeyIndexRoute = ShopKeyIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ShopKeyRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -130,7 +136,7 @@ export interface FileRoutesByFullPath {
   '/app/orders': typeof AppOrdersRouteWithChildren
   '/auth/exit-iframe': typeof AuthExitIframeRoute
   '/auth/session-token': typeof AuthSessionTokenRoute
-  '/shop/$key': typeof ShopKeyRoute
+  '/shop/$key': typeof ShopKeyRouteWithChildren
   '/webhooks/$': typeof WebhooksSplatRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
@@ -138,6 +144,7 @@ export interface FileRoutesByFullPath {
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
+  '/shop/$key/': typeof ShopKeyIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -147,7 +154,6 @@ export interface FileRoutesByTo {
   '/app/orders': typeof AppOrdersRouteWithChildren
   '/auth/exit-iframe': typeof AuthExitIframeRoute
   '/auth/session-token': typeof AuthSessionTokenRoute
-  '/shop/$key': typeof ShopKeyRoute
   '/webhooks/$': typeof WebhooksSplatRoute
   '/admin': typeof AdminIndexRoute
   '/app': typeof AppIndexRoute
@@ -155,6 +161,7 @@ export interface FileRoutesByTo {
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
+  '/shop/$key': typeof ShopKeyIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -168,7 +175,7 @@ export interface FileRoutesById {
   '/app/orders': typeof AppOrdersRouteWithChildren
   '/auth/exit-iframe': typeof AuthExitIframeRoute
   '/auth/session-token': typeof AuthSessionTokenRoute
-  '/shop/$key': typeof ShopKeyRoute
+  '/shop/$key': typeof ShopKeyRouteWithChildren
   '/webhooks/$': typeof WebhooksSplatRoute
   '/admin/': typeof AdminIndexRoute
   '/app/': typeof AppIndexRoute
@@ -176,6 +183,7 @@ export interface FileRoutesById {
   '/api/actor/$key': typeof ApiActorKeyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/app/orders/from-shopify': typeof AppOrdersFromShopifyRoute
+  '/shop/$key/': typeof ShopKeyIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -198,6 +206,7 @@ export interface FileRouteTypes {
     | '/api/actor/$key'
     | '/api/auth/$'
     | '/app/orders/from-shopify'
+    | '/shop/$key/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -207,7 +216,6 @@ export interface FileRouteTypes {
     | '/app/orders'
     | '/auth/exit-iframe'
     | '/auth/session-token'
-    | '/shop/$key'
     | '/webhooks/$'
     | '/admin'
     | '/app'
@@ -215,6 +223,7 @@ export interface FileRouteTypes {
     | '/api/actor/$key'
     | '/api/auth/$'
     | '/app/orders/from-shopify'
+    | '/shop/$key'
   id:
     | '__root__'
     | '/'
@@ -235,6 +244,7 @@ export interface FileRouteTypes {
     | '/api/actor/$key'
     | '/api/auth/$'
     | '/app/orders/from-shopify'
+    | '/shop/$key/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -379,6 +389,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppOrdersFromShopifyRouteImport
       parentRoute: typeof AppOrdersRoute
     }
+    '/shop/$key/': {
+      id: '/shop/$key/'
+      path: '/'
+      fullPath: '/shop/$key/'
+      preLoaderRoute: typeof ShopKeyIndexRouteImport
+      parentRoute: typeof ShopKeyRoute
+    }
   }
 }
 
@@ -418,13 +435,24 @@ const AppRouteChildren: AppRouteChildren = {
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
+interface ShopKeyRouteChildren {
+  ShopKeyIndexRoute: typeof ShopKeyIndexRoute
+}
+
+const ShopKeyRouteChildren: ShopKeyRouteChildren = {
+  ShopKeyIndexRoute: ShopKeyIndexRoute,
+}
+
+const ShopKeyRouteWithChildren =
+  ShopKeyRoute._addFileChildren(ShopKeyRouteChildren)
+
 interface ShopRouteChildren {
-  ShopKeyRoute: typeof ShopKeyRoute
+  ShopKeyRoute: typeof ShopKeyRouteWithChildren
   ShopIndexRoute: typeof ShopIndexRoute
 }
 
 const ShopRouteChildren: ShopRouteChildren = {
-  ShopKeyRoute: ShopKeyRoute,
+  ShopKeyRoute: ShopKeyRouteWithChildren,
   ShopIndexRoute: ShopIndexRoute,
 }
 

@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import type { OrdersListPage } from "../../../../src/contract/shop-actor.ts";
 import type {
@@ -9,6 +10,7 @@ import type {
 } from "../../../../src/domain/orders.ts";
 import type { AppBridge } from "../../../../src/web/client/app-bridge.ts";
 import OrdersPage, { type OrdersPageLink } from "../../../../src/web/components/OrdersPage.tsx";
+import { ShopSocket } from "../../../../src/web/components/ShopSocket.tsx";
 import { renderInApp } from "../../render.tsx";
 import { shopTestRegistry } from "../../shop-actor.ts";
 import { SEED_SHOP } from "../../../seed-shops.ts";
@@ -96,13 +98,9 @@ const render = (
   options: { status?: OrdersSyncStatus; presses?: Presses } = {},
 ) =>
   renderInApp(
-    <OrdersPage
-      shop={SEED_SHOP}
-      cursor={null}
-      page={page}
-      pageLink={pageLink}
-      merchantToken={Effect.succeed("token")}
-    />,
+    <ShopSocket shop={SEED_SHOP} merchantToken={Option.some(Effect.succeed("token"))}>
+      <OrdersPage cursor={null} page={page} pageLink={pageLink} />
+    </ShopSocket>,
     shopTestRegistry({
       MerchantListOrders: () => Effect.succeed(page),
       MerchantSyncStatus: () => Effect.succeed(options.status ?? idle),

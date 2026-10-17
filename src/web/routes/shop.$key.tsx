@@ -1,15 +1,19 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { ShopKey } from "../../contract/shop.ts";
-import { BackLink } from "../components/screen/BackLink.tsx";
-import ShopPage from "../components/ShopPage";
+import { ShopSocket } from "../components/ShopSocket.tsx";
 import { getShopSnapshot } from "../server/shop.ts";
 
 /** A key that does not decode is no route at all, so it is 404 and never reaches the Backend. */
 const decodeShopKey = Schema.decodeUnknownOption(ShopKey);
 
-/** A member's shop page: the loader asks the Backend for the snapshot, or why not. */
+/**
+ * A member's shop: the layout of every page under `/shop/$key`. The loader asks the Backend for
+ * the snapshot, or why not; with a snapshot the layout holds the member's socket
+ * ({@link ShopSocket}) for the pages under it, and with a refusal it opens none, since the page
+ * shows the refusal and nothing else.
+ */
 export const Route = createFileRoute("/shop/$key")({
   params: {
     parse: ({ key }) =>
@@ -17,18 +21,14 @@ export const Route = createFileRoute("/shop/$key")({
     stringify: ({ key }) => ({ key }),
   },
   loader: ({ params }) => getShopSnapshot({ data: { key: params.key } }),
-  component: function MemberShopRoute() {
+  component: function MemberShopLayout() {
     const { key } = Route.useParams();
-    return (
-      <>
-        <BackLink label="Member area" href="/shop" />
-        <ShopPage
-          role="member"
-          shop={key}
-          merchantToken={Option.none()}
-          data={Route.useLoaderData()}
-        />
-      </>
+    return Route.useLoaderData()._tag === "Snapshot" ? (
+      <ShopSocket shop={key} merchantToken={Option.none()}>
+        <Outlet />
+      </ShopSocket>
+    ) : (
+      <Outlet />
     );
   },
 });

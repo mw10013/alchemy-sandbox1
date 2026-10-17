@@ -1,9 +1,7 @@
 import { createFileRoute, useLocation } from "@tanstack/react-router";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { ShopKey } from "../../contract/shop.ts";
 import { OrdersCursor } from "../../domain/shop-work.ts";
-import { mintSessionToken } from "../client/app-bridge.ts";
 import { ORDERS_PAGE_SIZE } from "../client/shop-actor-client.ts";
 import { useNavigateOnClick } from "../components/navigate.ts";
 import OrdersPage from "../components/OrdersPage.tsx";
@@ -42,8 +40,6 @@ export const Route = createFileRoute("/app/orders")({
       },
     }),
   component: function OrdersRoute() {
-    const { shop } = Route.useRouteContext();
-    const key = Schema.decodeUnknownSync(ShopKey)(shop);
     const { after } = Route.useLoaderDeps();
     const searchStr = useLocation({ select: (location) => location.searchStr });
     const navigate = useNavigateOnClick();
@@ -52,14 +48,6 @@ export const Route = createFileRoute("/app/orders")({
       search.set("after", cursor);
       return navigate(`/app/orders?${search.toString()}`);
     };
-    return (
-      <OrdersPage
-        shop={key}
-        cursor={after}
-        page={Route.useLoaderData()}
-        pageLink={pageLink}
-        merchantToken={mintSessionToken}
-      />
-    );
+    return <OrdersPage cursor={after} page={Route.useLoaderData()} pageLink={pageLink} />;
   },
 });

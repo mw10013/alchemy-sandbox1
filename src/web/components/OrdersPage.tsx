@@ -1,29 +1,24 @@
-import { RegistryContext, useAtomMount, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useHydrated } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
-import type * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Schema from "effect/Schema";
-import { type ReactNode, useContext, useMemo, useState } from "react";
+import { type ReactNode, useContext, useMemo } from "react";
 import { isFixtureOrder } from "../../contract/fixture.ts";
 import { ORDER_SYNC_WINDOW_DAYS } from "../../contract/orders.ts";
 import { OrdersSyncFailure } from "../../contract/shopify.ts";
-import type { ShopKey } from "../../contract/shop.ts";
 import type { OrdersListInput, OrdersListPage } from "../../contract/shop-actor.ts";
 import type { OrderDetail } from "../../domain/orders.ts";
 import { formatNumber, ShopLimits } from "../../domain/platform.ts";
 import { ORDER_POSITION_LABEL, orderPosition } from "../../domain/shop-work.ts";
-import { lostAtom, merchantExpiredAtom, uninstalledAtom } from "../client/actor-connection.ts";
 import { toast } from "../client/app-bridge.ts";
 import {
   merchantOrdersAtom,
   merchantSyncStatusAtom,
-  nameOrdersSocket,
-  noticesAtom,
   seedOrders,
   syncOpenOrdersAtom,
   syncOrderAtom,
@@ -46,8 +41,6 @@ export type OrdersPageLink = (cursor: string) => {
  * merchant learns why the press did nothing.
  */
 const CEILING = `New orders stopped syncing at ${formatNumber(ShopLimits.maxOpenOrders)} open orders. Fulfill or cancel orders in Shopify, then Sync open orders.`;
-const UNINSTALLED = "Baton was uninstalled from this shop.";
-const EXPIRED = "Your Shopify session expired.";
 
 /** Why a sync press could not act, as the toast says it; `what` names the press. */
 const failureCopy = (reason: OrdersSyncFailure["_tag"], what: string) =>
@@ -273,29 +266,22 @@ function OrdersScreen(view: OrdersView) {
 /**
  * The screen once hydrated: the merchant socket's atoms, the shown page's seeded from the
  * loader's before its first read, so the first live render of each page shows what the loader
- * read and the socket only keeps it current. The socket is named once; a new page is a new
- * cursor, so a new node to seed, on the same socket. A node already there (the page was shown
- * before) is refetched instead. {@link noticesAtom} is mounted while the
- * page is, so a webhook, a sync or a sweep refetches the page shown, and a sync starting or ending
+ * read and the socket only keeps it current. The `/app` layout's socket holder (`ShopSocket`)
+ * named the socket and keeps its notices flowing; a new page is a new cursor, so a new node to
+ * seed, on the same socket. A node already there (the page was shown before) is refetched
+ * instead. A webhook, a sync or a sweep refetches the page shown, and a sync starting or ending
  * refetches its status.
  */
 function LiveOrders(props: OrdersPageProps) {
   const registry = useContext(RegistryContext);
-  useState(() =>
-    nameOrdersSocket(registry, { key: props.shop, merchantToken: props.merchantToken }),
-  );
   useMemo(
     () => seedOrders(registry, { cursor: props.cursor, page: props.page }),
     // Once per page shown, so not on `page`, which changes with its cursor: a refresh of the
     // node this render reads would notify it mid-render.
     [registry, props.cursor],
   );
-  useAtomMount(noticesAtom);
   const orders = useAtomValue(merchantOrdersAtom(props.cursor));
   const status = AsyncResult.value(useAtomValue(merchantSyncStatusAtom));
-  const uninstalled = useAtomValue(uninstalledAtom);
-  const expired = useAtomValue(merchantExpiredAtom);
-  const lost = useAtomValue(lostAtom);
   const syncing = AsyncResult.isWaiting(useAtomValue(syncOpenOrdersAtom));
   const syncOpenOrders = useAtomSet(syncOpenOrdersAtom, { mode: "promiseExit" });
 
@@ -315,9 +301,6 @@ function LiveOrders(props: OrdersPageProps) {
   };
 
   const banners = [
-    ...(uninstalled ? [UNINSTALLED] : []),
-    ...(expired ? [EXPIRED] : []),
-    ...(lost ? ["Reconnecting…"] : []),
     ...(AsyncResult.isFailure(orders) ? ["Couldn't load orders."] : []),
     ...Option.toArray(Option.flatMapNullishOr(status, ({ lastError }) => lastError)),
   ];
@@ -336,11 +319,9 @@ function LiveOrders(props: OrdersPageProps) {
 
 /** {@link OrdersPage}'s props: `cursor` is the one `page` starts after, null on page one. */
 interface OrdersPageProps {
-  readonly shop: ShopKey;
   readonly cursor: OrdersListInput["cursor"];
   readonly page: OrdersListPage;
   readonly pageLink: OrdersPageLink;
-  readonly merchantToken: Effect.Effect<string>;
 }
 
 /**
