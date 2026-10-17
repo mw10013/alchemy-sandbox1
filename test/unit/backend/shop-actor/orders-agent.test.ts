@@ -2,7 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
-import { ORDERS_KEY } from "../../../../src/contract/shop-actor.ts";
+import { ORDERS_KEY, SYNC_KEY } from "../../../../src/contract/shop-actor.ts";
 import { orderSyncQuery, orderSyncVariables } from "../../../../src/backend/order-sync.ts";
 import { makeOrdersAgent } from "../../../../src/backend/shop-actor/orders-agent.ts";
 import { ReauthorizationRequired } from "../../../../src/backend/shopify.ts";
@@ -14,9 +14,15 @@ import {
   ActorSqliteTest,
   type AdminCall,
   QuietLogs,
-  testOrderRepository,
+  testOrdersSyncWorkflows,
   testShopifyAdmin,
 } from "../layers.ts";
+import { syncTransaction } from "../../../../src/backend/shop-actor.ts";
+import {
+  makeOrderRepository,
+  type OrderRepository,
+} from "../../../../src/backend/shop-actor/orders.ts";
+import type { OrdersSyncParams } from "../../../../src/backend/orders-sync-workflow.ts";
 
 /**
  * The actor's one-order fetch over a fresh in-memory SQLite migrated by the actor's own schema
@@ -37,26 +43,33 @@ const withAgent = <A, E>(
     agent: ReturnType<typeof makeOrdersAgent<never>>,
     recorded: {
       readonly admin: Array<AdminCall>;
+      readonly created: Array<{ readonly id: string; readonly params: OrdersSyncParams }>;
       readonly notices: Array<ReadonlyArray<string>>;
-      readonly repository: Effect.Success<typeof testOrderRepository>;
+      readonly repository: OrderRepository;
       readonly sql: SqlClient.SqlClient;
     },
   ) => Effect.Effect<A, E>,
+  create: Effect.Effect<void> = Effect.void,
 ) => {
   const admin: Array<AdminCall> = [];
+  const created: Array<{ readonly id: string; readonly params: OrdersSyncParams }> = [];
   const notices: Array<ReadonlyArray<string>> = [];
   return Effect.gen(function* () {
-    const repository = yield* testOrderRepository;
+    const sql = yield* SqlClient.SqlClient;
+    const transaction = syncTransaction(sql);
+    const repository = makeOrderRepository(sql, transaction);
     const agent = makeOrdersAgent({
       repository,
+      transaction,
       admin: yield* ShopifyAdmin,
+      workflows: testOrdersSyncWorkflows(created, create),
       notify: (invalidated) =>
         Effect.sync(() => {
           notices.push(invalidated);
         }),
       shop: SEED_SHOP,
     });
-    return yield* body(agent, { admin, notices, repository, sql: yield* SqlClient.SqlClient });
+    return yield* body(agent, { admin, created, notices, repository, sql });
   }).pipe(
     Effect.provide(testShopifyAdmin(replies, admin)),
     Effect.provide(ActorSqliteTest),
@@ -232,6 +245,62 @@ describe("OrdersAgent.syncOrder", () => {
         assert.strictEqual(error._tag, "ReauthorizationRequired");
         assert.isTrue(Option.isNone(yield* repository.getOrder(ORDER_GID)));
       }),
+    ),
+  );
+});
+
+describe("OrdersAgent.syncOpenOrders", () => {
+  it.effect("records the sync on the actor before it creates the instance of the same id", () =>
+    withAgent([], (agent, { created, notices, repository }) =>
+      Effect.gen(function* () {
+        assert.deepStrictEqual(yield* agent.syncOpenOrders(), { _tag: "Started" });
+        const tracking = yield* repository.getSyncTracking();
+        assert.isNotNull(tracking.workflowId);
+        assert.deepStrictEqual(created, [
+          { id: tracking.workflowId ?? "", params: { shop: SEED_SHOP } },
+        ]);
+        assert.deepStrictEqual(notices, [[SYNC_KEY]]);
+      }),
+    ),
+  );
+
+  it.effect("a InFlight answer creates no instance", () =>
+    withAgent([], (agent, { created, notices }) =>
+      Effect.gen(function* () {
+        yield* agent.syncOpenOrders();
+        assert.deepStrictEqual(yield* agent.syncOpenOrders(), { _tag: "InFlight" });
+        assert.lengthOf(created, 1);
+        assert.deepStrictEqual(notices, [[SYNC_KEY]]);
+      }),
+    ),
+  );
+
+  it.effect("a Refused answer creates no instance", () =>
+    withAgent([], (agent, { created, sql }) =>
+      Effect.gen(function* () {
+        yield* fillCeiling(sql);
+        assert.deepStrictEqual(yield* agent.syncOpenOrders(), { _tag: "Refused" });
+        assert.lengthOf(created, 0);
+        assert.isNotNull(yield* ordersLimitedAt(sql));
+      }),
+    ),
+  );
+
+  it.effect("a create that fails ends the recorded sync with its message, and fails on", () =>
+    withAgent(
+      [],
+      (agent, { created, notices, repository }) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(agent.syncOpenOrders());
+          assert.strictEqual(error._tag, "ShopifyUnavailable");
+          assert.lengthOf(created, 1);
+          assert.deepStrictEqual(yield* repository.getSyncStatus(0), {
+            inFlight: false,
+            lastError: "workflow.create failed",
+          });
+          assert.deepStrictEqual(notices, [[SYNC_KEY], [SYNC_KEY]]);
+        }),
+      Effect.die(new Error("workflow.create failed")),
     ),
   );
 });

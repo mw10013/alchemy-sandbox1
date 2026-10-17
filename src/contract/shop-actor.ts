@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import { Rpc, RpcGroup, RpcMiddleware } from "effect/rpc";
 import {
   OrderDetail,
+  OrdersSyncResult,
   OrdersSyncStatus,
   SyncOrderInput,
   SyncOrderResult,
@@ -194,6 +195,7 @@ export const MerchantRpcs = RpcGroup.make(
   Rpc.make("MerchantWhoAmI", { success: ConnectionCaller }),
   Rpc.make("MerchantListOrders", { payload: OrdersListInput, success: OrdersListPage }),
   Rpc.make("MerchantSyncStatus", { success: OrdersSyncStatus }),
+  Rpc.make("MerchantSyncOpenOrders", { success: OrdersSyncResult, error: OrdersSyncFailure }),
   Rpc.make("MerchantSyncOrder", {
     payload: SyncOrderInput,
     success: SyncOrderResult,

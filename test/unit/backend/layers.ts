@@ -12,10 +12,8 @@ import * as Schema from "effect/Schema";
 import type { Member } from "../../../src/contract/members.ts";
 import type { ShopKey } from "../../../src/contract/shop.ts";
 import { ShopifyAdmin, type ShopifyAdminError } from "../../../src/backend/shopify-admin.ts";
-import {
-  type OrdersSyncParams,
-  OrdersSyncWorkflows,
-} from "../../../src/backend/orders-sync-workflow.ts";
+import type { OrdersSyncParams } from "../../../src/backend/orders-sync-workflow.ts";
+import type { OrdersSyncWorkflows } from "../../../src/backend/shop-actor/orders-sync-workflows.ts";
 import { settleDestroy, ShopActors } from "../../../src/backend/shop-actors.ts";
 import { migrations, syncTransaction } from "../../../src/backend/shop-actor.ts";
 import { makeOrderRepository } from "../../../src/backend/shop-actor/orders.ts";
@@ -24,7 +22,6 @@ import { Auth } from "../../../src/backend/auth.ts";
 import { MagicLinkDelivery } from "../../../src/backend/magic-link-delivery.ts";
 import { Mailer } from "../../../src/backend/mailer.ts";
 import { Members } from "../../../src/backend/members.ts";
-import { Orders } from "../../../src/backend/orders.ts";
 import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
 import { SHOPIFY_API_KEY, SHOPIFY_API_SECRET_FAKE, Shopify } from "../../../src/backend/shopify.ts";
 
@@ -168,7 +165,8 @@ export const testOrderActors = (calls: OrderActorCalls, stub: Effect.Effect<void
       const base = yield* ShopActors;
       const sessions = yield* ShopSessions;
       const admin = yield* ShopifyAdmin;
-      const repository = yield* testOrderRepository;
+      const sql = yield* SqlClient.SqlClient;
+      const repository = makeOrderRepository(sql, syncTransaction(sql));
       const notify = (invalidated: ReadonlyArray<string>) =>
         Effect.sync(() => {
           calls.notices.push(invalidated);
@@ -178,7 +176,14 @@ export const testOrderActors = (calls: OrderActorCalls, stub: Effect.Effect<void
         syncOrderWebhook: (key, input) =>
           Effect.suspend(() => {
             calls.webhooks.push({ key, ...input });
-            return makeOrdersAgent({ repository, admin, notify, shop: key })
+            return makeOrdersAgent({
+              repository,
+              transaction: syncTransaction(sql),
+              admin,
+              workflows: testOrdersSyncWorkflows(),
+              notify,
+              shop: key,
+            })
               .syncOrderWebhook(input)
               .pipe(Effect.orDie);
           }),
@@ -193,30 +198,16 @@ export const testOrderActors = (calls: OrderActorCalls, stub: Effect.Effect<void
   ).pipe(Layer.provide(ShopActors.layerTest([])));
 
 /**
- * {@link OrdersSyncWorkflows} recording each instance it is asked to create in `created`, then
- * answering `create`'s outcome (by default, created).
+ * The actor's {@link OrdersSyncWorkflows} handle, recording each instance it is asked to create
+ * in `created`, then answering `create`'s outcome (by default, created).
  */
 export const testOrdersSyncWorkflows = (
   created: Array<{ readonly id: string; readonly params: OrdersSyncParams }> = [],
   create: Effect.Effect<void> = Effect.void,
-) =>
-  Layer.succeed(OrdersSyncWorkflows, {
-    create: (options) =>
-      Effect.suspend(() => {
-        created.push(options);
-        return create;
-      }),
-  });
-
-/**
- * {@link Orders} for a test that reaches Sync open orders and nothing else: `beginOpenOrdersSync`
- * answers `InFlight`, recording the shop it was asked for in `calls`.
- */
-export const testOrders = (calls: Array<{ readonly shop: ShopKey }> = []) =>
-  Layer.succeed(Orders, {
-    beginOpenOrdersSync: (shop) =>
-      Effect.sync(() => {
-        calls.push({ shop });
-        return { _tag: "InFlight" } as const;
-      }),
-  });
+): OrdersSyncWorkflows => ({
+  create: (options) =>
+    Effect.suspend(() => {
+      created.push(options);
+      return create;
+    }),
+});

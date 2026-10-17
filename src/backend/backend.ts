@@ -28,9 +28,8 @@ import { Auth } from "./auth.ts";
 import { DevHandlers } from "./dev.ts";
 import { Fixtures } from "./fixture.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
-import { Orders } from "./orders.ts";
 import { OrdersBulkRepository } from "./orders-bulk.ts";
-import { OrdersSyncWorkflows } from "./orders-sync-workflow.ts";
+import { OrdersSyncWorkflow } from "./orders-sync-workflow.ts";
 import { Mailer } from "./mailer.ts";
 import { Members } from "./members.ts";
 import { AuthDb } from "./resources.ts";
@@ -171,8 +170,9 @@ export const backendProps = {
  * (see {@link refuseUpgrade}). Anything but an upgrade there is 426: there is no HTTP RPC into
  * the actor. A path under `/api/actor/` that names no key is 404.
  *
- * It also hosts the `OrdersSyncWorkflow`, which {@link provideBackend} binds and exports by
- * building {@link OrdersSyncWorkflows}' layer for {@link Orders}.
+ * It also hosts {@link OrdersSyncWorkflow}: yielding the class here is what binds the Workflow
+ * to the Backend's script and exports it. Nothing here creates an instance; the shop's actor
+ * does, over that binding, since it cannot yield the class itself (`makeOrdersSyncWorkflows`).
  *
  * {@link DevRpcs} on `/api/dev` exists only with the `DEV_ENDPOINT` binding; see there.
  */
@@ -180,6 +180,7 @@ export const backendBody = Effect.gen(function* () {
   // Built once per isolate. Yielding the bindings here attaches them to the Worker.
   const { auth } = yield* Auth;
   const actors = yield* ShopActor;
+  yield* OrdersSyncWorkflow;
   const shopAccess = yield* ShopAccess;
   const api = yield* BackendApi;
   const webhooks = yield* Webhooks;
@@ -254,8 +255,6 @@ export const provideBackend = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.provide(BackendApi.layer),
     Effect.provide(Webhooks.layer),
-    Effect.provide(Orders.layer),
-    Effect.provide(OrdersSyncWorkflows.layer),
     Effect.provide(ShopAccess.layer),
     Effect.provide(Auth.layer),
     Effect.provide(ShopActors.layer),

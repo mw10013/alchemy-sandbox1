@@ -19,7 +19,7 @@ import { SEED_SHOP } from "../../seed-shops.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
 import { MagicLinkDelivery } from "../../../src/backend/magic-link-delivery.ts";
-import { QuietLogs, TEST_ORIGIN, testAuth, testOrders, testShopify } from "./layers.ts";
+import { QuietLogs, TEST_ORIGIN, testAuth, testShopify } from "./layers.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopAccess } from "../../../src/backend/shop-access.ts";
@@ -66,7 +66,6 @@ const TestBackend = ({
         delivery,
         extra: Layer.mergeAll(
           SignInLimiter.layerTest(allow),
-          testOrders(),
           Layer.succeed(ShopAccess, { resolve: () => Effect.die("ShopAccess needs D1") }),
           testShopify(),
         ),

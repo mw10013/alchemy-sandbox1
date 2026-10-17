@@ -4,6 +4,7 @@ import * as Test from "alchemy/Test/Vitest";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import { Email } from "../../src/contract/auth.ts";
 import { ShopKey } from "../../src/contract/shop.ts";
 import type { BulkOperation, OrdersSyncStatus } from "../../src/domain/orders.ts";
 import { OTHER_SHOP, SEED_SHOP } from "../seed-shops.ts";
@@ -13,9 +14,10 @@ import type { ShopifyFakeReply } from "./rpcs.ts";
 import Stack from "./stack.ts";
 
 /**
- * Sync open orders end to end on the test stack: the Backend's `beginOpenOrdersSync`, the shop
- * actor's tracking record, the `OrdersSyncWorkflow` running locally in the Backend's script
- * against the fake Shopify, and the actor streaming the bulk file the test Backend serves. A
+ * Sync open orders end to end on the test stack: `MerchantSyncOpenOrders` on a forged merchant
+ * socket, the shop actor's tracking record and the `OrdersSyncWorkflow` instance it creates,
+ * running locally in the Backend's script against the fake Shopify, and the actor streaming the
+ * bulk file the test Backend serves. The stale-record rule is a unit test over the repository. A
  * real Workflow sleeps its real poll interval, so a case with a poll takes five seconds or more.
  */
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -98,8 +100,12 @@ const shopifyRoutes = (backendUrl: string) =>
     Effect.map((calls) => calls.map(({ route }) => route)),
   );
 
+/** Sync open orders: `MerchantSyncOpenOrders` on a merchant socket, its answer's tag. */
 const syncOpenOrders = (backendUrl: string, shop: ShopKey) =>
-  integ(backendUrl, (c) => c.SyncOpenOrders({ shop })).pipe(Effect.map(({ _tag }) => _tag));
+  Effect.gen(function* () {
+    const { client } = yield* openAs(backendUrl, shop, { role: "merchant" });
+    return (yield* client.MerchantSyncOpenOrders())._tag;
+  }).pipe(Effect.scoped);
 
 /** `MerchantSyncStatus` on a merchant socket, as the orders index reads it. */
 const syncStatus = (backendUrl: string, shop: ShopKey) =>
@@ -135,14 +141,41 @@ const timed = <A, E, R>(label: string, effect: Effect.Effect<A, E, R>) =>
     Effect.map(([, value]) => value),
   );
 
+/**
+ * The gate refuses a socket to a shop with no `ShopSession`, so this is the row deleted while a
+ * socket stays open: the forged-caller route opens one anyway.
+ */
 test(
-  "a shop with no ShopSession is refused before its actor is touched",
+  "a shop whose ShopSession is gone is refused OfflineSessionMissing, with nothing recorded and no instance",
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
-    const refused = yield* integ(backendUrl, (c) =>
-      c.SyncOpenOrders({ shop: UNINSTALLED_SHOP }),
-    ).pipe(Effect.flip);
-    assert.strictEqual(refused._tag, "ShopNotInstalled");
+    yield* script(backendUrl, []);
+    const refused = yield* Effect.flip(syncOpenOrders(backendUrl, UNINSTALLED_SHOP));
+    assert.strictEqual(refused._tag, "OfflineSessionMissing");
+    assert.isFalse((yield* syncStatus(backendUrl, UNINSTALLED_SHOP)).inFlight);
+    assert.deepStrictEqual(yield* shopifyRoutes(backendUrl), []);
+  }),
+);
+
+test(
+  "a member socket is refused MerchantSyncOpenOrders",
+  Effect.gen(function* () {
+    const { backendUrl } = yield* stack;
+    yield* script(backendUrl, []);
+    yield* Effect.gen(function* () {
+      const member = yield* openAs(backendUrl, SEED_SHOP, {
+        role: "member",
+        memberId: "mem-sync",
+        memberEmail: Schema.decodeUnknownSync(Email)("sync@m.com"),
+        teamIds: [],
+        userId: "user-sync",
+        sessionId: "session-sync",
+        sessionExpiresAt: Date.now() + 600_000,
+      });
+      const error = yield* member.client.MerchantSyncOpenOrders().pipe(Effect.flip);
+      assert.strictEqual(error._tag, "Forbidden");
+    }).pipe(Effect.scoped);
+    assert.deepStrictEqual(yield* shopifyRoutes(backendUrl), []);
   }),
 );
 
@@ -228,26 +261,6 @@ test(
       assert.deepStrictEqual(yield* shopifyRoutes(backendUrl), ["graphql", "graphql"]);
     }),
   ),
-  SYNC_TIMEOUT,
-);
-
-test(
-  "a tracking row older than ten minutes is deleted on the next press",
-  Effect.gen(function* () {
-    const { backendUrl } = yield* stack;
-    const hourAgo = Date.now() - 3_600_000;
-    const tracked = yield* integ(backendUrl, (c) =>
-      c.TrackSync({ shop: OTHER_SHOP, workflowId: "wf_never_existed", startedAt: hourAgo }),
-    );
-    assert.strictEqual(tracked._tag, "Started");
-    assert.isFalse((yield* syncStatus(backendUrl, OTHER_SHOP)).inFlight);
-    yield* script(backendUrl, [submitted(anOperation({ status: "COMPLETED" }))]);
-    assert.strictEqual(yield* syncOpenOrders(backendUrl, OTHER_SHOP), "Started");
-    assert.deepStrictEqual(yield* settled(backendUrl, OTHER_SHOP), {
-      inFlight: false,
-      lastError: null,
-    });
-  }),
   SYNC_TIMEOUT,
 );
 

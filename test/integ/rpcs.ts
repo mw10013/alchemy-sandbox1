@@ -14,16 +14,11 @@ import { Auth } from "../../src/backend/auth.ts";
 import { MagicLinkDelivery } from "../../src/backend/magic-link-delivery.ts";
 import { Members } from "../../src/backend/members.ts";
 import { InvalidSessionToken, ShopKey } from "../../src/contract/shop.ts";
-import {
-  ListOrdersRequest,
-  SyncOpenOrdersRequest,
-  SyncOrderRequest,
-} from "../../src/contract/orders.ts";
+import { ListOrdersRequest, SyncOrderRequest } from "../../src/contract/orders.ts";
 import { BackendApi } from "../../src/backend/api.ts";
 import { OrdersListInput, OrdersListPage } from "../../src/contract/shop-actor.ts";
-import { OrderDetail, OrdersSyncResult, SyncOrderResult } from "../../src/domain/orders.ts";
+import { OrderDetail, SyncOrderResult } from "../../src/domain/orders.ts";
 import { ShopNotInstalled } from "../../src/contract/fixture.ts";
-import { Orders } from "../../src/backend/orders.ts";
 import { ShopActors } from "../../src/backend/shop-actors.ts";
 import {
   OfflineSessionMissing,
@@ -67,14 +62,11 @@ export type ShopifyFakeCall = typeof ShopifyFakeCall.Type;
  * - `GetOrder` and `ListOrders` are the {@link ShopActors} methods of the same names on `shop`'s
  *   actor, as the Backend calls them. A test arranges an order the way production gets one: a
  *   signed `orders/*` webhook with the order scripted into {@link ShopifyFake}.
- * - `SyncOpenOrders` is `Orders.beginOpenOrdersSync`, the Backend's Sync open orders, because
- *   integ has no merchant page to press it on.
- * - `TrackSync` and `SyncFailed` are the {@link ShopActors} methods `beginSync` and `syncFailed`
- *   on `shop`'s actor: a start recorded at a `startedAt` the test picks (an old one is a dead
- *   sync's record) with no Workflow behind it, and a sync's end as a late caller reports it.
- * - `ApiListOrders`, `ApiSyncOpenOrders` and `ApiSyncOrder` are the `BackendApi` methods the
- *   orders screen's server functions call, with an empty request, because integ has no Website to
- *   call them over the binding.
+ * - `SyncFailed` is the {@link ShopActors} method `onOrdersSyncError` on `shop`'s actor: a sync's
+ *   end as a late caller reports it.
+ * - `ApiListOrders` and `ApiSyncOrder` are the `BackendApi` methods the orders screen's server
+ *   functions call, with an empty request, because integ has no Website to call them over the
+ *   binding.
  * - `ShopIdentityNames` answers the emails of `shop`'s `Member` rows and the names of its `Team`
  *   rows, read from D1 alone ({@link Members}' `identityNames`), so it never reaches the actor.
  */
@@ -99,15 +91,6 @@ export const IntegRpcs = RpcGroup.make(
     payload: { shop: ShopKey, ...OrdersListInput.fields },
     success: OrdersListPage,
   }),
-  Rpc.make("SyncOpenOrders", {
-    payload: { shop: ShopKey },
-    success: OrdersSyncResult,
-    error: ShopNotInstalled,
-  }),
-  Rpc.make("TrackSync", {
-    payload: { shop: ShopKey, workflowId: Schema.String, startedAt: Schema.Number },
-    success: OrdersSyncResult,
-  }),
   Rpc.make("SyncFailed", {
     payload: { shop: ShopKey, workflowId: Schema.String, message: Schema.String },
     success: Schema.Struct({}),
@@ -115,11 +98,6 @@ export const IntegRpcs = RpcGroup.make(
   Rpc.make("ApiListOrders", {
     payload: ListOrdersRequest,
     success: OrdersListPage,
-    error: Schema.Union([InvalidSessionToken, ShopNotInstalled]),
-  }),
-  Rpc.make("ApiSyncOpenOrders", {
-    payload: SyncOpenOrdersRequest,
-    success: OrdersSyncResult,
     error: Schema.Union([InvalidSessionToken, ShopNotInstalled]),
   }),
   Rpc.make("ApiSyncOrder", {
@@ -146,7 +124,6 @@ export const IntegHandlers = IntegRpcs.toLayer(
     const shopifyFake = yield* ShopifyFake;
     const actors = yield* ShopActors;
     const members = yield* Members;
-    const orders = yield* Orders;
     const api = yield* BackendApi;
     const noRequest = { cookie: undefined, ip: undefined };
 
@@ -170,12 +147,8 @@ export const IntegHandlers = IntegRpcs.toLayer(
       ShopifyCalls: () => shopifyFake.takeCalls,
       GetOrder: ({ shop, orderId }) => actors.getOrder(shop, orderId),
       ListOrders: ({ shop, ...input }) => actors.listOrders(shop, input),
-      SyncOpenOrders: ({ shop }) => orders.beginOpenOrdersSync(shop),
-      TrackSync: ({ shop, workflowId, startedAt }) =>
-        actors.beginSync(shop, { workflowId, now: startedAt }),
-      SyncFailed: ({ shop, ...input }) => actors.syncFailed(shop, input).pipe(Effect.as({})),
+      SyncFailed: ({ shop, ...input }) => actors.onOrdersSyncError(shop, input).pipe(Effect.as({})),
       ApiListOrders: (payload) => api.listOrders(noRequest, payload),
-      ApiSyncOpenOrders: (payload) => api.syncOpenOrders(noRequest, payload),
       ApiSyncOrder: (payload) => api.syncOrder(noRequest, payload),
       ShopIdentityNames: ({ shop }) => members.identityNames(shop),
     });

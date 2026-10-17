@@ -42,3 +42,9 @@ export const SYNC_STALE_MS = 10 * 60 * 1000;
  * (`bulkOrdersQueryText`).
  */
 export const GAVE_UP_MESSAGE = "Shopify did not finish the export in time. Try again.";
+
+/**
+ * The Workflow's logical name, which is also the name of its binding on the Backend's script:
+ * the shop's actor finds the binding in the environment by it (`makeOrdersSyncWorkflows`).
+ */
+export const ORDERS_SYNC_WORKFLOW = "OrdersSyncWorkflow";

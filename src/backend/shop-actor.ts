@@ -23,6 +23,7 @@ import type * as SqlError from "effect/sql/SqlError";
 import { Forbidden } from "../contract/auth.ts";
 import { ShopKey } from "../contract/shop.ts";
 import {
+  OfflineSessionMissing,
   OrdersSyncFailure,
   ShopifyUnavailable as ShopifyUnreachable,
 } from "../contract/shopify.ts";
@@ -49,7 +50,6 @@ import {
   type ShopSnapshot,
   SYNC_KEY,
 } from "../contract/shop-actor.ts";
-import type { OrdersSyncResult } from "../domain/orders.ts";
 import * as ActorSocket from "./actor-socket.ts";
 import type { ActorFixtureAdded, ActorFixtureRows } from "./fixture.ts";
 import {
@@ -58,6 +58,8 @@ import {
   type Transaction,
 } from "./shop-actor/orders.ts";
 import { makeOrdersAgent } from "./shop-actor/orders-agent.ts";
+import { makeOrdersSyncWorkflows } from "./shop-actor/orders-sync-workflows.ts";
+import { ShopSessions } from "./shop-sessions.ts";
 import type { EnsureShopSessionError } from "./shopify.ts";
 import { runOrdersStream } from "./shop-actor/orders-stream.ts";
 import { ShopifyAdmin } from "./shopify-admin.ts";
@@ -403,6 +405,8 @@ const tagsOf = (caller: ConnectionCaller) =>
 const makeShopActor = Effect.gen(function* () {
   const state = yield* Cloudflare.DurableObjectState;
   const admin = yield* ShopifyAdmin;
+  const shopSessions = yield* ShopSessions;
+  const workflows = makeOrdersSyncWorkflows(yield* Cloudflare.WorkerEnvironment);
   return Effect.gen(function* () {
     // Every actor is reached by name (`getByName`), so a nameless id is a broken invariant.
     const shop = yield* Effect.fromOption(decodeShopKey(state.id.name)).pipe(Effect.orDie);
@@ -444,7 +448,26 @@ const makeShopActor = Effect.gen(function* () {
         yield* socket.send(frame).pipe(Effect.catchDefect(() => Effect.void));
     });
 
-    const ordersAgent = makeOrdersAgent({ repository: orders, admin, notify, shop });
+    const ordersAgent = makeOrdersAgent({
+      repository: orders,
+      transaction,
+      admin,
+      workflows,
+      notify,
+      shop,
+    });
+
+    /**
+     * Sync open orders, for `MerchantSyncOpenOrders`: the shop's `ShopSession` read first, so a
+     * row deleted while the socket stayed open is {@link OfflineSessionMissing} with nothing
+     * recorded and no instance created, then `OrdersAgent.syncOpenOrders`.
+     */
+    const syncOpenOrdersFor = (operation: string) =>
+      Effect.gen(function* () {
+        if (Option.isNone(yield* shopSessions.find(shop)))
+          return yield* new OfflineSessionMissing({ shop });
+        return yield* ordersAgent.syncOpenOrders();
+      }).pipe(Effect.catch(syncFailure(operation)));
 
     /**
      * A sync press's failure as its caller is told it ({@link OrdersSyncFailure}): a session
@@ -513,6 +536,7 @@ const makeShopActor = Effect.gen(function* () {
       MerchantListOrders: (input) => orders.listOrders(input).pipe(Effect.orDie),
       MerchantSyncStatus: () =>
         Clock.currentTimeMillis.pipe(Effect.flatMap(orders.getSyncStatus), Effect.orDie),
+      MerchantSyncOpenOrders: () => syncOpenOrdersFor("ShopActor.MerchantSyncOpenOrders"),
       MerchantSyncOrder: (input) =>
         ordersAgent.syncOrder(input).pipe(Effect.catch(syncFailure("ShopActor.MerchantSyncOrder"))),
     });
@@ -754,6 +778,19 @@ const makeShopActor = Effect.gen(function* () {
       );
     }, Effect.provide(runtime));
 
+    /**
+     * Sync open orders for the Backend's `syncOpenOrders` until the orders screen calls
+     * `MerchantSyncOpenOrders` itself: the same call, its failure answered as data as `syncOrder`
+     * answers it.
+     */
+    const syncOpenOrders = Effect.fn("ShopActor.syncOpenOrders")(function* () {
+      return yield* syncOpenOrdersFor("ShopActor.syncOpenOrders").pipe(
+        Effect.catch((failure) =>
+          Effect.succeed({ _tag: "Failed" as const, failure: encodeSyncFailure(failure) }),
+        ),
+      );
+    }, Effect.provide(runtime));
+
     /** One stored order with its items, or null. */
     const getOrder = Effect.fn("ShopActor.getOrder")(
       function* ({ orderId }: { readonly orderId: string }) {
@@ -768,51 +805,6 @@ const makeShopActor = Effect.gen(function* () {
       function* (input: OrdersListInput) {
         const page: OrdersListPage = yield* orders.listOrders(input);
         return page;
-      },
-      Effect.orDie,
-      Effect.provide(runtime),
-    );
-
-    /**
-     * Legacy's `syncOpenOrders`, the actor's half: the Backend calls it before it creates the
-     * Workflow instance named `workflowId`, and creates it only on `Started`. The rules are
-     * `beginSync` on the repository; this logs them and notifies {@link SYNC_KEY} when a sync
-     * starts. `now` is the Backend's clock, so the record and the rule read one instant.
-     */
-    const beginSync = Effect.fn("ShopActor.beginSync")(
-      function* ({ workflowId, now }: { readonly workflowId: string; readonly now: number }) {
-        const start = yield* orders.beginSync({ workflowId, now });
-        if (start._tag !== "InFlight" && start.stale !== null)
-          yield* Effect.logWarning(
-            `ShopActor.beginSync: shop=${shop} workflowId=${String(start.stale.workflowId)}: tracking record stale, cleared`,
-          ).pipe(Effect.annotateLogs({ shop, workflowId: start.stale.workflowId }));
-        const result: OrdersSyncResult = yield* Match.value(start).pipe(
-          Match.tagsExhaustive({
-            InFlight: () =>
-              Effect.logInfo(`ShopActor.beginSync: shop=${shop} status=in-flight`).pipe(
-                Effect.annotateLogs({ shop, status: "in-flight" }),
-                Effect.as({ _tag: "InFlight" } as const),
-              ),
-            Refused: ({ openOrders }) => {
-              const limit = ShopLimits.maxOpenOrders;
-              return Effect.logError(
-                `ShopActor.beginSync: shop=${shop} status=order-ceiling openOrders=${String(openOrders)} limit=${String(limit)}`,
-              ).pipe(
-                Effect.annotateLogs({ shop, status: "order-ceiling", openOrders, limit }),
-                Effect.as({ _tag: "Refused" } as const),
-              );
-            },
-            Started: () =>
-              Effect.logInfo(
-                `ShopActor.beginSync: shop=${shop} status=started workflowId=${workflowId}`,
-              ).pipe(
-                Effect.annotateLogs({ shop, status: "started", workflowId }),
-                Effect.andThen(notify([SYNC_KEY])),
-                Effect.as({ _tag: "Started" } as const),
-              ),
-          }),
-        );
-        return result;
       },
       Effect.orDie,
       Effect.provide(runtime),
@@ -835,7 +827,7 @@ const makeShopActor = Effect.gen(function* () {
      * under rule 7, a full second pass, and rare. The billing seam: the usage flush after the
      * stream goes here.
      */
-    const streamOrders = Effect.fn("ShopActor.streamOrders")(
+    const onOrdersStream = Effect.fn("ShopActor.onOrdersStream")(
       function* ({ workflowId, url }: { readonly workflowId: string; readonly url: string }) {
         const counts = yield* runOrdersStream({ repository: orders, shop, url }).pipe(
           Effect.provideService(HttpClient.HttpClient, http),
@@ -845,7 +837,7 @@ const makeShopActor = Effect.gen(function* () {
         );
         if (counts.ordersRefused > 0)
           yield* Effect.logError(
-            `ShopActor.streamOrders: shop=${shop} status=order-ceiling ordersRefused=${String(counts.ordersRefused)} limit=${String(ShopLimits.maxOpenOrders)}`,
+            `ShopActor.onOrdersStream: shop=${shop} status=order-ceiling ordersRefused=${String(counts.ordersRefused)} limit=${String(ShopLimits.maxOpenOrders)}`,
           ).pipe(
             Effect.annotateLogs({
               shop,
@@ -857,7 +849,7 @@ const makeShopActor = Effect.gen(function* () {
         const swept = yield* orders.sweepExpiredOrders({ now: yield* Clock.currentTimeMillis });
         yield* orders.clearSyncTracking({ workflowId });
         yield* Effect.logInfo(
-          `ShopActor.streamOrders: shop=${shop} ordersSeen=${String(counts.ordersSeen)} ordersUpserted=${String(counts.ordersUpserted)} ordersInserted=${String(counts.ordersInserted)} ordersRefused=${String(counts.ordersRefused)} lineItemsUpserted=${String(counts.lineItemsUpserted)} ordersTruncated=${String(counts.ordersTruncated)} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)}`,
+          `ShopActor.onOrdersStream: shop=${shop} ordersSeen=${String(counts.ordersSeen)} ordersUpserted=${String(counts.ordersUpserted)} ordersInserted=${String(counts.ordersInserted)} ordersRefused=${String(counts.ordersRefused)} lineItemsUpserted=${String(counts.lineItemsUpserted)} ordersTruncated=${String(counts.ordersTruncated)} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)}`,
         ).pipe(
           Effect.annotateLogs({
             shop,
@@ -879,11 +871,11 @@ const makeShopActor = Effect.gen(function* () {
      * touch stored rows: unlike a catalog scan, an empty result means "nothing changed", never
      * "the shop has no orders" (rule 9 on `syncOrder`). Clears the tracking record.
      */
-    const syncEmpty = Effect.fn("ShopActor.syncEmpty")(
+    const onOrdersSyncEmpty = Effect.fn("ShopActor.onOrdersSyncEmpty")(
       function* ({ workflowId }: { readonly workflowId: string }) {
-        yield* Effect.logInfo(`ShopActor.syncEmpty: shop=${shop} workflowId=${workflowId}`).pipe(
-          Effect.annotateLogs({ shop, workflowId }),
-        );
+        yield* Effect.logInfo(
+          `ShopActor.onOrdersSyncEmpty: shop=${shop} workflowId=${workflowId}`,
+        ).pipe(Effect.annotateLogs({ shop, workflowId }));
         if (yield* orders.clearSyncTracking({ workflowId })) yield* notify([SYNC_KEY]);
       },
       Effect.orDie,
@@ -891,14 +883,14 @@ const makeShopActor = Effect.gen(function* () {
     );
 
     /**
-     * A sync that will not finish: the Workflow's error sink, or the Backend when it could not
-     * create the instance. Legacy's `onOrdersSyncError` and `onWorkflowError` in one, since no
+     * A sync that will not finish: the Workflow's error sink. Legacy's `onOrdersSyncError` and
+     * `onWorkflowError` in one, since no
      * platform callback follows here: the record is cleared, which re-enables the button, and
      * `message` becomes the banner unless one is already written (rule 15 on `syncOrder`).
      * Both only when the record is `workflowId`'s: a sync whose stale record a newer press
      * replaced has nothing left to report, and the newer sync owns the banner.
      */
-    const syncFailed = Effect.fn("ShopActor.syncFailed")(
+    const onOrdersSyncError = Effect.fn("ShopActor.onOrdersSyncError")(
       function* ({
         workflowId,
         message,
@@ -914,7 +906,7 @@ const makeShopActor = Effect.gen(function* () {
           }),
         );
         yield* Effect.logError(
-          `ShopActor.syncFailed: shop=${shop} workflowId=${workflowId} tracked=${String(cleared)}: ${message}`,
+          `ShopActor.onOrdersSyncError: shop=${shop} workflowId=${workflowId} tracked=${String(cleared)}: ${message}`,
         ).pipe(Effect.annotateLogs({ shop, workflowId, tracked: cleared, message }));
         if (cleared) yield* notify([SYNC_KEY]);
       },
@@ -986,12 +978,12 @@ const makeShopActor = Effect.gen(function* () {
       removeOrder,
       syncOrderWebhook,
       syncOrder,
+      syncOpenOrders,
       getOrder,
       listOrders,
-      beginSync,
-      streamOrders,
-      syncEmpty,
-      syncFailed,
+      onOrdersStream,
+      onOrdersSyncEmpty,
+      onOrdersSyncError,
       destroy,
     };
   });
@@ -1005,12 +997,14 @@ const makeShopActor = Effect.gen(function* () {
  * It has two surfaces that never overlap. Browsers call `ShopActorRpcs` with Effect RPC over a
  * hibernating WebSocket; there is no HTTP RPC into the actor. The Backend and the orders sync
  * Workflow call the schemaless methods `revoke`, `snapshot`, `loadFixture`, `addFixture`,
- * `removeOrder`, `syncOrderWebhook`, `syncOrder`, `getOrder`, `listOrders`, `beginSync`,
- * `streamOrders`, `syncEmpty`, `syncFailed` and `destroy` on its stub, which no browser can reach.
+ * `removeOrder`, `syncOrderWebhook`, `syncOrder`, `syncOpenOrders`, `getOrder`, `listOrders`,
+ * `onOrdersStream`, `onOrdersSyncEmpty`, `onOrdersSyncError` and `destroy` on its stub, which no
+ * browser can reach.
  *
  * It owns its shop, as legacy's `ShopAgent` does: it fetches an order from the Admin API itself
  * (`OrdersAgent`, over the Backend's own `ShopifyAdmin`, which refreshes the offline token when a
- * call needs it).
+ * call needs it), reads the shop's `ShopSession`, and creates the orders sync Workflow's instance
+ * itself; the Workflow makes the bulk calls and calls the actor back.
  *
  * Who is on a socket is fixed when the socket is accepted: the Backend's gate resolves the
  * browser and names it in {@link CONNECTION_HEADER} on the upgrade it forwards, and the actor

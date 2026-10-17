@@ -545,12 +545,11 @@ test(
       Effect.gen(function* () {
         const refusals = [
           yield* c.ApiListOrders({ sessionToken: bad, limit: 25, cursor: null }).pipe(Effect.flip),
-          yield* c.ApiSyncOpenOrders({ sessionToken: bad }).pipe(Effect.flip),
           yield* c.ApiSyncOrder({ sessionToken: bad, orderId: orderId(21) }).pipe(Effect.flip),
         ];
         assert.deepStrictEqual(
           refusals.map((error) => error._tag),
-          ["InvalidSessionToken", "InvalidSessionToken", "InvalidSessionToken"],
+          ["InvalidSessionToken", "InvalidSessionToken"],
         );
         const page = yield* c.ApiListOrders({ sessionToken: good, limit: 25, cursor: null });
         assert.deepStrictEqual(
@@ -622,19 +621,20 @@ test(
 
 /**
  * Legacy's `onOrdersStream`, `onOrdersSyncEmpty` and `onOrdersSyncError` were agent methods a
- * socket could name; here they are `streamOrders`, `syncEmpty` and `syncFailed` on the actor's
- * stub, with `beginSync`, so no browser procedure carries them. Legacy's two sync buttons were
- * merchant-only callables; here they are `BackendApi.syncOpenOrders` and `syncOrder`, which take
- * a Shopify session token and nothing else, so a member, whose only credential is a Better Auth
- * session, is refused them as an invalid token, and is `Forbidden` the sync's status on the
- * socket.
+ * socket could name; here they are stub methods of the same names, which only the Backend's
+ * Workflow holds, so no browser procedure carries them. Legacy's two sync buttons were
+ * merchant-only callables; here they are the merchant procedures `MerchantSyncOpenOrders` and
+ * `MerchantSyncOrder`, which a member's socket is `Forbidden`, as it is the sync's status. The
+ * `BackendApi.syncOrder` the screen still calls takes a Shopify session token and nothing else,
+ * so a member, whose only credential is a Better Auth session, is refused it as an invalid
+ * token.
  */
 test(
   "the stream's callbacks are not callable from a socket, and the two sync buttons refuse a member",
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
     const procedures = [...ShopActorRpcs.requests.keys()];
-    for (const name of ["BeginSync", "StreamOrders", "SyncEmpty", "SyncFailed"])
+    for (const name of ["OnOrdersStream", "OnOrdersSyncEmpty", "OnOrdersSyncError", "Webhook"])
       assert.deepStrictEqual(
         procedures.filter((tag) => tag.endsWith(name)),
         [],
@@ -655,20 +655,21 @@ test(
         sessionId,
         sessionExpiresAt: Date.now() + 600_000,
       });
-      const error = yield* member.client.MerchantSyncStatus().pipe(Effect.flip);
-      assert.strictEqual(error._tag, "Forbidden");
+      const errors = [
+        yield* member.client.MerchantSyncStatus().pipe(Effect.flip),
+        yield* member.client.MerchantSyncOpenOrders().pipe(Effect.flip),
+        yield* member.client.MerchantSyncOrder({ orderId: orderId(31) }).pipe(Effect.flip),
+      ];
+      assert.deepStrictEqual(
+        errors.map((error) => error._tag),
+        ["Forbidden", "Forbidden", "Forbidden"],
+      );
     }).pipe(Effect.scoped);
     yield* script([]);
-    const refusals = yield* integ(backendUrl, (c) =>
-      Effect.all([
-        c.ApiSyncOpenOrders({ sessionToken: sessionId }).pipe(Effect.flip),
-        c.ApiSyncOrder({ sessionToken: sessionId, orderId: orderId(31) }).pipe(Effect.flip),
-      ]),
+    const refusal = yield* integ(backendUrl, (c) =>
+      c.ApiSyncOrder({ sessionToken: sessionId, orderId: orderId(31) }).pipe(Effect.flip),
     );
-    assert.deepStrictEqual(
-      refusals.map((error) => error._tag),
-      ["InvalidSessionToken", "InvalidSessionToken"],
-    );
+    assert.strictEqual(refusal._tag, "InvalidSessionToken");
     assert.deepStrictEqual(yield* integ(backendUrl, (c) => c.ShopifyCalls({})), []);
   }),
 );

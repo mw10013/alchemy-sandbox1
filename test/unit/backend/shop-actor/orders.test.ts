@@ -674,6 +674,27 @@ describe("OrderRepository.beginSync", () => {
     ),
   );
 
+  /** Legacy's integration case, pinned here with an explicit `now`: no Workflow is behind it. */
+  it.effect("a tracking row older than ten minutes is deleted on the next press", () =>
+    runInRepository((repository) =>
+      Effect.gen(function* () {
+        const hourAgo = NOW - 60 * MINUTE;
+        yield* repository.trackSync({ workflowId: "wf_never_existed", startedAt: hourAgo });
+        assert.isFalse((yield* repository.getSyncStatus(NOW)).inFlight);
+        const started = yield* repository.beginSync({ workflowId: "wf-next", now: NOW });
+        assert.strictEqual(started._tag, "Started");
+        assert.deepStrictEqual(yield* repository.getSyncTracking(), {
+          workflowId: "wf-next",
+          startedAt: NOW,
+        });
+        assert.deepStrictEqual(yield* repository.getSyncStatus(NOW), {
+          inFlight: true,
+          lastError: null,
+        });
+      }),
+    ),
+  );
+
   it.effect("a start clears the last error and the refusal flag", () =>
     runInRepository((repository, sql) =>
       Effect.gen(function* () {

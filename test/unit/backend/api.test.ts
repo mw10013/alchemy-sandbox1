@@ -21,7 +21,7 @@ import type { ConnectionCaller } from "../../../src/contract/shop-actor.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { BackendApi, SignInLimiter } from "../../../src/backend/api.ts";
 import { mintSessionToken } from "../../shopify-session-token.ts";
-import { QuietLogs, TEST_SHOPIFY_APP, testAuth, testOrders, testShopify } from "./layers.ts";
+import { QuietLogs, TEST_SHOPIFY_APP, testAuth, testShopify } from "./layers.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { SentMail } from "../../../src/backend/mailer.ts";
 import { ShopAccess, ShopAccessDenied } from "../../../src/backend/shop-access.ts";
@@ -68,14 +68,12 @@ const TestBackend = ({
   gate = Effect.succeed(merchant),
   memberRows = members,
   actors = ShopActors.layerTest([], snapshot),
-  orderCalls = [],
 }: {
   delivery?: "inline" | "mailed";
   allow?: boolean;
   gate?: Effect.Effect<ConnectionCaller, ShopAccessDenied>;
   memberRows?: ReadonlyArray<Member>;
   actors?: Layer.Layer<ShopActors>;
-  orderCalls?: Array<{ readonly shop: ShopKey }>;
 } = {}) =>
   BackendApi.layer.pipe(
     Layer.provideMerge(
@@ -85,7 +83,6 @@ const TestBackend = ({
         delivery,
         extra: Layer.mergeAll(
           SignInLimiter.layerTest(allow),
-          testOrders(orderCalls),
           Layer.succeed(ShopAccess, { resolve: () => gate }),
           testShopify([seedSession]),
         ),
@@ -272,7 +269,8 @@ describe("BackendApi orders", () => {
   const page = { orders: [], limit: 25, nextCursor: null };
   /**
    * {@link ShopActors.layerTest} whose `listOrders` answers {@link page}, recording each shop,
-   * and whose `syncOrder` answers `Gone`, recording each shop and order in `synced`.
+   * whose `syncOpenOrders` answers `InFlight` and whose `syncOrder` answers `Gone`, recording
+   * each shop (and order) in `synced`.
    */
   const listingActors = (
     listed: Array<ShopKey>,
@@ -288,6 +286,11 @@ describe("BackendApi orders", () => {
             Effect.sync(() => {
               listed.push(key);
               return page;
+            }),
+          syncOpenOrders: (shop: ShopKey) =>
+            Effect.sync(() => {
+              synced.push({ shop });
+              return { _tag: "InFlight" } as const;
             }),
           syncOrder: (shop: ShopKey, orderId: string) =>
             Effect.sync(() => {
@@ -319,7 +322,7 @@ describe("BackendApi orders", () => {
       );
       assert.deepStrictEqual(listed, []);
       assert.deepStrictEqual(orderCalls, []);
-    }).pipe(Effect.provide(TestBackend({ actors: listingActors(listed, orderCalls), orderCalls })));
+    }).pipe(Effect.provide(TestBackend({ actors: listingActors(listed, orderCalls) })));
   });
 
   it.live("each acts for the shop its token names", () => {
@@ -345,7 +348,7 @@ describe("BackendApi orders", () => {
         { shop: SEED_SHOP },
         { shop: SEED_SHOP, orderId: "gid://shopify/Order/1" },
       ]);
-    }).pipe(Effect.provide(TestBackend({ actors: listingActors(listed, orderCalls), orderCalls })));
+    }).pipe(Effect.provide(TestBackend({ actors: listingActors(listed, orderCalls) })));
   });
 
   it.live(

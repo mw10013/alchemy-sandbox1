@@ -135,6 +135,16 @@ const make = Effect.gen(function* () {
     return yield* Effect.flatMap(decodeSyncFailure(answer.failure).pipe(Effect.orDie), Effect.fail);
   });
 
+  /**
+   * Sync open orders; see `syncOpenOrders` on {@link ShopActor}. Its `Failed` answer is re-raised
+   * as `syncOrder`'s is.
+   */
+  const syncOpenOrders = Effect.fn("ShopActors.syncOpenOrders")(function* (key: ShopKey) {
+    const answer = yield* actors.getByName(key).syncOpenOrders();
+    if (answer._tag !== "Failed") return answer;
+    return yield* Effect.flatMap(decodeSyncFailure(answer.failure).pipe(Effect.orDie), Effect.fail);
+  });
+
   /** One stored order with its items, or null. */
   const getOrder = Effect.fn("ShopActors.getOrder")(function* (key: ShopKey, orderId: string) {
     return yield* actors.getByName(key).getOrder({ orderId });
@@ -148,36 +158,28 @@ const make = Effect.gen(function* () {
     return yield* actors.getByName(key).listOrders(input);
   });
 
-  /** Starts an open-orders sync's record; see `beginSync` on {@link ShopActor}. */
-  const beginSync = Effect.fn("ShopActors.beginSync")(function* (
-    key: ShopKey,
-    input: { readonly workflowId: string; readonly now: number },
-  ) {
-    return yield* actors.getByName(key).beginSync(input);
-  });
-
-  /** Streams a completed export into the shop; see `streamOrders` on {@link ShopActor}. */
-  const streamOrders = Effect.fn("ShopActors.streamOrders")(function* (
+  /** Streams a completed export into the shop; see `onOrdersStream` on {@link ShopActor}. */
+  const onOrdersStream = Effect.fn("ShopActors.onOrdersStream")(function* (
     key: ShopKey,
     input: { readonly workflowId: string; readonly url: string },
   ) {
-    return yield* actors.getByName(key).streamOrders(input);
+    return yield* actors.getByName(key).onOrdersStream(input);
   });
 
-  /** Ends a sync that found nothing; see `syncEmpty` on {@link ShopActor}. */
-  const syncEmpty = Effect.fn("ShopActors.syncEmpty")(function* (
+  /** Ends a sync that found nothing; see `onOrdersSyncEmpty` on {@link ShopActor}. */
+  const onOrdersSyncEmpty = Effect.fn("ShopActors.onOrdersSyncEmpty")(function* (
     key: ShopKey,
     input: { readonly workflowId: string },
   ) {
-    yield* actors.getByName(key).syncEmpty(input);
+    yield* actors.getByName(key).onOrdersSyncEmpty(input);
   });
 
-  /** Ends a sync that failed; see `syncFailed` on {@link ShopActor}. */
-  const syncFailed = Effect.fn("ShopActors.syncFailed")(function* (
+  /** Ends a sync that failed; see `onOrdersSyncError` on {@link ShopActor}. */
+  const onOrdersSyncError = Effect.fn("ShopActors.onOrdersSyncError")(function* (
     key: ShopKey,
     input: { readonly workflowId: string; readonly message: string },
   ) {
-    yield* actors.getByName(key).syncFailed(input);
+    yield* actors.getByName(key).onOrdersSyncError(input);
   });
 
   /** Destroys the shop's actor; see `destroy` on {@link ShopActor} and {@link settleDestroy}. */
@@ -196,10 +198,10 @@ const make = Effect.gen(function* () {
     syncOrder,
     getOrder,
     listOrders,
-    beginSync,
-    streamOrders,
-    syncEmpty,
-    syncFailed,
+    syncOpenOrders,
+    onOrdersStream,
+    onOrdersSyncEmpty,
+    onOrdersSyncError,
   };
 });
 
@@ -260,10 +262,10 @@ export class ShopActors extends Context.Service<ShopActors, Effect.Success<typeo
       syncOrder: () => Effect.die(new Error("ShopActors.layerTest: syncOrder")),
       getOrder: () => Effect.die(new Error("ShopActors.layerTest: getOrder")),
       listOrders: () => Effect.die(new Error("ShopActors.layerTest: listOrders")),
-      beginSync: () => Effect.die(new Error("ShopActors.layerTest: beginSync")),
-      streamOrders: () => Effect.die(new Error("ShopActors.layerTest: streamOrders")),
-      syncEmpty: () => Effect.die(new Error("ShopActors.layerTest: syncEmpty")),
-      syncFailed: () => Effect.die(new Error("ShopActors.layerTest: syncFailed")),
+      syncOpenOrders: () => Effect.die(new Error("ShopActors.layerTest: syncOpenOrders")),
+      onOrdersStream: () => Effect.die(new Error("ShopActors.layerTest: onOrdersStream")),
+      onOrdersSyncEmpty: () => Effect.die(new Error("ShopActors.layerTest: onOrdersSyncEmpty")),
+      onOrdersSyncError: () => Effect.die(new Error("ShopActors.layerTest: onOrdersSyncError")),
       destroy: () => Effect.die(new Error("ShopActors.layerTest: destroy")),
     });
 }

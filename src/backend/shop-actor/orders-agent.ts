@@ -1,10 +1,11 @@
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Match from "effect/Match";
 import type { ShopKey } from "../../contract/shop.ts";
-import type { SyncOrderResult } from "../../domain/orders.ts";
+import type { OrdersSyncResult, SyncOrderResult } from "../../domain/orders.ts";
 import { ShopLimits } from "../../domain/platform.ts";
-import { ORDERS_KEY } from "../../contract/shop-actor.ts";
+import { ORDERS_KEY, SYNC_KEY } from "../../contract/shop-actor.ts";
 import {
   OrderSyncResponse,
   orderSyncQuery,
@@ -12,17 +13,20 @@ import {
   toOrderLineItems,
   toShopOrder,
 } from "../order-sync.ts";
+import { ShopifyUnavailable } from "../shopify.ts";
 import type { ShopifyAdmin } from "../shopify-admin.ts";
-import type { OrderRepository } from "./orders.ts";
+import type { OrderRepository, Transaction } from "./orders.ts";
+import type { OrdersSyncWorkflows } from "./orders-sync-workflows.ts";
 
 /** What one `orders/*` delivery came to in the actor; the delivery is answered 200 for each. */
 export type OrderWebhookStatus = "stale" | "refused" | "gone" | "stored";
 
 /**
  * Legacy's `OrdersAgent` (`agent/Orders.ts`): what the shop's actor does with an order as
- * Shopify's thing, fetching one from the Admin API itself and storing it. Built once per
- * activation over the actor's repository, the Backend's `ShopifyAdmin` (which ensures, and so
- * refreshes, the offline session on every call), the actor's `notify` and its shop.
+ * Shopify's thing, fetching one from the Admin API itself and storing it, and starting the
+ * open-orders sync. Built once per activation over the actor's repository and transaction, the
+ * Backend's `ShopifyAdmin` (which ensures, and so refreshes, the offline session on every call),
+ * the actor's handle on the sync Workflow, its `notify` and its shop.
  *
  * No Admin call runs inside the repository's transaction: the transaction closes the object's
  * input gate, behind which a timer never fires, and the refresh's retries and lease poll are
@@ -32,12 +36,16 @@ export type OrderWebhookStatus = "stale" | "refused" | "gone" | "stored";
  */
 export const makeOrdersAgent = <R>({
   repository,
+  transaction,
   admin,
+  workflows,
   notify,
   shop,
 }: {
   readonly repository: OrderRepository;
+  readonly transaction: Transaction;
   readonly admin: (typeof ShopifyAdmin)["Service"];
+  readonly workflows: OrdersSyncWorkflows;
   readonly notify: (invalidated: ReadonlyArray<string>) => Effect.Effect<void, never, R>;
   readonly shop: ShopKey;
 }) => {
@@ -191,7 +199,80 @@ export const makeOrdersAgent = <R>({
     return result;
   });
 
-  return { fetchAndUpsertOrder, syncOrderWebhook, syncOrder };
+  /**
+   * Sync open orders, legacy's `ShopAgent.syncOpenOrders`: the start's rules are
+   * `OrderRepository.beginSync`, in its own transaction, under a fresh instance id; this logs
+   * them and, only on `Started`, notifies {@link SYNC_KEY} and creates the `OrdersSyncWorkflow`
+   * instance of that id, outside the transaction. The record is written before the instance
+   * exists, which is what legacy's `syncStarting` did: a second press in between answers
+   * `InFlight`.
+   *
+   * A create that fails ends the sync it recorded with the same repository calls the Workflow's
+   * error sink makes (`onOrdersSyncError`): the record is cleared, which re-enables the button at
+   * once rather than after `SYNC_STALE_MS`, and the failure's message becomes the banner; then it
+   * notifies {@link SYNC_KEY} and fails `ShopifyUnavailable`, carrying the create's failure.
+   */
+  const syncOpenOrders = Effect.fn("OrdersAgent.syncOpenOrders")(function* () {
+    const workflowId = yield* Effect.sync(() => crypto.randomUUID());
+    const start = yield* repository.beginSync({
+      workflowId,
+      now: yield* Clock.currentTimeMillis,
+    });
+    if (start._tag !== "InFlight" && start.stale !== null)
+      yield* Effect.logWarning(
+        `OrdersAgent.syncOpenOrders: shop=${shop} workflowId=${String(start.stale.workflowId)}: tracking record stale, cleared`,
+      ).pipe(Effect.annotateLogs({ shop, workflowId: start.stale.workflowId }));
+    const result: OrdersSyncResult = yield* Match.value(start).pipe(
+      Match.tagsExhaustive({
+        InFlight: () =>
+          Effect.logInfo(`OrdersAgent.syncOpenOrders: shop=${shop} status=in-flight`).pipe(
+            Effect.annotateLogs({ shop, status: "in-flight" }),
+            Effect.as({ _tag: "InFlight" } as const),
+          ),
+        Refused: ({ openOrders }) => {
+          const limit = ShopLimits.maxOpenOrders;
+          return Effect.logError(
+            `OrdersAgent.syncOpenOrders: shop=${shop} status=order-ceiling openOrders=${String(openOrders)} limit=${String(limit)}`,
+          ).pipe(
+            Effect.annotateLogs({ shop, status: "order-ceiling", openOrders, limit }),
+            Effect.as({ _tag: "Refused" } as const),
+          );
+        },
+        Started: () =>
+          Effect.logInfo(
+            `OrdersAgent.syncOpenOrders: shop=${shop} status=started workflowId=${workflowId}`,
+          ).pipe(
+            Effect.annotateLogs({ shop, status: "started", workflowId }),
+            Effect.andThen(notify([SYNC_KEY])),
+            Effect.as({ _tag: "Started" } as const),
+          ),
+      }),
+    );
+    if (result._tag !== "Started") return result;
+    yield* workflows.create({ id: workflowId, params: { shop } }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.gen(function* () {
+          const error = Cause.squash(cause);
+          const message = error instanceof Error ? error.message : String(error);
+          yield* Effect.logError(
+            `OrdersAgent.syncOpenOrders: shop=${shop} workflowId=${workflowId} status=create-failed: ${message}`,
+          ).pipe(Effect.annotateLogs({ shop, workflowId, status: "create-failed" }));
+          const cleared = yield* transaction(
+            Effect.gen(function* () {
+              const cleared = yield* repository.clearSyncTracking({ workflowId });
+              if (cleared) yield* repository.setSyncErrorIfEmpty({ error: message });
+              return cleared;
+            }),
+          );
+          if (cleared) yield* notify([SYNC_KEY]);
+          return yield* new ShopifyUnavailable({ shop, cause: error });
+        }),
+      ),
+    );
+    return result;
+  });
+
+  return { fetchAndUpsertOrder, syncOrderWebhook, syncOrder, syncOpenOrders };
 };
 
 export type OrdersAgent<R = never> = ReturnType<typeof makeOrdersAgent<R>>;

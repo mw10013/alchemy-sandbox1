@@ -27,7 +27,6 @@ import { ShopActors } from "./shop-actors.ts";
 import { Auth } from "./auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
 import { Members } from "./members.ts";
-import { Orders } from "./orders.ts";
 import { sessionFromCookie } from "./auth.ts";
 import { SignInLimit } from "./resources.ts";
 import { ShopAccess } from "./shop-access.ts";
@@ -87,7 +86,6 @@ const make = Effect.gen(function* () {
   const shopAccess = yield* ShopAccess;
   const actors = yield* ShopActors;
   const shopify = yield* Shopify;
-  const orders = yield* Orders;
   const shopSessions = yield* ShopSessions;
 
   /** The signed-in user and session from the request's cookie; see {@link sessionFromCookie}. */
@@ -221,13 +219,19 @@ const make = Effect.gen(function* () {
     return yield* actors.listOrders(shop, { limit, cursor });
   });
 
-  /** Sync open orders for the token's shop: `Orders.beginOpenOrdersSync`; the token as on {@link listOrders}. */
+  /**
+   * Sync open orders for the token's shop, the token as on {@link listOrders}: the session read
+   * (no row is {@link ShopNotInstalled}, no actor call), then the shop's actor's start, whose
+   * failure is re-raised as its class.
+   */
   const syncOpenOrders = Effect.fn("BackendApi.syncOpenOrders")(function* (
     _request: RequestInfo,
     payload: SyncOpenOrdersRequest,
   ) {
     const { sessionToken } = yield* decodeSyncOpenOrdersRequest(payload).pipe(Effect.orDie);
-    return yield* orders.beginOpenOrdersSync(yield* shopify.sessionTokenShop(sessionToken));
+    const shop = yield* shopify.sessionTokenShop(sessionToken);
+    if (Option.isNone(yield* shopSessions.find(shop))) return yield* new ShopNotInstalled({ shop });
+    return yield* actors.syncOpenOrders(shop);
   });
 
   /**

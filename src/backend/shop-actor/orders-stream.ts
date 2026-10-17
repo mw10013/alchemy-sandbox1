@@ -184,7 +184,7 @@ export const runOrdersStream = <E = never>({
             const shopOrder = toShopOrder({ node: order, syncedAt });
             if (truncated)
               yield* Effect.logWarning(
-                `ShopActor.streamOrders: shop=${shop} orderId=${order.id} lineItems truncated at ${String(ShopLimits.maxLineItemsPerOrder)}`,
+                `ShopActor.onOrdersStream: shop=${shop} orderId=${order.id} lineItems truncated at ${String(ShopLimits.maxLineItemsPerOrder)}`,
               ).pipe(
                 Effect.annotateLogs({
                   shop,
@@ -208,4 +208,4 @@ export const runOrdersStream = <E = never>({
           }),
       ),
     );
-  }).pipe(Effect.withLogSpan("ShopActor.streamOrders"));
+  }).pipe(Effect.withLogSpan("ShopActor.onOrdersStream"));

@@ -20,7 +20,6 @@ import {
 } from "../../src/backend/backend.ts";
 import { MagicLinkDelivery } from "../../src/backend/magic-link-delivery.ts";
 import { Members } from "../../src/backend/members.ts";
-import { Orders } from "../../src/backend/orders.ts";
 import ShopActor from "../../src/backend/shop-actor.ts";
 import { ShopActors } from "../../src/backend/shop-actors.ts";
 import { IntegHandlers, IntegRpcs } from "./rpcs.ts";
@@ -62,7 +61,7 @@ export default class TestBackend extends Cloudflare.Worker<TestBackend>()(
       const base = yield* backendBody;
       const actors = yield* ShopActor;
       const services = yield* Effect.context<
-        Auth | BackendApi | MagicLinkDelivery | Members | Orders | ShopifyFake | ShopActors
+        Auth | BackendApi | MagicLinkDelivery | Members | ShopifyFake | ShopActors
       >();
       const shopifyFake = yield* ShopifyFake;
       // Built per request, inside the request's scope, as the Backend's own RPC servers are.

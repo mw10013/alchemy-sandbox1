@@ -1,9 +1,7 @@
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { ShopKey } from "../contract/shop.ts";
@@ -17,6 +15,7 @@ import {
   BULK_GIVE_UP_MS,
   BULK_POLL_INTERVAL_MS,
   GAVE_UP_MESSAGE,
+  ORDERS_SYNC_WORKFLOW,
 } from "./orders-sync-constants.ts";
 import { ShopActors } from "./shop-actors.ts";
 import { ShopSessions } from "./shop-sessions.ts";
@@ -91,7 +90,7 @@ const SHOPIFY_RETRIES = { limit: 3, delay: "2 seconds", backoff: "exponential" }
  * Submit the bulk operation, wait for Shopify, hand the file to the shop's actor. Four steps
  * and one loop; every concept the merchant could not predict — a window, a
  * first-run-versus-later rule, a reservation — lives nowhere, because the query is fixed (rule
- * 4 on `syncOrder`) and the actor is the only run tracker (`ShopActor.beginSync`).
+ * 4 on `syncOrder`) and the actor is the only run tracker (`OrdersAgent.syncOpenOrders`).
  *
  * Every step and sleep name is a replay key. The poll loop's are named per attempt
  * (`poll-bulk-orders-3`) because a step name is its cache key: a loop that reused one name
@@ -107,7 +106,7 @@ const SHOPIFY_RETRIES = { limit: 3, delay: "2 seconds", backoff: "exponential" }
  * `Step failed: <step>` and the cause goes to the log.
  *
  * `Effect.onError` is the terminal sink, and there are no completion callbacks: the sink
- * step `on-orders-sync-error` calls the actor's `syncFailed`, which clears the tracking record
+ * step `on-orders-sync-error` calls the actor's `onOrdersSyncError`, which clears the tracking record
  * and writes the banner, before the failure propagates and the instance errors. It runs after
  * a die too: a die ends its own step, not the body. Only a run that dies outside any step, or
  * whose sink itself fails, leaves the record behind, and `SYNC_STALE_MS` covers that.
@@ -247,7 +246,7 @@ export const ordersSyncBody = Effect.gen(function* () {
           step(
             "on-orders-sync-empty",
             "on-orders-sync-empty",
-            actors.syncEmpty(shop, { workflowId }),
+            actors.onOrdersSyncEmpty(shop, { workflowId }),
           ),
         onSome: (url) =>
           /**
@@ -257,7 +256,7 @@ export const ordersSyncBody = Effect.gen(function* () {
           step(
             "on-orders-stream",
             "on-orders-stream",
-            actors.streamOrders(shop, { workflowId, url }).pipe(Effect.asVoid),
+            actors.onOrdersStream(shop, { workflowId, url }).pipe(Effect.asVoid),
           ),
       });
 
@@ -278,7 +277,7 @@ export const ordersSyncBody = Effect.gen(function* () {
             );
             yield* Cloudflare.Workflows.task(
               "on-orders-sync-error",
-              actors.syncFailed(shop, { workflowId, message }),
+              actors.onOrdersSyncError(shop, { workflowId, message }),
             );
           }).pipe(
             Effect.catchCause((sinkCause) =>
@@ -293,34 +292,12 @@ export const ordersSyncBody = Effect.gen(function* () {
 
 /**
  * The open-orders sync: a Cloudflare Workflow in the Backend's script, one instance per press,
- * named by the `workflowId` the actor recorded. Params `{ shop }`. The body is
+ * created by the shop's actor (`OrdersAgent.syncOpenOrders`) and named by the `workflowId` it
+ * recorded. Params `{ shop }`. The body is
  * {@link ordersSyncBody}; its services resolve in the Backend's init, which runs again in any
  * isolate an instance lands in.
  */
 export class OrdersSyncWorkflow extends Cloudflare.Workflow<OrdersSyncWorkflow>()(
-  "OrdersSyncWorkflow",
+  ORDERS_SYNC_WORKFLOW,
   ordersSyncBody,
 ) {}
-
-/**
- * The Backend's handle on {@link OrdersSyncWorkflow}: `create` only, the one call it makes.
- * Its layer yields the Workflow in the Backend's init, which is what binds the Workflow to the
- * Backend and exports its class. A service, so `Orders` can be built in a unit test without a
- * Worker.
- */
-export class OrdersSyncWorkflows extends Context.Service<
-  OrdersSyncWorkflows,
-  {
-    readonly create: (options: {
-      readonly id: string;
-      readonly params: OrdersSyncParams;
-    }) => Effect.Effect<void>;
-  }
->()("app/OrdersSyncWorkflows") {
-  static readonly layer = Layer.effect(
-    OrdersSyncWorkflows,
-    Effect.map(OrdersSyncWorkflow, (workflow) => ({
-      create: (options) => workflow.create(options).pipe(Effect.asVoid),
-    })),
-  );
-}

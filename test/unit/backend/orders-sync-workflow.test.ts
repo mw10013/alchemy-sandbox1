@@ -5,7 +5,6 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 import { bulkOrdersQueryText, OrdersBulkRepository } from "../../../src/backend/orders-bulk.ts";
-import { Orders } from "../../../src/backend/orders.ts";
 import {
   BULK_GIVE_UP_MS,
   BULK_POLL_INTERVAL_MS,
@@ -20,15 +19,9 @@ import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import type { ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
 import { ReauthorizationRequired } from "../../../src/backend/shopify.ts";
 import type { ShopifyAdminError } from "../../../src/backend/shopify-admin.ts";
-import type { BulkOperation, OrdersSyncResult } from "../../../src/domain/orders.ts";
+import type { BulkOperation } from "../../../src/domain/orders.ts";
 import { SEED_SHOP } from "../../seed-shops.ts";
-import {
-  type AdminCall,
-  QuietLogs,
-  testOrdersSyncWorkflows,
-  testShopify,
-  testShopifyAdmin,
-} from "./layers.ts";
+import { type AdminCall, QuietLogs, testShopify, testShopifyAdmin } from "./layers.ts";
 
 /**
  * `OrdersSyncWorkflow`'s body with its steps stubbed: a `task` runs its effect once, with no
@@ -106,8 +99,8 @@ const recordingActors = (run: Run) =>
         });
       return {
         ...base,
-        streamOrders: (_key, input) =>
-          record("streamOrders", input).pipe(
+        onOrdersStream: (_key, input) =>
+          record("onOrdersStream", input).pipe(
             Effect.as({
               ordersSeen: 0,
               ordersUpserted: 0,
@@ -117,8 +110,8 @@ const recordingActors = (run: Run) =>
               ordersRefused: 0,
             }),
           ),
-        syncEmpty: (_key, input) => record("syncEmpty", input),
-        syncFailed: (_key, input) => record("syncFailed", input),
+        onOrdersSyncEmpty: (_key, input) => record("onOrdersSyncEmpty", input),
+        onOrdersSyncError: (_key, input) => record("onOrdersSyncError", input),
       };
     }),
   ).pipe(Layer.provide(ShopActors.layerTest([])));
@@ -198,7 +191,7 @@ describe("OrdersSyncWorkflow shape", () => {
       ]);
       assert.deepStrictEqual(actor, [
         {
-          method: "streamOrders",
+          method: "onOrdersStream",
           input: { workflowId: WORKFLOW_ID, url: completedOperation.url },
         },
       ]);
@@ -216,7 +209,9 @@ describe("OrdersSyncWorkflow shape", () => {
         "run-bulk-orders-query",
         "on-orders-sync-empty",
       ]);
-      assert.deepStrictEqual(actor, [{ method: "syncEmpty", input: { workflowId: WORKFLOW_ID } }]);
+      assert.deepStrictEqual(actor, [
+        { method: "onOrdersSyncEmpty", input: { workflowId: WORKFLOW_ID } },
+      ]);
     }),
   );
 
@@ -228,7 +223,7 @@ describe("OrdersSyncWorkflow shape", () => {
       ]);
       assert.isTrue(Exit.isSuccess(exit));
       assert.deepStrictEqual(actor, [
-        { method: "streamOrders", input: { workflowId: WORKFLOW_ID, url: partial } },
+        { method: "onOrdersStream", input: { workflowId: WORKFLOW_ID, url: partial } },
       ]);
     }),
   );
@@ -257,7 +252,10 @@ describe("OrdersSyncWorkflow shape", () => {
         ]);
         assert.strictEqual(admin.length, POLL_COUNT + 2);
         assert.deepStrictEqual(actor, [
-          { method: "syncFailed", input: { workflowId: WORKFLOW_ID, message: GAVE_UP_MESSAGE } },
+          {
+            method: "onOrdersSyncError",
+            input: { workflowId: WORKFLOW_ID, message: GAVE_UP_MESSAGE },
+          },
         ]);
       }),
   );
@@ -270,7 +268,10 @@ describe("OrdersSyncWorkflow shape", () => {
         Effect.die(new Error("cancel exploded")),
       ]);
       assert.deepStrictEqual(actor, [
-        { method: "syncFailed", input: { workflowId: WORKFLOW_ID, message: GAVE_UP_MESSAGE } },
+        {
+          method: "onOrdersSyncError",
+          input: { workflowId: WORKFLOW_ID, message: GAVE_UP_MESSAGE },
+        },
       ]);
     }),
   );
@@ -289,7 +290,7 @@ describe("OrdersSyncWorkflow shape", () => {
       assert.notInclude(steps, "cancel-bulk-orders");
       assert.deepStrictEqual(actor, [
         {
-          method: "syncFailed",
+          method: "onOrdersSyncError",
           input: { workflowId: WORKFLOW_ID, message: "Bulk operation did not complete: EXPIRED" },
         },
       ]);
@@ -315,7 +316,7 @@ describe("OrdersSyncWorkflow shape", () => {
       ]);
       assert.deepStrictEqual(actor, [
         {
-          method: "syncFailed",
+          method: "onOrdersSyncError",
           input: { workflowId: WORKFLOW_ID, message: "Step failed: run-bulk-orders-query" },
         },
       ]);
@@ -330,7 +331,7 @@ describe("OrdersSyncWorkflow shape", () => {
       assert.lengthOf(admin, 0);
       assert.deepStrictEqual(actor, [
         {
-          method: "syncFailed",
+          method: "onOrdersSyncError",
           input: { workflowId: WORKFLOW_ID, message: "Step failed: ensure-session" },
         },
       ]);
@@ -352,99 +353,5 @@ describe("bulkOrdersQueryText", () => {
     );
     assert.include(text, "status:open -fulfillment_status:fulfilled");
     assert.notInclude(text, "updated_at");
-  });
-});
-
-/** `Orders.beginOpenOrdersSync` over a recording actor and Workflow handle. */
-describe("Orders.beginOpenOrdersSync", () => {
-  const ordersWith = ({
-    rows = [session],
-    start = { _tag: "Started" },
-    create = Effect.void,
-  }: {
-    rows?: ReadonlyArray<ShopSessionRow>;
-    start?: OrdersSyncResult;
-    create?: Effect.Effect<void>;
-  }) => {
-    const calls: Array<
-      | { readonly method: "beginSync"; readonly workflowId: string; readonly now: number }
-      | { readonly method: "syncFailed"; readonly workflowId: string; readonly message: string }
-    > = [];
-    const created: Array<{ readonly id: string; readonly params: OrdersSyncParams }> = [];
-    const actors = Layer.effect(
-      ShopActors,
-      Effect.gen(function* () {
-        const base = yield* ShopActors;
-        return {
-          ...base,
-          beginSync: (_key, input) =>
-            Effect.sync(() => {
-              calls.push({ method: "beginSync", ...input });
-              return start;
-            }),
-          syncFailed: (_key, input) =>
-            Effect.sync(() => {
-              calls.push({ method: "syncFailed", ...input });
-            }),
-        };
-      }),
-    ).pipe(Layer.provide(ShopActors.layerTest([])));
-    const layer = Orders.layer.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          actors,
-          testOrdersSyncWorkflows(created, create),
-          testShopifyAdmin([], []),
-          testShopify(rows),
-          QuietLogs,
-        ),
-      ),
-    );
-    return { calls, created, layer };
-  };
-
-  it.effect("records the sync on the actor before it creates the instance of the same id", () => {
-    const { calls, created, layer } = ordersWith({});
-    return Effect.gen(function* () {
-      const result = yield* (yield* Orders).beginOpenOrdersSync(SEED_SHOP);
-      assert.deepStrictEqual(result, { _tag: "Started" });
-      const [begin] = calls;
-      assert.strictEqual(begin?.method, "beginSync");
-      assert.deepStrictEqual(created, [{ id: begin?.workflowId, params: { shop: SEED_SHOP } }]);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect.each(["InFlight", "Refused"] as const)("a %s answer creates no instance", (tag) => {
-    const { created, layer } = ordersWith({ start: { _tag: tag } });
-    return Effect.gen(function* () {
-      const result = yield* (yield* Orders).beginOpenOrdersSync(SEED_SHOP);
-      assert.deepStrictEqual(result, { _tag: tag });
-      assert.lengthOf(created, 0);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("a shop with no session is ShopNotInstalled and its actor is not called", () => {
-    const { calls, layer } = ordersWith({ rows: [] });
-    return Effect.gen(function* () {
-      const error = yield* Effect.flip((yield* Orders).beginOpenOrdersSync(SEED_SHOP));
-      assert.strictEqual(error._tag, "ShopNotInstalled");
-      assert.lengthOf(calls, 0);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("a create that fails ends the recorded sync with its message, and fails on", () => {
-    const { calls, layer } = ordersWith({
-      create: Effect.die(new Error("workflow.create failed")),
-    });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit((yield* Orders).beginOpenOrdersSync(SEED_SHOP));
-      assert.isTrue(Exit.isFailure(exit));
-      const [begin, failed] = calls;
-      assert.deepStrictEqual(failed, {
-        method: "syncFailed",
-        workflowId: begin?.workflowId,
-        message: "workflow.create failed",
-      });
-    }).pipe(Effect.provide(layer));
   });
 });
