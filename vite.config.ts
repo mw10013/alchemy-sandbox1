@@ -107,6 +107,39 @@ const runtimeBoundary = (
   },
 });
 
+/**
+ * Keeps `src/domain/` below everything else: a context file imports only `effect` and the sibling
+ * context files its `may import` cell on the domain's map names, never a runtime directory.
+ * `siblings` are the context files `files` may not import. When two overrides match a file, the
+ * later one's options replace the earlier's, so a per-file override repeats the directory group,
+ * and each carries {@link effectBarrel} as {@link runtimeBoundary} does.
+ */
+const domainBoundary = (files: string, siblings: ReadonlyArray<string> = []): OxlintOverride => ({
+  files: [files],
+  rules: {
+    "no-restricted-imports": [
+      "error",
+      {
+        paths: [effectBarrel],
+        patterns: [
+          {
+            group: ["**/backend/**", "**/web/**", "**/contract/**"],
+            message: "The domain imports only `effect` and its own context files.",
+          },
+          ...(siblings.length === 0
+            ? []
+            : [
+                {
+                  group: siblings.map((file) => `./${file}`),
+                  message: "A context file imports only what its `may import` cell names.",
+                },
+              ]),
+        ],
+      },
+    ],
+  },
+});
+
 export default defineConfig(({ command, mode, isPreview }) => {
   if (
     command === "serve" &&
@@ -202,6 +235,11 @@ export default defineConfig(({ command, mode, isPreview }) => {
           { allowTypeImports: true },
         ),
         runtimeBoundary("src/backend/**", ["web"], "The Backend never imports the Website."),
+        domainBoundary("src/domain/**"),
+        domainBoundary("src/domain/platform.ts", ["orders.ts", "shop-work.ts", "billing.ts"]),
+        domainBoundary("src/domain/orders.ts", ["shop-work.ts", "billing.ts"]),
+        domainBoundary("src/domain/shop-work.ts", ["billing.ts"]),
+        domainBoundary("src/domain/billing.ts", ["shop-work.ts"]),
       ],
       options: { typeAware: true, typeCheck: true },
     },
