@@ -1,6 +1,6 @@
 # The actor and the orders sync Workflow: how they are wired
 
-Status: research, written 2026-10-17; rewritten the same day after review ("go deeper into how Alchemy works"). No code has changed. It lays out Alchemy's model from its own docs, legacy's architecture, this repo's before and after the actor ownership correction, the one edge that came out hand-rolled, and why. The finding: the design Alchemy documents for this case is the right one, it fails only because of a one-line bug in Alchemy's local provider, and the repo already has the mechanism to patch Alchemy.
+Status: research, written 2026-10-17; rewritten the same day after review ("go deeper into how Alchemy works"). **Settled** the same day in chat: Q1–Q3 as recommended; Q4 declined (no staging baseline first). Implemented as `docs/actor-ownership-plan.md` §7 "Follow-up round 3". It lays out Alchemy's model from its own docs, legacy's architecture, this repo's before and after the actor ownership correction, the one edge that came out hand-rolled, and why. The finding: the design Alchemy documents for this case is the right one, it fails only because of a one-line bug in Alchemy's local provider, and the repo already has the mechanism to patch Alchemy.
 
 Sources: Alchemy's docs under `refs/alchemy/website/src/content/docs/` (`infrastructure-as-effects/phases.mdx`, `runtime.mdx`, `binding.mdx`, `layers.mdx`, `circular-bindings.mdx`, `project-structure/file-layout.mdx`) and source under `refs/alchemy/packages/alchemy/src/`. Legacy paths are relative to `refs/baton-legacy/`.
 
