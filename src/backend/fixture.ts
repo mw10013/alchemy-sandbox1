@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
+  FIXTURE_ORDER_PREFIX,
   FixtureConflict,
   type FixtureCounts,
   type FixtureTask,
@@ -18,14 +19,6 @@ import type { ShopKey } from "../contract/shop.ts";
 import { type ShopIdentity, Members } from "./members.ts";
 import { ShopActors } from "./shop-actors.ts";
 import { ShopSessions } from "./shop-sessions.ts";
-
-/**
- * The `legacyId` prefix of a fixture order: `fixture-<n>`, whose id is
- * `gid://shopify/Order/fixture-<n>`. A fixture order is never in Shopify, so nothing may sync it,
- * link to it in the Shopify admin, or ask Shopify about it; a real Shopify id is numeric and never
- * carries the prefix.
- */
-export const FIXTURE_ORDER_PREFIX = "fixture-";
 
 /** A task as `Workflow.tasks` stores it: its position is its index, so it is not stored. */
 const StoredTask = Schema.Struct({

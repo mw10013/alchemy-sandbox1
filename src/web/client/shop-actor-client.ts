@@ -32,6 +32,7 @@ import {
   type Notice,
   NoticeFrame,
   ORDERS_KEY,
+  type OrdersListInput,
   type OrdersListPage,
   SYNC_KEY,
   ShopActorRpcs,
@@ -299,23 +300,25 @@ export const seedShop = (
   }
 };
 
-/** How many orders the orders screen shows: one page, the index's 25 rows. */
+/** How many orders a page of the orders screen shows: the index's 25 rows. */
 export const ORDERS_PAGE_SIZE = 25;
 
 /**
- * The orders screen's first page, the query itself; the node {@link seedOrders} fills. Later
- * pages are not read yet: the screen shows the newest page.
+ * One page of the orders screen, the query itself, by the cursor it starts after (null is page
+ * one); the node {@link seedOrders} fills. Each page is its own node under its own serialization
+ * key, so a refetch on page two reads page two.
  */
-export const merchantOrdersQuery = ShopActorClient.query(
-  "MerchantListOrders",
-  { limit: ORDERS_PAGE_SIZE, cursor: null },
-  { serializationKey: "merchant-orders" },
+export const merchantOrdersQuery = Atom.family((cursor: OrdersListInput["cursor"]) =>
+  ShopActorClient.query(
+    "MerchantListOrders",
+    { limit: ORDERS_PAGE_SIZE, cursor },
+    { serializationKey: `merchant-orders:${cursor ?? "first"}` },
+  ),
 );
 
-/** The orders screen's first page; refetched on every notice naming {@link ORDERS_KEY}. */
-export const merchantOrdersAtom = merchantOrdersQuery.pipe(
-  Atom.withReactivity([ORDERS_KEY]),
-  refreshOnFocus,
+/** One page of the orders screen; refetched on every notice naming {@link ORDERS_KEY}. */
+export const merchantOrdersAtom = Atom.family((cursor: OrdersListInput["cursor"]) =>
+  merchantOrdersQuery(cursor).pipe(Atom.withReactivity([ORDERS_KEY]), refreshOnFocus),
 );
 
 /**
@@ -328,21 +331,24 @@ export const merchantSyncStatusAtom = ShopActorClient.query("MerchantSyncStatus"
 }).pipe(Atom.withReactivity([SYNC_KEY]), refreshOnFocus);
 
 /**
- * Seeds the merchant orders screen's socket atoms: the shop and the token source
- * ({@link nameSocket}), and the first page from the loader, so the table shows at once and the
- * socket only keeps it current. The same rules as {@link seedShop}.
+ * Names the merchant orders screen's socket: the shop and the token source ({@link nameSocket}).
+ * Run once, in the browser, before the screen reads any socket atom; {@link seedOrders} then
+ * fills each page it shows.
+ */
+export const nameOrdersSocket = (
+  registry: AtomRegistry.AtomRegistry,
+  input: { readonly key: ShopKey; readonly merchantToken: Effect.Effect<string> },
+) => nameSocket(registry, input.key, Option.some(input.merchantToken));
+
+/**
+ * Seeds one page of the merchant orders screen from the loader, so the table shows at once and
+ * the socket only keeps it current. Run it for each page the screen shows, before the screen
+ * reads that page's atom; the same rules as {@link seedShop}.
  */
 export const seedOrders = (
   registry: AtomRegistry.AtomRegistry,
-  input: {
-    readonly key: ShopKey;
-    readonly merchantToken: Effect.Effect<string>;
-    readonly page: OrdersListPage;
-  },
-) => {
-  nameSocket(registry, input.key, Option.some(input.merchantToken));
-  seed(registry, merchantOrdersQuery, input.page);
-};
+  input: { readonly cursor: OrdersListInput["cursor"]; readonly page: OrdersListPage },
+) => seed(registry, merchantOrdersQuery(input.cursor), input.page);
 
 /**
  * Turns notices into invalidations; mounted by the page. The stream never ends. It sees the

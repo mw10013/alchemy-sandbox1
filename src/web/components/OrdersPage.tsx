@@ -5,10 +5,11 @@ import type * as Effect from "effect/Effect";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
-import { useContext, useState } from "react";
+import { useContext, useMemo, useState } from "react";
+import { isFixtureOrder } from "../../contract/fixture.ts";
 import { ORDER_SYNC_WINDOW_DAYS, type OrdersCallFailure } from "../../contract/orders.ts";
 import type { ShopKey } from "../../contract/shop.ts";
-import type { OrdersListPage } from "../../contract/shop-actor.ts";
+import type { OrdersListInput, OrdersListPage } from "../../contract/shop-actor.ts";
 import type { OrderDetail, OrdersSyncResult, SyncOrderResult } from "../../domain/orders.ts";
 import { formatNumber, ShopLimits } from "../../domain/platform.ts";
 import { ORDER_POSITION_LABEL, orderPosition } from "../../domain/shop-work.ts";
@@ -17,6 +18,7 @@ import { toast } from "../client/app-bridge.ts";
 import {
   merchantOrdersAtom,
   merchantSyncStatusAtom,
+  nameOrdersSocket,
   noticesAtom,
   seedOrders,
 } from "../client/shop-actor-client.ts";
@@ -29,6 +31,15 @@ export interface OrdersActions {
   readonly syncOpenOrders: () => Promise<OrdersCallAnswer<OrdersSyncResult>>;
   readonly syncOrder: (orderId: string) => Promise<OrdersCallAnswer<SyncOrderResult>>;
 }
+
+/**
+ * The Next page link's `href` and click for the page starting after `cursor`; the route builds
+ * them, because the URL and the router are its.
+ */
+export type OrdersPageLink = (cursor: string) => {
+  readonly href: string;
+  readonly onClick: (event: Event) => void;
+};
 
 /**
  * The order ceiling's sentence, as the quota banner words it. Sync open orders answers `Refused`
@@ -84,6 +95,7 @@ function PositionBadge({ order }: { readonly order: OrderDetail["order"] }) {
 /** What the screen renders, the same before and after hydration. */
 interface OrdersView {
   readonly page: OrdersListPage;
+  readonly pageLink: OrdersPageLink;
   readonly banners: ReadonlyArray<string>;
   readonly syncInFlight: boolean;
   readonly syncing: boolean;
@@ -95,7 +107,12 @@ interface OrdersView {
 /**
  * The screen itself: Sync open orders in the title bar on every visit (and again, primary, in the
  * empty state, where it is the only thing to do), the banners in the list's head, then the table
- * or the empty line. App Bridge hoists the slotted button into the admin's title bar.
+ * or the empty line, and Next page under the table while there is one. App Bridge hoists the
+ * slotted button into the admin's title bar.
+ *
+ * There is no Previous: the keyset cursor pages forward only, and page one is the Orders link
+ * away. A fixture order ({@link isFixtureOrder}) is not in Shopify, so its row has no Shopify link
+ * and no Sync from Shopify.
  */
 function OrdersScreen(view: OrdersView) {
   const syncButton = (slotted: boolean) => (
@@ -113,6 +130,11 @@ function OrdersScreen(view: OrdersView) {
       {syncButton(true)}
       <IndexSection
         label="Orders"
+        foot={
+          view.page.nextCursor === null ? undefined : (
+            <s-link {...view.pageLink(view.page.nextCursor)}>Next page</s-link>
+          )
+        }
         head={
           view.banners.length === 0
             ? undefined
@@ -156,25 +178,34 @@ function OrdersScreen(view: OrdersView) {
                     <PositionBadge order={detail.order} />
                   </s-table-cell>
                   <s-table-cell>{formatNumber(itemUnits(detail))}</s-table-cell>
-                  <s-table-cell>
-                    <s-button
-                      icon="external"
-                      variant="tertiary"
-                      href={adminOrderUrl(detail.order)}
-                      target="_blank"
-                      accessibilityLabel={`Open ${detail.order.name} in Shopify`}
-                    />
-                  </s-table-cell>
-                  <s-table-cell>
-                    <s-button
-                      variant="tertiary"
-                      loading={view.syncingOrders.has(detail.order.id)}
-                      accessibilityLabel={`Sync ${detail.order.name} from Shopify`}
-                      onClick={() => view.onSyncOrder(detail.order.id)}
-                    >
-                      Sync from Shopify
-                    </s-button>
-                  </s-table-cell>
+                  {isFixtureOrder(detail.order.legacyId) ? (
+                    <>
+                      <s-table-cell />
+                      <s-table-cell />
+                    </>
+                  ) : (
+                    <>
+                      <s-table-cell>
+                        <s-button
+                          icon="external"
+                          variant="tertiary"
+                          href={adminOrderUrl(detail.order)}
+                          target="_blank"
+                          accessibilityLabel={`Open ${detail.order.name} in Shopify`}
+                        />
+                      </s-table-cell>
+                      <s-table-cell>
+                        <s-button
+                          variant="tertiary"
+                          loading={view.syncingOrders.has(detail.order.id)}
+                          accessibilityLabel={`Sync ${detail.order.name} from Shopify`}
+                          onClick={() => view.onSyncOrder(detail.order.id)}
+                        >
+                          Sync from Shopify
+                        </s-button>
+                      </s-table-cell>
+                    </>
+                  )}
                 </s-table-row>
               ))}
             </s-table-body>
@@ -186,23 +217,27 @@ function OrdersScreen(view: OrdersView) {
 }
 
 /**
- * The screen once hydrated: the merchant socket's atoms, seeded from the loader's page before
- * the first read, so the first live render shows what the server rendered and the socket only
- * keeps it current. {@link noticesAtom} is mounted while the page is, so a webhook, a sync or a
- * sweep refetches the page, and a sync starting or ending refetches its status.
+ * The screen once hydrated: the merchant socket's atoms, the shown page's seeded from the
+ * loader's before its first read, so the first live render of each page shows what the loader
+ * read and the socket only keeps it current. The socket is named once; a new page is a new
+ * cursor, so a new node to seed, on the same socket. A node already there (the page was shown
+ * before) is refetched instead. {@link noticesAtom} is mounted while the
+ * page is, so a webhook, a sync or a sweep refetches the page shown, and a sync starting or ending
+ * refetches its status.
  */
-function LiveOrders(props: {
-  readonly shop: ShopKey;
-  readonly page: OrdersListPage;
-  readonly merchantToken: Effect.Effect<string>;
-  readonly actions: OrdersActions;
-}) {
+function LiveOrders(props: OrdersPageProps) {
   const registry = useContext(RegistryContext);
   useState(() =>
-    seedOrders(registry, { key: props.shop, merchantToken: props.merchantToken, page: props.page }),
+    nameOrdersSocket(registry, { key: props.shop, merchantToken: props.merchantToken }),
+  );
+  useMemo(
+    () => seedOrders(registry, { cursor: props.cursor, page: props.page }),
+    // Once per page shown, so not on `page`, which changes with its cursor: a refresh of the
+    // node this render reads would notify it mid-render.
+    [registry, props.cursor],
   );
   useAtomMount(noticesAtom);
-  const orders = useAtomValue(merchantOrdersAtom);
+  const orders = useAtomValue(merchantOrdersAtom(props.cursor));
   const status = AsyncResult.value(useAtomValue(merchantSyncStatusAtom));
   const uninstalled = useAtomValue(uninstalledAtom);
   const expired = useAtomValue(merchantExpiredAtom);
@@ -216,7 +251,7 @@ function LiveOrders(props: {
       .syncOpenOrders()
       .then((answer) =>
         Match.valueTags(answer, {
-          Started: () => {},
+          Started: () => toast("Syncing open orders"),
           InFlight: () => toast("A sync is already running"),
           Refused: () => toast(CEILING, { isError: true }),
           Failed: () => toast("Couldn't start the sync.", { isError: true }),
@@ -257,6 +292,7 @@ function LiveOrders(props: {
   return (
     <OrdersScreen
       page={Option.getOrElse(AsyncResult.value(orders), () => props.page)}
+      pageLink={props.pageLink}
       banners={banners}
       syncInFlight={Option.exists(status, ({ inFlight }) => inFlight)}
       syncing={syncing}
@@ -267,26 +303,32 @@ function LiveOrders(props: {
   );
 }
 
-/**
- * The merchant's orders: one page of what the shop's actor has stored, newest first, with Sync
- * open orders and, per row, Sync from Shopify. A live screen: the loader paints the first page,
- * then the merchant socket keeps it current. Until React has hydrated it renders the loader's
- * page with no socket, so the server markup and the first client render agree.
- *
- * A sync's failure is the critical banner in the list's head (`lastError`); a press that did
- * nothing, or failed, is a toast.
- */
-export default function OrdersPage(props: {
+/** {@link OrdersPage}'s props: `cursor` is the one `page` starts after, null on page one. */
+interface OrdersPageProps {
   readonly shop: ShopKey;
+  readonly cursor: OrdersListInput["cursor"];
   readonly page: OrdersListPage;
+  readonly pageLink: OrdersPageLink;
   readonly merchantToken: Effect.Effect<string>;
   readonly actions: OrdersActions;
-}) {
+}
+
+/**
+ * The merchant's orders: a page of what the shop's actor has stored, newest first, with Sync
+ * open orders, per row Sync from Shopify, and Next page. A live screen: the loader paints the
+ * page, then the merchant socket keeps it current. Until React has hydrated it renders the
+ * loader's page with no socket, so the server markup and the first client render agree.
+ *
+ * A sync's failure is the critical banner in the list's head (`lastError`); a press is a toast:
+ * a sync started, or a press that did nothing or failed.
+ */
+export default function OrdersPage(props: OrdersPageProps) {
   const hydrated = useHydrated();
   if (hydrated) return <LiveOrders {...props} />;
   return (
     <OrdersScreen
       page={props.page}
+      pageLink={props.pageLink}
       banners={[]}
       syncInFlight={false}
       syncing={false}

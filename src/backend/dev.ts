@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type { Email } from "../contract/auth.ts";
 import { DevRpcs, type ShopSessionView } from "../contract/dev.ts";
+import { ShopNotInstalled } from "../contract/fixture.ts";
 import type { ShopKey } from "../contract/shop.ts";
 import { Fixtures } from "./fixture.ts";
 import { Members } from "./members.ts";
@@ -21,6 +22,12 @@ const devProcedures = Effect.gen(function* () {
     // revoke is logged and answers `closed: 0`, which a test sees.
     const { closed } = yield* actors.revoke(shop, "member", removed.value);
     return { removed: true, closed };
+  });
+
+  /** The shop's session is checked first, so a shop that is not installed gets no actor. */
+  const removeOrder = Effect.fn("Dev.removeOrder")(function* (shop: ShopKey, orderId: string) {
+    if (Option.isNone(yield* sessions.find(shop))) return yield* new ShopNotInstalled({ shop });
+    return yield* actors.removeOrder(shop, orderId);
   });
 
   const getShopSession = Effect.fn("Dev.getShopSession")(function* (shop: ShopKey) {
@@ -55,7 +62,7 @@ const devProcedures = Effect.gen(function* () {
     return {};
   });
 
-  return { removeMember, getShopSession, expireShopSession };
+  return { removeMember, removeOrder, getShopSession, expireShopSession };
 });
 
 export const DevHandlers = DevRpcs.toLayer(
@@ -66,6 +73,7 @@ export const DevHandlers = DevRpcs.toLayer(
       LoadFixture: ({ shop, fixture }) => fixtures.load(shop, fixture),
       AddToFixture: ({ shop, fixture }) => fixtures.add(shop, fixture),
       RemoveMember: ({ shop, email }) => dev.removeMember(shop, email),
+      RemoveOrder: ({ shop, orderId }) => dev.removeOrder(shop, orderId),
       GetShopSession: ({ shop }) => dev.getShopSession(shop),
       ExpireShopSession: ({ shop, refreshToken }) => dev.expireShopSession(shop, refreshToken),
     });

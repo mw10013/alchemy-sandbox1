@@ -395,9 +395,9 @@ const tagsOf = (caller: ConnectionCaller) =>
  *
  * It has two surfaces that never overlap. Browsers call `ShopActorRpcs` with Effect RPC over a
  * hibernating WebSocket; there is no HTTP RPC into the actor. The Backend calls the schemaless
- * methods `revoke`, `snapshot`, `loadFixture`, `addFixture`, `orderVersion`, `storeOrder`,
- * `getOrder`, `listOrders`, `beginSync`, `streamOrders`, `syncEmpty`, `syncFailed` and `destroy`
- * on its stub, which no browser can reach.
+ * methods `revoke`, `snapshot`, `loadFixture`, `addFixture`, `removeOrder`, `orderVersion`,
+ * `storeOrder`, `getOrder`, `listOrders`, `beginSync`, `streamOrders`, `syncEmpty`, `syncFailed`
+ * and `destroy` on its stub, which no browser can reach.
  *
  * Who is on a socket is fixed when the socket is accepted: the Backend's gate resolves the
  * browser and names it in {@link CONNECTION_HEADER} on the upgrade it forwards, and the actor
@@ -684,6 +684,30 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
             ),
           );
           return answer;
+        },
+        Effect.orDie,
+        Effect.provide(runtime),
+      );
+
+      /**
+       * Deletes one stored order with its items and runs, the way the retention sweep does, and
+       * notifies {@link ORDERS_KEY} when there was one. Dev and test machinery only: it lets a
+       * test take a real order off the screen so that only a sync can bring it back.
+       */
+      const removeOrder = Effect.fn("ShopActor.removeOrder")(
+        function* ({ orderId }: { readonly orderId: string }) {
+          const deleted = yield* transaction(
+            Effect.gen(function* () {
+              yield* sql`delete from Run where orderId = ${orderId}`;
+              return yield* sql`delete from ShopOrder where id = ${orderId} returning id`;
+            }),
+          );
+          const removed = deleted.length > 0;
+          yield* Effect.logInfo(
+            `ShopActor.removeOrder: shop=${shop} orderId=${orderId} removed=${String(removed)}`,
+          ).pipe(Effect.annotateLogs({ shop, orderId, removed }));
+          if (removed) yield* notify([ORDERS_KEY]);
+          return { removed };
         },
         Effect.orDie,
         Effect.provide(runtime),
@@ -1012,6 +1036,7 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
         snapshot,
         loadFixture,
         addFixture,
+        removeOrder,
         orderVersion,
         storeOrder,
         getOrder,

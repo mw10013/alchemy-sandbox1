@@ -23,7 +23,7 @@ How this project's Shopify dev stores are named, claimed, authorized and given t
    shopify store auth --store mw10013-dev-shop-NN.myshopify.com --scopes read_products,write_products,read_orders,write_orders,read_draft_orders,write_draft_orders
    ```
 
-   Do the same on the e2e store, where the e2e orders spec creates and cancels its own orders (`scripts/test-order.ts`):
+   Do the same on the e2e store, where the e2e orders and refresh specs create and cancel their own orders (`scripts/test-order.ts`):
 
    ```sh
    shopify store auth --store mw10013-e2e-shop-NN.myshopify.com --scopes read_products,write_products,read_orders,write_orders,read_draft_orders,write_draft_orders

@@ -260,6 +260,40 @@ test(
 );
 
 test(
+  "the dev door's RemoveOrder deletes a stored order with its items and publishes, once",
+  Effect.gen(function* () {
+    const { backendUrl } = yield* stack;
+    yield* reset(SEED_SHOP);
+    yield* store(SEED_SHOP, aNode(9, 2000), [aLineItemNode(1), aLineItemNode(2)]);
+    yield* store(SEED_SHOP, aNode(10, 2000), [aLineItemNode(3)]);
+    yield* Effect.gen(function* () {
+      const merchant = yield* openAs(backendUrl, SEED_SHOP, { role: "merchant" });
+      yield* merchant.client.MerchantWhoAmI();
+      const removed = yield* dev(backendUrl, (c) =>
+        c.RemoveOrder({ shop: SEED_SHOP, orderId: orderId(9) }),
+      );
+      assert.deepStrictEqual(removed, { removed: true });
+      const notice = yield* PubSub.take(merchant.received).pipe(Effect.timeout("5 seconds"));
+      assert.deepStrictEqual(notice, { _tag: "ShopActorNotice", invalidated: [ORDERS_KEY] });
+      assert.isNull(yield* read(SEED_SHOP, orderId(9)));
+      assert.isNotNull(yield* read(SEED_SHOP, orderId(10)));
+      const page = yield* merchant.client.MerchantListOrders({ limit: 25, cursor: null });
+      assert.deepStrictEqual(
+        page.orders.flatMap(({ lineItems }) => lineItems.map(({ id }) => id)),
+        [lineItemId(3)],
+      );
+
+      const again = yield* dev(backendUrl, (c) =>
+        c.RemoveOrder({ shop: SEED_SHOP, orderId: orderId(9) }),
+      );
+      assert.deepStrictEqual(again, { removed: false });
+      yield* Effect.sleep("500 millis");
+      assert.strictEqual(yield* PubSub.remaining(merchant.received), 0, "no notice");
+    }).pipe(Effect.scoped);
+  }),
+);
+
+test(
   "MerchantListOrders and listOrders page newest first through a keyset cursor",
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;

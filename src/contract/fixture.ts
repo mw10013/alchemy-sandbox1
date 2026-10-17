@@ -14,6 +14,20 @@ import { TaskInstructions, TaskName, WorkflowState } from "../domain/shop-work.t
 import { Email } from "./auth.ts";
 import { ShopKey } from "./shop.ts";
 
+/**
+ * The `legacyId` prefix of a fixture order: `fixture-<n>`, whose id is
+ * `gid://shopify/Order/fixture-<n>`. A fixture order is never in Shopify, so nothing may sync it,
+ * link to it in the Shopify admin, or ask Shopify about it; a real Shopify id is numeric and never
+ * carries the prefix.
+ */
+export const FIXTURE_ORDER_PREFIX = "fixture-";
+
+/** A fixture order's `legacyId`, `fixture-<n>`; see {@link FIXTURE_ORDER_PREFIX}. */
+const FixtureLegacyId = Schema.TemplateLiteral([FIXTURE_ORDER_PREFIX, Schema.String]);
+
+/** Whether an order's `legacyId` is a fixture order's, which the screen must not offer to Shopify. */
+export const isFixtureOrder = Schema.is(FixtureLegacyId);
+
 /** A name as the tables require it: non-empty, with no space at either end. */
 const Name = Schema.Trimmed.check(Schema.isNonEmpty());
 

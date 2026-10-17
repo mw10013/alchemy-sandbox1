@@ -4,15 +4,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { EmailFromInput } from "../../../src/contract/auth.ts";
-import { ShopFixtureData } from "../../../src/contract/fixture.ts";
+import { FIXTURE_ORDER_PREFIX, ShopFixtureData } from "../../../src/contract/fixture.ts";
 import type { Member } from "../../../src/contract/members.ts";
 import { ShopKey } from "../../../src/contract/shop.ts";
-import {
-  type ActorFixtureRows,
-  FIXTURE_ORDER_PREFIX,
-  Fixtures,
-  fixtureRows,
-} from "../../../src/backend/fixture.ts";
+import { type ActorFixtureRows, Fixtures, fixtureRows } from "../../../src/backend/fixture.ts";
 import { Members } from "../../../src/backend/members.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";

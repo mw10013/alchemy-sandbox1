@@ -45,25 +45,26 @@ const members: ReadonlyArray<Member> = [
 ];
 
 /**
- * {@link DevHandlers} over in-memory members, sessions and actors, fresh per test. `revoked` and
- * `added` record what the handlers asked of the actors.
+ * {@link DevHandlers} over in-memory members, sessions and actors, fresh per test. `revoked`,
+ * `added` and `removedOrders` record what the handlers asked of the actors.
  */
 const harness = () => {
   const revoked: Array<{ key: ShopKey; by: "member" | "session"; id: string }> = [];
   const added: Array<{ key: ShopKey; rows: ActorFixtureRows }> = [];
+  const removedOrders: Array<{ key: ShopKey; orderId: string }> = [];
   const layer = DevHandlers.pipe(
     Layer.provideMerge(Fixtures.layer),
     Layer.provideMerge(
       Layer.mergeAll(
         Members.layerTest(members),
-        ShopActors.layerTest(revoked, undefined, [], added),
+        ShopActors.layerTest(revoked, undefined, [], added, removedOrders),
         testShopify([session]),
       ),
     ),
     Layer.provide(RuntimeContext.phantom),
     Layer.provide(QuietLogs),
   );
-  return { revoked, added, layer };
+  return { revoked, added, removedOrders, layer };
 };
 
 describe("DevRpcs", () => {
@@ -77,6 +78,20 @@ describe("DevRpcs", () => {
       const gone = yield* client.RemoveMember({ shop: SEED_SHOP, email: member });
       assert.isFalse(gone.removed);
       assert.strictEqual(revoked.length, 1);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("RemoveOrder removes the order from an installed shop's actor, and from no other", () => {
+    const { removedOrders, layer } = harness();
+    return Effect.gen(function* () {
+      const client = yield* RpcTest.makeClient(DevRpcs);
+      const orderId = "gid://shopify/Order/1";
+      assert.deepStrictEqual(yield* client.RemoveOrder({ shop: SEED_SHOP, orderId }), {
+        removed: true,
+      });
+      const error = yield* client.RemoveOrder({ shop: otherShop, orderId }).pipe(Effect.flip);
+      assert.strictEqual(error._tag, "ShopNotInstalled");
+      assert.deepStrictEqual(removedOrders, [{ key: SEED_SHOP, orderId }]);
     }).pipe(Effect.provide(layer));
   });
 

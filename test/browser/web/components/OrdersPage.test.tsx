@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import type { OrdersListPage } from "../../../../src/contract/shop-actor.ts";
 import type { OrderDetail, OrdersSyncStatus } from "../../../../src/domain/orders.ts";
 import type { AppBridge } from "../../../../src/web/client/app-bridge.ts";
-import OrdersPage, { type OrdersActions } from "../../../../src/web/components/OrdersPage.tsx";
+import OrdersPage, {
+  type OrdersActions,
+  type OrdersPageLink,
+} from "../../../../src/web/components/OrdersPage.tsx";
 import { renderInApp } from "../../render.tsx";
 import { shopTestRegistry } from "../../shop-actor.ts";
 import { SEED_SHOP } from "../../../seed-shops.ts";
@@ -37,10 +40,19 @@ const order = (n: number, overrides: Partial<OrderDetail["order"]> = {}): OrderD
   ],
 });
 
-const pageOf = (orders: ReadonlyArray<OrderDetail>): OrdersListPage => ({
-  orders,
-  limit: 25,
-  nextCursor: null,
+const pageOf = (
+  orders: ReadonlyArray<OrderDetail>,
+  nextCursor: string | null = null,
+): OrdersListPage => ({ orders, limit: 25, nextCursor });
+
+/** The route's Next page link, as a plain `href` with the cursor; clicks are recorded. */
+let pageClicks: Array<string> = [];
+const pageLink: OrdersPageLink = (cursor) => ({
+  href: `/app/orders?after=${encodeURIComponent(cursor)}`,
+  onClick: (event) => {
+    event.preventDefault();
+    pageClicks.push(cursor);
+  },
 });
 
 const idle: OrdersSyncStatus = { inFlight: false, lastError: null };
@@ -67,6 +79,7 @@ const appBridge: AppBridge = {
 
 beforeEach(() => {
   toasts = [];
+  pageClicks = [];
   globalThis.shopify = appBridge;
 });
 afterEach(() => {
@@ -80,7 +93,9 @@ const render = (
   renderInApp(
     <OrdersPage
       shop={SEED_SHOP}
+      cursor={null}
       page={page}
+      pageLink={pageLink}
       merchantToken={Effect.succeed("token")}
       actions={options.actions ?? quiet}
     />,
@@ -115,6 +130,51 @@ describe("OrdersPage", () => {
     await expect
       .element(screen.getByText(/^Press Sync open orders to bring in your open orders/u))
       .toBeVisible();
+  });
+
+  it("a fixture order's row offers neither the Shopify link nor Sync from Shopify", async () => {
+    const screen = await render(
+      pageOf([order(2), order(1, { id: "gid://shopify/Order/fixture-1", legacyId: "fixture-1" })]),
+    );
+    await expect.element(screen.getByText("#1", { exact: true })).toBeVisible();
+    await expect.element(screen.getByRole("link", { name: "Open #2 in Shopify" })).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Sync #2 from Shopify" }))
+      .toBeVisible();
+    await expect
+      .element(screen.getByRole("link", { name: "Open #1 in Shopify" }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("button", { name: "Sync #1 from Shopify" }))
+      .not.toBeInTheDocument();
+  });
+
+  it("Next page links to the page after the last row, and only while there is one", async () => {
+    const cursor = "1760000000000:gid://shopify/Order/1";
+    const screen = await render(pageOf([order(2), order(1)], cursor));
+    const next = screen.getByRole("link", { name: "Next page" });
+    await expect
+      .element(next)
+      .toHaveAttribute("href", `/app/orders?after=${encodeURIComponent(cursor)}`);
+    await next.click();
+    expect(pageClicks).toStrictEqual([cursor]);
+    await expect
+      .element(screen.getByRole("link", { name: "Previous page" }))
+      .not.toBeInTheDocument();
+  });
+
+  it("the last page has no Next page", async () => {
+    const screen = await render(pageOf([order(1)]));
+    await expect.element(screen.getByText("#1", { exact: true })).toBeVisible();
+    await expect.element(screen.getByRole("link", { name: "Next page" })).not.toBeInTheDocument();
+  });
+
+  it("a sync that starts toasts that it is syncing", async () => {
+    const screen = await render(pageOf([]));
+    await screen.getByRole("button", { name: "Sync open orders" }).click();
+    await expect
+      .poll(() => toasts)
+      .toStrictEqual([{ message: "Syncing open orders", isError: false }]);
   });
 
   it("a press while a sync runs toasts that one is already running", async () => {

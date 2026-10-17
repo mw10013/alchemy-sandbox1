@@ -102,6 +102,14 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /** Deletes one stored order; see `removeOrder` on {@link ShopActor}. */
+  const removeOrder = Effect.fn("ShopActors.removeOrder")(function* (
+    key: ShopKey,
+    orderId: string,
+  ) {
+    return yield* actors.getByName(key).removeOrder({ orderId });
+  });
+
   /** The webhook path's probe; see `orderVersion` on {@link ShopActor}. */
   const orderVersion = Effect.fn("ShopActors.orderVersion")(function* (
     key: ShopKey,
@@ -174,6 +182,7 @@ const make = Effect.gen(function* () {
     snapshot,
     loadFixture,
     addFixture,
+    removeOrder,
     orderVersion,
     storeOrder,
     getOrder,
@@ -195,9 +204,10 @@ export class ShopActors extends Context.Service<ShopActors, Effect.Success<typeo
   static readonly layer = Layer.effect(ShopActors, make);
 
   /**
-   * Records each revoke and closes nothing, answers every snapshot with `snapshot`, and records
+   * Records each revoke and closes nothing, answers every snapshot with `snapshot`, records
    * each fixture load in `loaded` and each fixture add in `added`, answering the counts of its
-   * rows; it never finds a clash. Its order and sync methods and `destroy` die: a test that reaches them
+   * rows (it never finds a clash), and records each order removal in `removedOrders`, answering
+   * that there was one. Its order and sync methods and `destroy` die: a test that reaches them
    * overrides them.
    */
   static readonly layerTest = (
@@ -205,6 +215,7 @@ export class ShopActors extends Context.Service<ShopActors, Effect.Success<typeo
     snapshot: ShopSnapshot = { count: { value: 0 }, activation: { id: "test" } },
     loaded: Array<{ key: ShopKey; rows: ActorFixtureRows }> = [],
     added: Array<{ key: ShopKey; rows: ActorFixtureRows }> = [],
+    removedOrders: Array<{ key: ShopKey; orderId: string }> = [],
   ) =>
     Layer.succeed(ShopActors, {
       revoke: (key, by, id) =>
@@ -230,6 +241,11 @@ export class ShopActors extends Context.Service<ShopActors, Effect.Success<typeo
             orders: rows.orders.length,
             lineItems: rows.lineItems.length,
           };
+        }),
+      removeOrder: (key, orderId) =>
+        Effect.sync(() => {
+          removedOrders.push({ key, orderId });
+          return { removed: true };
         }),
       orderVersion: () => Effect.die(new Error("ShopActors.layerTest: orderVersion")),
       storeOrder: () => Effect.die(new Error("ShopActors.layerTest: storeOrder")),

@@ -42,6 +42,9 @@ export type ShopSessionView = typeof ShopSessionView.Type;
  *   spec replaces the fixture or asserts on every row.
  * - `RemoveMember` removes a member, then revokes the member's sockets on that shop's actor and
  *   answers how many it closed.
+ * - `RemoveOrder` deletes one stored order (by its GID) with its items from an installed shop's
+ *   actor, and answers whether there was one. It is how an e2e spec takes a real order off the
+ *   orders screen so that only a sync can bring it back.
  * - `GetShopSession` reads a shop's stored session as {@link ShopSessionView}, or null when the
  *   shop has none.
  * - `ExpireShopSession` ages a shop's stored session: the access token expires a second ago, so
@@ -62,6 +65,11 @@ export const DevRpcs = RpcGroup.make(
   Rpc.make("RemoveMember", {
     payload: { shop: ShopKey, email: Email },
     success: Schema.Struct({ removed: Schema.Boolean, closed: Schema.Int }),
+  }),
+  Rpc.make("RemoveOrder", {
+    payload: { shop: ShopKey, orderId: Schema.NonEmptyString },
+    success: Schema.Struct({ removed: Schema.Boolean }),
+    error: ShopNotInstalled,
   }),
   Rpc.make("GetShopSession", {
     payload: { shop: ShopKey },
