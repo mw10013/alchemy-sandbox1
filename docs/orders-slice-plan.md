@@ -407,6 +407,18 @@ Step 7
 
 STAGING: ready for the orchestrator.
 
+### Follow-up round 1
+
+- 2026-10-17 Orchestrator decisions on the review: (1) keep the `FIXTURE_ORDER_PREFIX` rule, hide "Sync from Shopify" and the admin link on fixture rows, the refresh spec syncs a real order; (2) `orders.spec.ts`' third case waits for the started toast and then the spec's own order brought back by the sync (up to 180 s); (3) `app/scopes_update` without `current` answers 400; (4) Debug logs on the actor's socket accept and close; (5) restore legacy's failed-teardown sentence in the compliance JSDoc; (6) `ORDER_SYNC_WINDOW_DAYS` stays; (7) "Next page" on `/app/orders` over the keyset cursor, kept in search params and on `MerchantListOrders`; (8) a runbook sentence: press Sync open orders after `vp run fixture`; (9) the flake note stays.
+
+- 2026-10-17 [Follow-up 1] (3) `Webhooks.scopesUpdate` maps a payload without `current` to a 400 `WebhookRejected`, as `ordersWebhook` does; its JSDoc gives the reason (a malformed payload does not improve on retry). The unit test now reads "an app/scopes_update payload without current answers 400 and writes nothing". The JSDoc never said "500 as legacy did"; the reason was added rather than replaced.
+- 2026-10-17 [Follow-up 1] (4) `ShopActor` logs at Debug: `ShopActor.fetch: shop=… role=…: socket accepted` after an accept, and `ShopActor.webSocketClose: shop=… role=… code=…: <reason>` (annotated `shop`, `role`, `code`, `reason`; `role=none` for a socket without an identity) before handing the close to `ActorSocket`. Both live in `src/backend/shop-actor.ts`, which knows the shop; `actor-socket.ts` is unchanged. Surprising: Alchemy's Worker runtime sets the minimum log level to Info unless the Worker's env has `DEBUG` (`WorkerBridge.ts`), so neither line shows in `.logs/dev/current` or `.logs/e2e/current` today (0 hits after the e2e run). Diagnosing the missed-row case needs `DEBUG` set on the dev Backend, or these at Info.
+- 2026-10-17 [Follow-up 1] (5) The compliance JSDoc restores legacy's sentence: `handle` logs every failure at Error "and {@link ShopActors}' `destroy` logs `status=failed`" (`ShopActors` was already imported in `webhooks.ts`).
+- 2026-10-17 [Follow-up 1] (8) `docs/shopify-stores-runbook.md`, the shop half: `LoadFixture` replaces the stored orders, so the store's real orders are missing from `/app/orders` until you press **Sync open orders** there.
+- 2026-10-17 [Follow-up 1] `vp check --fix` then `vp check`: green, 244 files formatted, 200 linted and type-checked. `vp test`: green first run, 44 files, 511 tests, 43.3 s. `vp run test:e2e`: green, 32 passed, 2.2 min. Nine leaked `.alchemy/local/baton-test-…-ShopActor` directories deleted.
+
+- 2026-10-17 [Follow-up 1] Lead: diff read; kept the socket logs at Debug as decided. Needs a decision: the Workers runtime logs Debug only when the Worker's env has `DEBUG` set, so these lines show in no log today; set `DEBUG` on the dev Backend when diagnosing, or raise them to Info.
+
 ### Human steps requested
 
 - 2026-10-17 [Step 7] `embedded/orders.spec.ts` needs store auth on the e2e store. Run once, approve the Shopify CLI Connector App install in the browser page it opens:

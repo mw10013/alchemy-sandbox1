@@ -300,12 +300,12 @@ describe("Webhooks.serve", () => {
     }).pipe(Effect.provide(layer([]))),
   );
 
-  it.effect("an app/scopes_update payload without current answers 500 and writes nothing", () =>
+  it.effect("an app/scopes_update payload without current answers 400 and writes nothing", () =>
     Effect.gen(function* () {
       const response = yield* serve(
         yield* webhookRequest({ topic: "app/scopes_update", payload: { previous: [] } }),
       );
-      assert.strictEqual(response.status, 500);
+      assert.strictEqual(response.status, 400);
       assert.deepStrictEqual(yield* storedScope, Option.some("read_products"));
     }).pipe(Effect.provide(layer())),
   );

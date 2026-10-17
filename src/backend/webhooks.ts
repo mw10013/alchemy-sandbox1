@@ -113,8 +113,8 @@ const ok = HttpServerResponse.empty({ status: 200 });
  * Burning all 8 attempts takes a sustained multi-hour failure, so the loss is outage-bound and
  * correlated rather than a steady drip, and a stranded actor bills only storage, with nothing
  * calling it to add requests, rows or duration. It is not silent either: {@link Webhooks}'
- * `handle` logs every failure at Error with shop and topic, so a burned budget is visible and
- * can be cleaned up by hand.
+ * `handle` logs every failure at Error with shop and topic, and {@link ShopActors}' `destroy`
+ * logs `status=failed`, so a burned budget is visible and can be cleaned up by hand.
  *
  * Acting on `shop/redact` as a backstop was considered and rejected. Doing it unconditionally is
  * the resurrection bug above. Guarding on a surviving `ShopSession` row avoids that but trades
@@ -159,9 +159,15 @@ const make = Effect.gen(function* () {
     );
   });
 
-  /** Rewrites the stored scope; a shop with no session row is left without one. */
+  /**
+   * Rewrites the stored scope; a shop with no session row is left without one. A payload without
+   * `current` fails as a 400 {@link WebhookRejected}, as {@link ordersWebhook}'s does: a malformed
+   * payload does not improve on retry, so a 500 would only burn Shopify's retries.
+   */
   const scopesUpdate = Effect.fn("Webhooks.scopesUpdate")(function* (webhook: ValidatedWebhook) {
-    const { current } = yield* decodeScopesUpdate(webhook.payload);
+    const { current } = yield* decodeScopesUpdate(webhook.payload).pipe(
+      Effect.mapError(() => new WebhookRejected({ status: 400 })),
+    );
     yield* shopSessions.updateScope(webhook.shop, current.join(","));
     return ok;
   });

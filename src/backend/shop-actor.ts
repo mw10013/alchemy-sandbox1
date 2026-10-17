@@ -557,6 +557,12 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
         }
         const connectedAt = yield* Clock.currentTimeMillis;
         const accepted = yield* socket.fetch({ caller: caller.value, connectedAt });
+        if (Option.isSome(accepted.socket)) {
+          const role = caller.value.role;
+          yield* Effect.logDebug(
+            `ShopActor.fetch: shop=${shop} role=${role}: socket accepted`,
+          ).pipe(Effect.annotateLogs({ shop, role }));
+        }
         if (caller.value.role === "member" && Option.isSome(accepted.socket))
           yield* displace(caller.value.memberId, accepted.socket.value);
         return accepted.response;
@@ -981,10 +987,26 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
         yield* state.abort(ABORT_UNINSTALLED);
       }, Effect.provide(runtime));
 
+      /**
+       * Logs the close at Debug with the caller's role and the close code and reason, then hands
+       * the socket to the transport. A socket without an identity logs `role=none`.
+       */
+      const webSocketClose = (ws: Cloudflare.Workers.WebSocket, code: number, reason: string) =>
+        Effect.gen(function* () {
+          const role = Option.match(decodeIdentity(ws.deserializeAttachment<unknown>()), {
+            onNone: () => "none",
+            onSome: ({ shopActor }) => shopActor.caller.role,
+          });
+          yield* Effect.logDebug(
+            `ShopActor.webSocketClose: shop=${shop} role=${role} code=${String(code)}: ${reason}`,
+          ).pipe(Effect.annotateLogs({ shop, role, code, reason }));
+          yield* socket.webSocketClose(ws);
+        });
+
       return {
         fetch,
         webSocketMessage: socket.webSocketMessage,
-        webSocketClose: socket.webSocketClose,
+        webSocketClose,
         webSocketError: socket.webSocketError,
         revoke,
         snapshot,
