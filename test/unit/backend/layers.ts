@@ -13,7 +13,7 @@ import type { Member } from "../../../src/contract/members.ts";
 import type { ShopKey } from "../../../src/contract/shop.ts";
 import { ShopifyAdmin, type ShopifyAdminError } from "../../../src/backend/shopify-admin.ts";
 import type { OrdersSyncParams } from "../../../src/backend/orders-sync-workflow.ts";
-import type { OrdersSyncWorkflows } from "../../../src/backend/shop-actor/orders-sync-workflows.ts";
+import type { OrdersSyncWorkflows } from "../../../src/backend/shop-actor/orders-agent.ts";
 import { settleDestroy, ShopActors } from "../../../src/backend/shop-actors.ts";
 import { migrations, syncTransaction } from "../../../src/backend/shop-actor.ts";
 import { makeOrderRepository } from "../../../src/backend/shop-actor/orders.ts";

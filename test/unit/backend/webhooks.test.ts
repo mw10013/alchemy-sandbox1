@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { ShopLimits } from "../../../src/domain/platform.ts";
 import { orderSyncQuery, orderSyncVariables } from "../../../src/backend/order-sync.ts";
-import { ABORT_UNINSTALLED } from "../../../src/backend/shop-actor.ts";
+import { ABORT_UNINSTALLED } from "../../../src/backend/shop-actor/tag.ts";
 import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
 import { ReauthorizationRequired, Shopify } from "../../../src/backend/shopify.ts";
 import type { ShopifyAdminError } from "../../../src/backend/shopify-admin.ts";

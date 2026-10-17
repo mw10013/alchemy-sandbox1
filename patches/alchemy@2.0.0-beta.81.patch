@@ -1,3 +1,24 @@
+diff --git a/lib/Cloudflare/Workers/LocalWorkerProvider.js b/lib/Cloudflare/Workers/LocalWorkerProvider.js
+index 4c138fa337aed0bcc2bbb61705f5ca004fb253a8..81d23d2b1a94435890cb457c8b8dc52b92548028 100644
+--- a/lib/Cloudflare/Workers/LocalWorkerProvider.js
++++ b/lib/Cloudflare/Workers/LocalWorkerProvider.js
+@@ -1056,9 +1056,14 @@ export const LocalWorkerProvider = () => LocalProvider.make(Worker, LOCAL_PROVID
+             for (const { data } of bindings) {
+                 for (const binding of data?.bindings ?? []) {
+                     if (binding.type === "durable_object_namespace") {
++                        // A binding to this Worker's own class (no `scriptName`, or `.from(Self)`, whose
++                        // `scriptName` is this Worker's name as an Output that cannot resolve before the
++                        // Worker exists) is local, as in `resolveConfig`.
++                        const host = typeof binding.scriptName === "string" && binding.scriptName !== name
++                            ? binding.scriptName
++                            : name;
+                         durableObjectNamespaces[binding.className] =
+-                            binding.namespaceId ??
+-                                encodeURIComponent(`${binding.scriptName}-${binding.className}`);
++                            binding.namespaceId ?? encodeURIComponent(`${host}-${binding.className}`);
+                     }
+                 }
+             }
 diff --git a/package.json b/package.json
 index c75d103f082483bcb8dc4e4f1f4c4aa27ac343df..996830b2afef41bf729be18ecaf529ce2cf602bf 100644
 --- a/package.json
@@ -14,3 +35,25 @@ index c75d103f082483bcb8dc4e4f1f4c4aa27ac343df..996830b2afef41bf729be18ecaf529ce
      "./Cloudflare/RpcWebSocketClient": {
        "types": "./lib/Cloudflare/Workers/RpcWebSocketClient.d.ts",
        "bun": "./src/Cloudflare/Workers/RpcWebSocketClient.ts",
+diff --git a/src/Cloudflare/Workers/LocalWorkerProvider.ts b/src/Cloudflare/Workers/LocalWorkerProvider.ts
+index 7a7936208ec6d27641f324bb2e1720020c34c332..eefae5d050b3627f8bd5e215d90978a152bbe0eb 100644
+--- a/src/Cloudflare/Workers/LocalWorkerProvider.ts
++++ b/src/Cloudflare/Workers/LocalWorkerProvider.ts
+@@ -1352,9 +1352,15 @@ export const LocalWorkerProvider = () =>
+           for (const { data } of bindings) {
+             for (const binding of data?.bindings ?? []) {
+               if (binding.type === "durable_object_namespace") {
++                // A binding to this Worker's own class (no `scriptName`, or `.from(Self)`, whose
++                // `scriptName` is this Worker's name as an Output that cannot resolve before the
++                // Worker exists) is local, as in `resolveConfig`.
++                const host =
++                  typeof binding.scriptName === "string" && binding.scriptName !== name
++                    ? binding.scriptName
++                    : name;
+                 durableObjectNamespaces[binding.className] =
+-                  binding.namespaceId ??
+-                  encodeURIComponent(`${binding.scriptName!}-${binding.className}`);
++                  binding.namespaceId ?? encodeURIComponent(`${host}-${binding.className}`);
+               }
+             }
+           }

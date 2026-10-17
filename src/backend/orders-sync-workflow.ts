@@ -15,7 +15,6 @@ import {
   BULK_GIVE_UP_MS,
   BULK_POLL_INTERVAL_MS,
   GAVE_UP_MESSAGE,
-  ORDERS_SYNC_WORKFLOW,
 } from "./orders-sync-constants.ts";
 import { ShopActors } from "./shop-actors.ts";
 import { ShopSessions } from "./shop-sessions.ts";
@@ -295,9 +294,10 @@ export const ordersSyncBody = Effect.gen(function* () {
  * created by the shop's actor (`OrdersAgent.syncOpenOrders`) and named by the `workflowId` it
  * recorded. Params `{ shop }`. The body is
  * {@link ordersSyncBody}; its services resolve in the Backend's init, which runs again in any
- * isolate an instance lands in.
+ * isolate an instance lands in. It reaches the actor through {@link ShopActors.layerFrom}, by
+ * identity only, because the actor's implementation yields this class.
  */
 export class OrdersSyncWorkflow extends Cloudflare.Workflow<OrdersSyncWorkflow>()(
-  ORDERS_SYNC_WORKFLOW,
-  ordersSyncBody,
+  "OrdersSyncWorkflow",
+  ordersSyncBody.pipe(Effect.provide(ShopActors.layerFrom)),
 ) {}

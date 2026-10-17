@@ -39,7 +39,8 @@ import { ShopifyAdmin } from "./shopify-admin.ts";
 import { ShopSessions } from "./shop-sessions.ts";
 import { workerNameOf } from "./stage.ts";
 import { Webhooks } from "./webhooks.ts";
-import ShopActor, { ShopActorLive } from "./shop-actor.ts";
+import { ShopActorLive } from "./shop-actor.ts";
+import ShopActor from "./shop-actor/tag.ts";
 
 /** Under `alchemy dev` the limiter is open; see {@link SignInLimiter.layerOpen}. */
 const signInLimiter = Layer.unwrap(
@@ -170,9 +171,11 @@ export const backendProps = {
  * (see {@link refuseUpgrade}). Anything but an upgrade there is 426: there is no HTTP RPC into
  * the actor. A path under `/api/actor/` that names no key is 404.
  *
- * It also hosts {@link OrdersSyncWorkflow}: yielding the class here is what binds the Workflow
- * to the Backend's script and exports it. Nothing here creates an instance; the shop's actor
- * does, over that binding, since it cannot yield the class itself (`makeOrdersSyncWorkflows`).
+ * It also hosts {@link OrdersSyncWorkflow}. Nothing here creates an instance; the shop's actor
+ * does, over the handle its own outer phase yields. The yield here is for the class export: at
+ * runtime this init does not run the actor's outer phase (only at plan, against a mock state),
+ * so without it an isolate where no actor has activated would have no Workflow class to run an
+ * instance in. Alchemy memoizes by logical id, so the two yields are one Workflow.
  *
  * {@link DevRpcs} on `/api/dev` exists only with the `DEV_ENDPOINT` binding; see there.
  */

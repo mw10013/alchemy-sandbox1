@@ -20,7 +20,7 @@ import {
 } from "../../src/backend/backend.ts";
 import { MagicLinkDelivery } from "../../src/backend/magic-link-delivery.ts";
 import { Members } from "../../src/backend/members.ts";
-import ShopActor from "../../src/backend/shop-actor.ts";
+import ShopActor from "../../src/backend/shop-actor/tag.ts";
 import { ShopActors } from "../../src/backend/shop-actors.ts";
 import { IntegHandlers, IntegRpcs } from "./rpcs.ts";
 import { ShopifyFake } from "./shopify-fake.ts";

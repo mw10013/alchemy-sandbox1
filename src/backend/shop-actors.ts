@@ -8,7 +8,8 @@ import type { OrdersListInput, ShopSnapshot } from "../contract/shop-actor.ts";
 import * as Match from "effect/Match";
 import { FixtureConflict } from "../contract/fixture.ts";
 import type { ActorFixtureRows } from "./fixture.ts";
-import ShopActor, { ABORT_UNINSTALLED } from "./shop-actor.ts";
+import type { Dependencies } from "alchemy";
+import ShopActor, { ABORT_UNINSTALLED } from "./shop-actor/tag.ts";
 
 /**
  * `ShopActors.destroy`'s reading of the stub call (legacy's `destroyShopAgent`). The actor's abort
@@ -47,146 +48,168 @@ const isUninstallAbort = (error: unknown) =>
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-const make = Effect.gen(function* () {
-  const actors = yield* ShopActor;
+const make = <R>(namespace: Effect.Effect<Effect.Success<typeof ShopActor>, never, R>) =>
+  Effect.gen(function* () {
+    const actors = yield* namespace;
 
-  /**
-   * `revoke` on a shop's actor. Best effort: a failure is logged and counts as nothing closed,
-   * because the edit that called for it is already written and a stale socket is bounded by
-   * its session's expiry.
-   */
-  const revoke = Effect.fn("ShopActors.revoke")(function* (
-    key: ShopKey,
-    by: "member" | "session",
-    id: string,
-  ) {
-    return yield* actors
-      .getByName(key)
-      .revoke({ by, id })
-      .pipe(
-        Effect.catchCause((cause) =>
-          Effect.logError(`ShopActors.revoke: shop=${key} by=${by}`, cause).pipe(
-            Effect.as({ closed: 0 }),
+    /**
+     * `revoke` on a shop's actor. Best effort: a failure is logged and counts as nothing closed,
+     * because the edit that called for it is already written and a stale socket is bounded by
+     * its session's expiry.
+     */
+    const revoke = Effect.fn("ShopActors.revoke")(function* (
+      key: ShopKey,
+      by: "member" | "session",
+      id: string,
+    ) {
+      return yield* actors
+        .getByName(key)
+        .revoke({ by, id })
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logError(`ShopActors.revoke: shop=${key} by=${by}`, cause).pipe(
+              Effect.as({ closed: 0 }),
+            ),
           ),
-        ),
+        );
+    });
+
+    const snapshot = Effect.fn("ShopActors.snapshot")(function* (key: ShopKey) {
+      return yield* actors.getByName(key).snapshot();
+    });
+
+    /** Replaces the shop's work with `rows`; see `loadFixture` on {@link ShopActor}. */
+    const loadFixture = Effect.fn("ShopActors.loadFixture")(function* (
+      key: ShopKey,
+      rows: ActorFixtureRows,
+    ) {
+      return yield* actors.getByName(key).loadFixture(rows);
+    });
+
+    /**
+     * Adds `rows` beside the shop's work; see `addFixture` on {@link ShopActor}. Its `Conflict`
+     * answer is {@link FixtureConflict}.
+     */
+    const addFixture = Effect.fn("ShopActors.addFixture")(function* (
+      key: ShopKey,
+      rows: ActorFixtureRows,
+    ) {
+      const answer = yield* actors.getByName(key).addFixture(rows);
+      return yield* Match.value(answer).pipe(
+        Match.tagsExhaustive({
+          Added: ({ counts }) => Effect.succeed(counts),
+          Conflict: ({ reason }) => Effect.fail(new FixtureConflict({ shop: key, reason })),
+        }),
       );
-  });
+    });
 
-  const snapshot = Effect.fn("ShopActors.snapshot")(function* (key: ShopKey) {
-    return yield* actors.getByName(key).snapshot();
-  });
+    /** Deletes one stored order; see `removeOrder` on {@link ShopActor}. */
+    const removeOrder = Effect.fn("ShopActors.removeOrder")(function* (
+      key: ShopKey,
+      orderId: string,
+    ) {
+      return yield* actors.getByName(key).removeOrder({ orderId });
+    });
 
-  /** Replaces the shop's work with `rows`; see `loadFixture` on {@link ShopActor}. */
-  const loadFixture = Effect.fn("ShopActors.loadFixture")(function* (
-    key: ShopKey,
-    rows: ActorFixtureRows,
-  ) {
-    return yield* actors.getByName(key).loadFixture(rows);
-  });
+    /**
+     * One `orders/*` delivery for an installed shop; see `syncOrderWebhook` on {@link ShopActor}.
+     * Call it only after reading the shop's `ShopSession`: any stub call recreates an uninstalled
+     * shop's actor.
+     */
+    const syncOrderWebhook = Effect.fn("ShopActors.syncOrderWebhook")(function* (
+      key: ShopKey,
+      input: {
+        readonly orderId: string;
+        readonly topic: string;
+        readonly updatedAt: number | null;
+      },
+    ) {
+      return yield* actors.getByName(key).syncOrderWebhook(input);
+    });
 
-  /**
-   * Adds `rows` beside the shop's work; see `addFixture` on {@link ShopActor}. Its `Conflict`
-   * answer is {@link FixtureConflict}.
-   */
-  const addFixture = Effect.fn("ShopActors.addFixture")(function* (
-    key: ShopKey,
-    rows: ActorFixtureRows,
-  ) {
-    const answer = yield* actors.getByName(key).addFixture(rows);
-    return yield* Match.value(answer).pipe(
-      Match.tagsExhaustive({
-        Added: ({ counts }) => Effect.succeed(counts),
-        Conflict: ({ reason }) => Effect.fail(new FixtureConflict({ shop: key, reason })),
-      }),
-    );
-  });
+    /** One stored order with its items, or null. */
+    const getOrder = Effect.fn("ShopActors.getOrder")(function* (key: ShopKey, orderId: string) {
+      return yield* actors.getByName(key).getOrder({ orderId });
+    });
 
-  /** Deletes one stored order; see `removeOrder` on {@link ShopActor}. */
-  const removeOrder = Effect.fn("ShopActors.removeOrder")(function* (
-    key: ShopKey,
-    orderId: string,
-  ) {
-    return yield* actors.getByName(key).removeOrder({ orderId });
-  });
+    /** One page of the shop's orders, newest first. */
+    const listOrders = Effect.fn("ShopActors.listOrders")(function* (
+      key: ShopKey,
+      input: OrdersListInput,
+    ) {
+      return yield* actors.getByName(key).listOrders(input);
+    });
 
-  /**
-   * One `orders/*` delivery for an installed shop; see `syncOrderWebhook` on {@link ShopActor}.
-   * Call it only after reading the shop's `ShopSession`: any stub call recreates an uninstalled
-   * shop's actor.
-   */
-  const syncOrderWebhook = Effect.fn("ShopActors.syncOrderWebhook")(function* (
-    key: ShopKey,
-    input: { readonly orderId: string; readonly topic: string; readonly updatedAt: number | null },
-  ) {
-    return yield* actors.getByName(key).syncOrderWebhook(input);
-  });
+    /** Streams a completed export into the shop; see `onOrdersStream` on {@link ShopActor}. */
+    const onOrdersStream = Effect.fn("ShopActors.onOrdersStream")(function* (
+      key: ShopKey,
+      input: { readonly workflowId: string; readonly url: string },
+    ) {
+      return yield* actors.getByName(key).onOrdersStream(input);
+    });
 
-  /** One stored order with its items, or null. */
-  const getOrder = Effect.fn("ShopActors.getOrder")(function* (key: ShopKey, orderId: string) {
-    return yield* actors.getByName(key).getOrder({ orderId });
-  });
+    /** Ends a sync that found nothing; see `onOrdersSyncEmpty` on {@link ShopActor}. */
+    const onOrdersSyncEmpty = Effect.fn("ShopActors.onOrdersSyncEmpty")(function* (
+      key: ShopKey,
+      input: { readonly workflowId: string },
+    ) {
+      yield* actors.getByName(key).onOrdersSyncEmpty(input);
+    });
 
-  /** One page of the shop's orders, newest first. */
-  const listOrders = Effect.fn("ShopActors.listOrders")(function* (
-    key: ShopKey,
-    input: OrdersListInput,
-  ) {
-    return yield* actors.getByName(key).listOrders(input);
-  });
+    /** Ends a sync that failed; see `onOrdersSyncError` on {@link ShopActor}. */
+    const onOrdersSyncError = Effect.fn("ShopActors.onOrdersSyncError")(function* (
+      key: ShopKey,
+      input: { readonly workflowId: string; readonly message: string },
+    ) {
+      yield* actors.getByName(key).onOrdersSyncError(input);
+    });
 
-  /** Streams a completed export into the shop; see `onOrdersStream` on {@link ShopActor}. */
-  const onOrdersStream = Effect.fn("ShopActors.onOrdersStream")(function* (
-    key: ShopKey,
-    input: { readonly workflowId: string; readonly url: string },
-  ) {
-    return yield* actors.getByName(key).onOrdersStream(input);
-  });
+    /** Destroys the shop's actor; see `destroy` on {@link ShopActor} and {@link settleDestroy}. */
+    const destroy = Effect.fn("ShopActors.destroy")(function* (key: ShopKey) {
+      yield* settleDestroy(key, actors.getByName(key).destroy());
+    });
 
-  /** Ends a sync that found nothing; see `onOrdersSyncEmpty` on {@link ShopActor}. */
-  const onOrdersSyncEmpty = Effect.fn("ShopActors.onOrdersSyncEmpty")(function* (
-    key: ShopKey,
-    input: { readonly workflowId: string },
-  ) {
-    yield* actors.getByName(key).onOrdersSyncEmpty(input);
+    return {
+      destroy,
+      revoke,
+      snapshot,
+      loadFixture,
+      addFixture,
+      removeOrder,
+      syncOrderWebhook,
+      getOrder,
+      listOrders,
+      onOrdersStream,
+      onOrdersSyncEmpty,
+      onOrdersSyncError,
+    };
   });
-
-  /** Ends a sync that failed; see `onOrdersSyncError` on {@link ShopActor}. */
-  const onOrdersSyncError = Effect.fn("ShopActors.onOrdersSyncError")(function* (
-    key: ShopKey,
-    input: { readonly workflowId: string; readonly message: string },
-  ) {
-    yield* actors.getByName(key).onOrdersSyncError(input);
-  });
-
-  /** Destroys the shop's actor; see `destroy` on {@link ShopActor} and {@link settleDestroy}. */
-  const destroy = Effect.fn("ShopActors.destroy")(function* (key: ShopKey) {
-    yield* settleDestroy(key, actors.getByName(key).destroy());
-  });
-
-  return {
-    destroy,
-    revoke,
-    snapshot,
-    loadFixture,
-    addFixture,
-    removeOrder,
-    syncOrderWebhook,
-    getOrder,
-    listOrders,
-    onOrdersStream,
-    onOrdersSyncEmpty,
-    onOrdersSyncError,
-  };
-});
 
 /**
  * The Backend's own calls on a shop's actor: schemaless methods on its stub, which only the
  * Backend holds. A browser reaches the actor only through its socket.
  */
-export class ShopActors extends Context.Service<ShopActors, Effect.Success<typeof make>>()(
-  "app/ShopActors",
-) {
-  static readonly layer = Layer.effect(ShopActors, make);
+export class ShopActors extends Context.Service<
+  ShopActors,
+  Effect.Success<ReturnType<typeof make>>
+>()("app/ShopActors") {
+  /** Over the actor's own binding, which needs {@link ShopActor}'s implementation layer. */
+  static readonly layer = Layer.effect(ShopActors, make(ShopActor));
+
+  /**
+   * Over `ShopActor.from` the Worker it runs in, the identity-only binding, which needs no
+   * implementation: the orders sync Workflow's, since the actor's implementation yields the
+   * Workflow. It resolves to the same namespace as {@link ShopActors.layer}. The cast: the
+   * running Worker's service type cannot name the classes its script hosts.
+   */
+  static readonly layerFrom = Layer.effect(
+    ShopActors,
+    make(
+      ShopActor.from(
+        Effect.map(Cloudflare.Worker, (worker) => worker as unknown as Dependencies<ShopActor>),
+      ),
+    ),
+  );
 
   /**
    * Records each revoke and closes nothing, answers every snapshot with `snapshot`, records

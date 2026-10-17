@@ -16,7 +16,18 @@ import {
 import { ShopifyUnavailable } from "../shopify.ts";
 import type { ShopifyAdmin } from "../shopify-admin.ts";
 import type { OrderRepository, Transaction } from "./orders.ts";
-import type { OrdersSyncWorkflows } from "./orders-sync-workflows.ts";
+import type { OrdersSyncParams } from "../orders-sync-workflow.ts";
+
+/**
+ * The part of Alchemy's handle on `OrdersSyncWorkflow` the agent calls: `create`, one instance
+ * per press. A failed create is a defect, as Alchemy's handle has it.
+ */
+export interface OrdersSyncWorkflows {
+  readonly create: (options: {
+    readonly id: string;
+    readonly params: OrdersSyncParams;
+  }) => Effect.Effect<unknown>;
+}
 
 /** What one `orders/*` delivery came to in the actor; the delivery is answered 200 for each. */
 export type OrderWebhookStatus = "stale" | "refused" | "gone" | "stored";

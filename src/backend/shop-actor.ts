@@ -57,7 +57,8 @@ import {
   type Transaction,
 } from "./shop-actor/orders.ts";
 import { makeOrdersAgent } from "./shop-actor/orders-agent.ts";
-import { makeOrdersSyncWorkflows } from "./shop-actor/orders-sync-workflows.ts";
+import { OrdersSyncWorkflow } from "./orders-sync-workflow.ts";
+import ShopActor, { ABORT_UNINSTALLED, type ShopActorShape } from "./shop-actor/tag.ts";
 import { ShopSessions } from "./shop-sessions.ts";
 import type { EnsureShopSessionError } from "./shopify.ts";
 import { runOrdersStream } from "./shop-actor/orders-stream.ts";
@@ -94,12 +95,6 @@ const DISPLACED_REASON = "signed in elsewhere";
 const EXPIRED_REASON = "session expired";
 const UNIDENTIFIED_REASON = "unidentified connection";
 const UNINSTALLED_REASON = "uninstalled";
-
-/**
- * The reason `ShopActor.destroy` aborts the object with. The stub call it lands in rejects with
- * an `Error` of this message, which is how `ShopActors.destroy` tells the abort from a failure.
- */
-export const ABORT_UNINSTALLED = "uninstalled";
 
 /**
  * How long `destroy` waits for the sockets it closed to finish their close handshake before it
@@ -404,7 +399,7 @@ const makeShopActor = Effect.gen(function* () {
   const state = yield* Cloudflare.DurableObjectState;
   const admin = yield* ShopifyAdmin;
   const shopSessions = yield* ShopSessions;
-  const workflows = makeOrdersSyncWorkflows(yield* Cloudflare.WorkerEnvironment);
+  const workflows = yield* OrdersSyncWorkflow;
   return Effect.gen(function* () {
     // Every actor is reached by name (`getByName`), so a nameless id is a broken invariant.
     const shop = yield* Effect.fromOption(decodeShopKey(state.id.name)).pipe(Effect.orDie);
@@ -931,11 +926,7 @@ const makeShopActor = Effect.gen(function* () {
         yield* socket.webSocketClose(ws);
       });
 
-    return {
-      fetch,
-      webSocketMessage: socket.webSocketMessage,
-      webSocketClose,
-      webSocketError: socket.webSocketError,
+    const stub: ShopActorShape = {
       revoke,
       snapshot,
       loadFixture,
@@ -949,24 +940,20 @@ const makeShopActor = Effect.gen(function* () {
       onOrdersSyncError,
       destroy,
     };
+    return {
+      fetch,
+      webSocketMessage: socket.webSocketMessage,
+      webSocketClose,
+      webSocketError: socket.webSocketError,
+      ...stub,
+    };
   });
 });
 
 /**
- * One shop's actor, named by its {@link ShopKey}, holding the shop's work in private SQLite
- * ({@link migrations}). After a write it pushes a `Notice` to every socket so each browser
- * refetches; it never pushes the value.
- *
- * It has two surfaces that never overlap. Browsers call `ShopActorRpcs` with Effect RPC over a
- * hibernating WebSocket; there is no HTTP RPC into the actor. The Backend and the orders sync
- * Workflow call the schemaless methods `revoke`, `snapshot`, `loadFixture`, `addFixture`,
- * `removeOrder`, `syncOrderWebhook`, `getOrder`, `listOrders`, `onOrdersStream`,
- * `onOrdersSyncEmpty`, `onOrdersSyncError` and `destroy` on its stub, which no browser can reach.
- *
- * It owns its shop, as legacy's `ShopAgent` does: it fetches an order from the Admin API itself
- * (`OrdersAgent`, over the Backend's own `ShopifyAdmin`, which refreshes the offline token when a
- * call needs it), reads the shop's `ShopSession`, and creates the orders sync Workflow's instance
- * itself; the Workflow makes the bulk calls and calls the actor back.
+ * {@link ShopActor}'s implementation as a layer: provided in the Backend's init above the
+ * services it yields, so every activation uses the Backend's own `ShopifyAdmin` (and the D1 and
+ * secret behind it) rather than a second build. Its store is {@link migrations}.
  *
  * Who is on a socket is fixed when the socket is accepted: the Backend's gate resolves the
  * browser and names it in {@link CONNECTION_HEADER} on the upgrade it forwards, and the actor
@@ -984,22 +971,14 @@ const makeShopActor = Effect.gen(function* () {
  * The outer phase takes handles only: it runs at plan time against a mock state inside the
  * Backend's init, which is what attaches every binding it yields to the Backend's script, and
  * once per activation at runtime, where the services are the Backend's own instances, captured
- * where {@link ShopActorLive} is provided. The inner phase runs once per activation too,
- * including after a hibernation wake, so the SQL client is rebuilt and the migrator re-checks its table each time. Migrations run
- * inside the `blockConcurrencyWhile` Alchemy wraps construction in, so no request sees a
+ * where this layer is provided. Yielding {@link OrdersSyncWorkflow} gives Alchemy's typed handle;
+ * it runs the Workflow's outer phase each time, which binds the actor by identity only, so the
+ * cycle closes. The inner phase runs once per activation too, including after a hibernation
+ * wake, so the SQL client is rebuilt and the migrator re-checks its table each time. Migrations
+ * run inside the `blockConcurrencyWhile` Alchemy wraps construction in, so no request sees a
  * half-migrated store. The client is built on the ambient scope, as Alchemy's
  * `Drizzle.DurableObject` does: it wraps the object's local storage, so nothing behind it needs
  * releasing. A single-statement write needs no transaction; a multi-statement one goes through
  * `transaction` ({@link syncTransaction}), and the orders repository is built over both.
- */
-export default class ShopActor extends Cloudflare.DurableObject<
-  ShopActor,
-  Effect.Success<Effect.Success<typeof makeShopActor>>
->()("ShopActor") {}
-
-/**
- * {@link ShopActor}'s implementation as a layer: provided in the Backend's init above the
- * services it yields, so every activation uses the Backend's own `ShopifyAdmin` (and the D1 and
- * secret behind it) rather than a second build.
  */
 export const ShopActorLive = ShopActor.make(makeShopActor);
