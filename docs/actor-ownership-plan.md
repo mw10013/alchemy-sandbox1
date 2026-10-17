@@ -247,6 +247,10 @@ Needs a decision:
 - One `[Website] Worker request failed: socket hang up` after `shop.spec.ts`' member revoke, in one e2e run (Step 3); member code was untouched, not seen again. Watch it.
 - Non-legacy test titles that named deleted stubs were renamed (old → new in Deviations, Steps 1–2); two unit cases left because their session guard now lives in the actor (integ covers it).
 
+### Follow-up round 1
+
+- 2026-10-17 Orchestrator decisions on the review: (1) the dev-store check's second half goes to the user; (2) `socket.spec.ts` keeps `window.__TSR_ROUTER__` for now, and moves to the App nav link when slice C adds `s-app-nav` (members-teams research Q9); (3) `SocketBanner` in the layout above each page is accepted as built (one holder, legacy's tone and copy); (4) staging checks the modular actor and the actor-created Workflow as the review lists; (5) the one `socket hang up` after a member revoke is watched, not chased; (6) the renamed non-legacy titles are accepted.
+
 ## 8. Out of scope
 
 - Slice C (members, teams, `Members` in the actor) and its revised questions.
