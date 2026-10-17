@@ -228,7 +228,24 @@ CHECKPOINT: ready for staging (0859657). Open before staging: the Step 4 dev-sto
 
 - 2026-10-17 [Step 4] The dev-store check (research §10), not attempted here by instruction. In the main checkout, on `main` at or after the Step 4 commit (e121244): start the dev server with `vp run dev`; in the dev store's admin (`mw10013-dev-shop-00`) open Baton and its Orders page (`/app/orders`), leave the tab open and untouched for five minutes; then create an order in the Shopify admin (any draft order, marked paid). Expected: its row appears on the open Orders page without a reload, within a few seconds of the `Webhooks.ordersWebhook: shop=mw10013-dev-shop-00.myshopify.com topic=ORDERS_CREATE … status=stored` line in `.logs/dev/current`. Record the time from create to row, and the actor's `ShopActor.fetch: … role=merchant: socket accepted` and any `ShopActor.webSocketClose: … role=merchant` lines for the shop over the five minutes (one accept and no close is the pass). This closes §5's last item and Step 4's check.
 
+- 2026-10-17 [Step 4, lead] Dev-store check, half done. With `vp run dev` running (tunnel `manually-aka-supplier-doc.trycloudflare.com`), the lead opened `/app/orders` in the `mw10013-dev-shop-00` admin through the chrome-devtools MCP at 17:52:08 (`ShopActor.fetch: shop=mw10013-dev-shop-00.myshopify.com role=merchant: socket accepted`) and left it untouched; at 17:57:48 that was still the only accept and there was no `webSocketClose` for the shop. Creating the order was refused by this session's permission classifier (a real store transaction), so the second half needs a person: in that still-open tab's store, create an order (Orders → Create order, one custom item, Mark as paid), or run `shopify store execute --store mw10013-dev-shop-00.myshopify.com --version 2026-10 --allow-mutations` with `draftOrderCreate` then `draftOrderComplete`. Pass: the row appears on the open Orders page without a reload, after `Webhooks.ordersWebhook: shop=mw10013-dev-shop-00.myshopify.com topic=ORDERS_CREATE … status=stored` in `.logs/dev/current`, with still one accept and no close. This unblocks §5's last item and §6.
+
 ### Implementation review
+
+2026-10-17, lead. Re-ran at 82f7fa4: `vp check` green (262 files formatted, 210 linted and type-checked); `vp test` 46 files, 527 tests, 42.0 s; `vp run test:e2e` 35 passed, 2.6 min. Walked §5: the grep finds only the expected names (the plan's own `OrdersAgent.syncOpenOrders`, `OrderRepository.orderVersion`, test-local helpers named `syncOpenOrders`, the fixture's `storeOrders`); `src/backend/orders.ts` is gone and `src/web/server/orders.ts` exports only `listOrders`; every stub method has a production caller but `getOrder` (kept, research §3); the production bundle walked from `worker.js` (11 files, built 17:49 by this e2e run) has `IntegRpcs` 0, `ShopifyFake` 0, `OrdersSyncWorkflow` 28; the e2e socket count is 1; the dev-store check is half done (Human steps requested). Read `orders-agent.ts`, the actor's construction, `orders-sync-workflows.ts`, `src/contract/shopify.ts`, `ShopSocket.tsx`, the socket spec and §7. No leaked `baton-test-…` directories remain.
+
+Fixed by the lead:
+
+- Nothing in code. The plan review (e64487f) corrected S2 (modular form), S1 (the binding), the temporary stubs, the contract errors and the per-row mutation before implementation; each held as written.
+
+Needs a decision:
+
+- The dev-store check's second half (create an order, see its row live): blocked on a person, see Human steps requested. §6 does not hold until it passes.
+- `test/e2e/embedded/socket.spec.ts` navigates Orders → App Home through `window.__TSR_ROUTER__`, a TanStack internal, because `history.back()` reloads the app frame in the admin. Keep it, or add an App Home link to Orders (a screen change; legacy had `s-app-nav`).
+- `SocketBanner` sits above each page in the layout, not in the page's own banner slot as legacy's was; the lost banner's tone moved from info to warning (legacy's); uninstalled and expired show for the merchant only, since the member page already replaces its body with the same sentence.
+- Staging is the first deployed run of the modular `ShopActor` (S2) and of a Workflow created from the actor over `env.OrdersSyncWorkflow` (S1); local workerd proved both. The staging check should see `OrdersAgent.syncOpenOrders … status=started workflowId=X` followed by `OrdersSyncWorkflow.run … workflowId=X … status=complete`, and a Sync from Shopify that refreshes in the actor.
+- One `[Website] Worker request failed: socket hang up` after `shop.spec.ts`' member revoke, in one e2e run (Step 3); member code was untouched, not seen again. Watch it.
+- Non-legacy test titles that named deleted stubs were renamed (old → new in Deviations, Steps 1–2); two unit cases left because their session guard now lives in the actor (integ covers it).
 
 ## 8. Out of scope
 
