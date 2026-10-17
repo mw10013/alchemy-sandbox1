@@ -19,6 +19,7 @@ import {
 } from "../../src/backend/backend.ts";
 import { MagicLinkDelivery } from "../../src/backend/magic-link-delivery.ts";
 import { Members } from "../../src/backend/members.ts";
+import { Orders } from "../../src/backend/orders.ts";
 import ShopActor from "../../src/backend/shop-actor.ts";
 import { ShopActors } from "../../src/backend/shop-actors.ts";
 import { IntegHandlers, IntegRpcs } from "./rpcs.ts";
@@ -45,7 +46,9 @@ const decodeCaller = Schema.decodeUnknownOption(Schema.fromJsonString(Connection
  *   the JSON in `x-test-caller` names, skipping the gate, so a test opens a socket as an identity
  *   no sign-in produces, such as an expired session; 404 when the header does not decode;
  * - {@link ShopifyFake} in place of the Shopify library's fetch, installed after the shared
- *   wiring so it is the one the library calls.
+ *   wiring so it is the one the library calls;
+ * - `/api/integ/bulk/<n>`, the next bulk result file scripted into {@link ShopifyFake}: the URL a
+ *   scripted `bulkOperation` names, which the shop's actor fetches over the network.
  *
  * Its own logical id keeps its bundle and logs apart from the dev server's `Backend`; nothing in
  * `src/` imports it, so the production bundle never carries it.
@@ -58,8 +61,9 @@ export default class TestBackend extends Cloudflare.Worker<TestBackend>()(
       const base = yield* backendBody;
       const actors = yield* ShopActor;
       const services = yield* Effect.context<
-        Auth | MagicLinkDelivery | Members | ShopifyFake | ShopActors
+        Auth | MagicLinkDelivery | Members | Orders | ShopifyFake | ShopActors
       >();
+      const shopifyFake = yield* ShopifyFake;
       // Built per request, inside the request's scope, as the Backend's own RPC servers are.
       const integ = RpcServer.toHttpEffect(IntegRpcs).pipe(
         Effect.provide(
@@ -73,6 +77,8 @@ export default class TestBackend extends Cloudflare.Worker<TestBackend>()(
         const request = yield* HttpServerRequest.HttpServerRequest;
         const { pathname } = new URL(request.url, "http://backend");
         if (pathname === "/api/integ" || pathname === "/api/integ/") return yield* yield* integ;
+        if (pathname.startsWith("/api/integ/bulk/"))
+          return HttpServerResponse.fromWeb(yield* shopifyFake.takeBulk);
         const forged = decodeForgedActorPath(pathname.split("/"));
         if (Option.isSome(forged)) {
           const key = forged.value[4];

@@ -6,6 +6,8 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as HttpBody from "effect/http/HttpBody";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
@@ -40,11 +42,14 @@ import {
   RequireMerchant,
   ShopActorRpcs,
   type ShopSnapshot,
+  SYNC_KEY,
 } from "../contract/shop-actor.ts";
+import type { OrdersSyncResult } from "../domain/orders.ts";
 import * as ActorSocket from "./actor-socket.ts";
 import type { ActorFixtureAdded, ActorFixtureRows } from "./fixture.ts";
 import { type LineItemNode, type OrderNode, toOrderLineItems, toShopOrder } from "./order-sync.ts";
 import { makeOrderRepository, openOrdersAtCeiling, type Transaction } from "./shop-actor/orders.ts";
+import { runOrdersStream } from "./shop-actor/orders-stream.ts";
 
 const encodeNotice = Schema.encodeSync(NoticeFrame);
 const decodeConnectionHeader = Schema.decodeUnknownOption(Schema.fromJsonString(ConnectionCaller));
@@ -374,7 +379,8 @@ const tagsOf = (caller: ConnectionCaller) =>
  * It has two surfaces that never overlap. Browsers call `ShopActorRpcs` with Effect RPC over a
  * hibernating WebSocket; there is no HTTP RPC into the actor. The Backend calls the schemaless
  * methods `revoke`, `snapshot`, `loadFixture`, `addFixture`, `orderVersion`, `storeOrder`,
- * `getOrder`, `listOrders` and `destroy` on its stub, which no browser can reach.
+ * `getOrder`, `listOrders`, `beginSync`, `streamOrders`, `syncEmpty`, `syncFailed` and `destroy`
+ * on its stub, which no browser can reach.
  *
  * Who is on a socket is fixed when the socket is accepted: the Backend's gate resolves the
  * browser and names it in {@link CONNECTION_HEADER} on the upgrade it forwards, and the actor
@@ -413,6 +419,11 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
         Effect.orDie,
       );
       const activationId = yield* Effect.sync(() => crypto.randomUUID());
+      /**
+       * The bulk file's client, over the object's own `fetch`. Provided here: a Durable Object's
+       * activation may not require `HttpClient`, though Alchemy's Worker runtime has one.
+       */
+      const http = yield* HttpClient.HttpClient.pipe(Effect.provide(FetchHttpClient.layer));
 
       /** Every multi-statement write's transaction; see {@link syncTransaction}. */
       const transaction = syncTransaction(sql);
@@ -481,6 +492,8 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
         MemberWhoAmI: () => Effect.service(CurrentCaller),
         MerchantWhoAmI: () => Effect.service(CurrentCaller),
         MerchantListOrders: (input) => orders.listOrders(input).pipe(Effect.orDie),
+        MerchantSyncStatus: () =>
+          Clock.currentTimeMillis.pipe(Effect.flatMap(orders.getSyncStatus), Effect.orDie),
       });
 
       const socket = yield* ActorSocket.make({
@@ -783,6 +796,155 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
       );
 
       /**
+       * Legacy's `syncOpenOrders`, the actor's half: the Backend calls it before it creates the
+       * Workflow instance named `workflowId`, and creates it only on `Started`. The rules are
+       * `beginSync` on the repository; this logs them and notifies {@link SYNC_KEY} when a sync
+       * starts. `now` is the Backend's clock, so the record and the rule read one instant.
+       */
+      const beginSync = Effect.fn("ShopActor.beginSync")(
+        function* ({ workflowId, now }: { readonly workflowId: string; readonly now: number }) {
+          const start = yield* orders.beginSync({ workflowId, now });
+          if (start._tag !== "InFlight" && start.stale !== null)
+            yield* Effect.logWarning(
+              `ShopActor.beginSync: shop=${shop} workflowId=${String(start.stale.workflowId)}: tracking record stale, cleared`,
+            ).pipe(Effect.annotateLogs({ shop, workflowId: start.stale.workflowId }));
+          const result: OrdersSyncResult = yield* Match.value(start).pipe(
+            Match.tagsExhaustive({
+              InFlight: () =>
+                Effect.logInfo(`ShopActor.beginSync: shop=${shop} status=in-flight`).pipe(
+                  Effect.annotateLogs({ shop, status: "in-flight" }),
+                  Effect.as({ _tag: "InFlight" } as const),
+                ),
+              Refused: ({ openOrders }) => {
+                const limit = ShopLimits.maxOpenOrders;
+                return Effect.logError(
+                  `ShopActor.beginSync: shop=${shop} status=order-ceiling openOrders=${String(openOrders)} limit=${String(limit)}`,
+                ).pipe(
+                  Effect.annotateLogs({ shop, status: "order-ceiling", openOrders, limit }),
+                  Effect.as({ _tag: "Refused" } as const),
+                );
+              },
+              Started: () =>
+                Effect.logInfo(
+                  `ShopActor.beginSync: shop=${shop} status=started workflowId=${workflowId}`,
+                ).pipe(
+                  Effect.annotateLogs({ shop, status: "started", workflowId }),
+                  Effect.andThen(notify([SYNC_KEY])),
+                  Effect.as({ _tag: "Started" } as const),
+                ),
+            }),
+          );
+          return result;
+        },
+        Effect.orDie,
+        Effect.provide(runtime),
+      );
+
+      /**
+       * Legacy's `onOrdersStream`: the Workflow's last step for a completed export, never a
+       * browser's (rule 16 on `syncOrder`: the URL must only ever come from a bulk operation this
+       * shop started). The stream merges ({@link runOrdersStream}), then the retention pass rides
+       * it (rule 9), then the tracking record is cleared and both keys are notified, whatever the
+       * stream changed: the sync's end is on the screen either way. Answers the counts, which
+       * are logged and never shown (rule 18).
+       *
+       * The retention pass rides the open-orders sync: it is merchant-triggered,
+       * already the heaviest thing this object does, and the one moment
+       * where paying for a batch of deletes is invisible next to what the
+       * request is doing anyway.
+       *
+       * A step retry re-streams the whole file when the sweep throws after the writes: correct
+       * under rule 7, a full second pass, and rare. The billing seam: the usage flush after the
+       * stream goes here.
+       */
+      const streamOrders = Effect.fn("ShopActor.streamOrders")(
+        function* ({ workflowId, url }: { readonly workflowId: string; readonly url: string }) {
+          const counts = yield* runOrdersStream({ repository: orders, shop, url }).pipe(
+            Effect.provideService(HttpClient.HttpClient, http),
+            // A stream that fails partway keeps the orders it wrote, and the failure carries no
+            // counts, so the list is invalidated without knowing whether a row moved.
+            Effect.onError(() => notify([ORDERS_KEY])),
+          );
+          if (counts.ordersRefused > 0)
+            yield* Effect.logError(
+              `ShopActor.streamOrders: shop=${shop} status=order-ceiling ordersRefused=${String(counts.ordersRefused)} limit=${String(ShopLimits.maxOpenOrders)}`,
+            ).pipe(
+              Effect.annotateLogs({
+                shop,
+                status: "order-ceiling",
+                ordersRefused: counts.ordersRefused,
+                limit: ShopLimits.maxOpenOrders,
+              }),
+            );
+          const swept = yield* orders.sweepExpiredOrders({ now: yield* Clock.currentTimeMillis });
+          yield* orders.clearSyncTracking({ workflowId });
+          yield* Effect.logInfo(
+            `ShopActor.streamOrders: shop=${shop} ordersSeen=${String(counts.ordersSeen)} ordersUpserted=${String(counts.ordersUpserted)} ordersInserted=${String(counts.ordersInserted)} ordersRefused=${String(counts.ordersRefused)} lineItemsUpserted=${String(counts.lineItemsUpserted)} ordersTruncated=${String(counts.ordersTruncated)} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)}`,
+          ).pipe(
+            Effect.annotateLogs({
+              shop,
+              workflowId,
+              ...counts,
+              sweptOrders: swept.orders,
+              sweptRuns: swept.runs,
+            }),
+          );
+          yield* notify([ORDERS_KEY, SYNC_KEY]);
+          return counts;
+        },
+        Effect.orDie,
+        Effect.provide(runtime),
+      );
+
+      /**
+       * Legacy's `onOrdersSyncEmpty`: the last 30 days held no open orders. Deliberately does not
+       * touch stored rows: unlike a catalog scan, an empty result means "nothing changed", never
+       * "the shop has no orders" (rule 9 on `syncOrder`). Clears the tracking record.
+       */
+      const syncEmpty = Effect.fn("ShopActor.syncEmpty")(
+        function* ({ workflowId }: { readonly workflowId: string }) {
+          yield* Effect.logInfo(`ShopActor.syncEmpty: shop=${shop} workflowId=${workflowId}`).pipe(
+            Effect.annotateLogs({ shop, workflowId }),
+          );
+          if (yield* orders.clearSyncTracking({ workflowId })) yield* notify([SYNC_KEY]);
+        },
+        Effect.orDie,
+        Effect.provide(runtime),
+      );
+
+      /**
+       * A sync that will not finish: the Workflow's error sink, or the Backend when it could not
+       * create the instance. Legacy's `onOrdersSyncError` and `onWorkflowError` in one, since no
+       * platform callback follows here: the record is cleared, which re-enables the button, and
+       * `message` becomes the banner unless one is already written (rule 15 on `syncOrder`).
+       * Both only when the record is `workflowId`'s: a sync whose stale record a newer press
+       * replaced has nothing left to report, and the newer sync owns the banner.
+       */
+      const syncFailed = Effect.fn("ShopActor.syncFailed")(
+        function* ({
+          workflowId,
+          message,
+        }: {
+          readonly workflowId: string;
+          readonly message: string;
+        }) {
+          const cleared = yield* transaction(
+            Effect.gen(function* () {
+              const cleared = yield* orders.clearSyncTracking({ workflowId });
+              if (cleared) yield* orders.setSyncErrorIfEmpty({ error: message });
+              return cleared;
+            }),
+          );
+          yield* Effect.logError(
+            `ShopActor.syncFailed: shop=${shop} workflowId=${workflowId} tracked=${String(cleared)}: ${message}`,
+          ).pipe(Effect.annotateLogs({ shop, workflowId, tracked: cleared, message }));
+          if (cleared) yield* notify([SYNC_KEY]);
+        },
+        Effect.orDie,
+        Effect.provide(runtime),
+      );
+
+      /**
        * Tears the shop's actor down on uninstall: closes every socket with
        * {@link CONNECTION_CLOSE_UNINSTALLED} (best effort, as every close here), deletes the alarm
        * and then all storage, which is what ends the object's storage billing, waits up to
@@ -825,6 +987,10 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
         storeOrder,
         getOrder,
         listOrders,
+        beginSync,
+        streamOrders,
+        syncEmpty,
+        syncFailed,
         destroy,
       };
     });

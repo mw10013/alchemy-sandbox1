@@ -517,3 +517,114 @@ describe("OrderRepository.listOrders", () => {
     ),
   );
 });
+
+/**
+ * The start of an open-orders sync and the tracking record it leaves (`SyncState.workflowId`
+ * and `startedAt`), which stands in for the Agents SDK's tracking row: legacy's
+ * `orders-sync-workflow.test.ts` rules, over the repository.
+ */
+describe("OrderRepository.beginSync", () => {
+  const NOW = Date.UTC(2026, 9, 17);
+  const MINUTE = 60_000;
+
+  it.effect("a fresh tracking record refuses the start and writes nothing", () =>
+    runInRepository((repository) =>
+      Effect.gen(function* () {
+        const first = yield* repository.beginSync({ workflowId: "wf-1", now: NOW });
+        yield* repository.setSyncError({ error: "kept" });
+        const second = yield* repository.beginSync({ workflowId: "wf-2", now: NOW + 9 * MINUTE });
+        assert.strictEqual(first._tag, "Started");
+        assert.deepStrictEqual(second, { _tag: "InFlight", workflowId: "wf-1" });
+        assert.deepStrictEqual(yield* repository.getSyncTracking(), {
+          workflowId: "wf-1",
+          startedAt: NOW,
+        });
+        assert.strictEqual((yield* repository.getSyncState()).lastError, "kept");
+      }),
+    ),
+  );
+
+  it.effect("a tracking record older than ten minutes is cleared and the sync starts", () =>
+    runInRepository((repository) =>
+      Effect.gen(function* () {
+        yield* repository.trackSync({ workflowId: "wf_never_existed", startedAt: NOW });
+        const started = yield* repository.beginSync({ workflowId: "wf-2", now: NOW + 10 * MINUTE });
+        assert.deepStrictEqual(started, {
+          _tag: "Started",
+          stale: { workflowId: "wf_never_existed", startedAt: NOW },
+        });
+        assert.deepStrictEqual(yield* repository.getSyncTracking(), {
+          workflowId: "wf-2",
+          startedAt: NOW + 10 * MINUTE,
+        });
+      }),
+    ),
+  );
+
+  it.effect("a start clears the last error and the refusal flag", () =>
+    runInRepository((repository, sql) =>
+      Effect.gen(function* () {
+        yield* repository.setSyncError({ error: "the last sync failed" });
+        yield* repository.markOrdersLimited(NOW - MINUTE);
+        yield* repository.beginSync({ workflowId: "wf-1", now: NOW });
+        assert.strictEqual((yield* repository.getSyncState()).lastError, null);
+        assert.strictEqual((yield* usage(repository, sql)).ordersLimitedAt, null);
+      }),
+    ),
+  );
+
+  it.effect(
+    "a sync refused at the order ceiling flags the refusal, writes no error and tracks nothing",
+    () =>
+      runInRepository((repository, sql) =>
+        Effect.gen(function* () {
+          yield* storeOpenOrders(sql, ShopLimits.maxOpenOrders, CYCLE_START);
+          yield* repository.trackSync({ workflowId: "wf-dead", startedAt: NOW - 11 * MINUTE });
+          const refused = yield* repository.beginSync({ workflowId: "wf-1", now: NOW });
+          assert.deepStrictEqual(refused, {
+            _tag: "Refused",
+            openOrders: ShopLimits.maxOpenOrders,
+            stale: { workflowId: "wf-dead", startedAt: NOW - 11 * MINUTE },
+          });
+          assert.strictEqual((yield* usage(repository, sql)).ordersLimitedAt, NOW);
+          assert.strictEqual((yield* repository.getSyncState()).lastError, null);
+          assert.deepStrictEqual(yield* repository.getSyncTracking(), {
+            workflowId: null,
+            startedAt: null,
+          });
+        }),
+      ),
+  );
+
+  it.effect("a tracking row disables Sync open orders only while it is fresh", () =>
+    runInRepository((repository) =>
+      Effect.gen(function* () {
+        const idle = yield* repository.getSyncStatus(NOW);
+        yield* repository.trackSync({ workflowId: "wf-1", startedAt: NOW });
+        const fresh = yield* repository.getSyncStatus(NOW + 9 * MINUTE);
+        const stale = yield* repository.getSyncStatus(NOW + 10 * MINUTE);
+        assert.deepStrictEqual(idle, { inFlight: false, lastError: null });
+        assert.deepStrictEqual(fresh, { inFlight: true, lastError: null });
+        assert.deepStrictEqual(stale, { inFlight: false, lastError: null });
+      }),
+    ),
+  );
+
+  it.effect("a sync's end clears the tracking record only when the record is its own", () =>
+    runInRepository((repository) =>
+      Effect.gen(function* () {
+        yield* repository.trackSync({ workflowId: "wf-2", startedAt: NOW });
+        const other = yield* repository.clearSyncTracking({ workflowId: "wf-1" });
+        const kept = yield* repository.getSyncTracking();
+        const own = yield* repository.clearSyncTracking({ workflowId: "wf-2" });
+        assert.isFalse(other);
+        assert.deepStrictEqual(kept, { workflowId: "wf-2", startedAt: NOW });
+        assert.isTrue(own);
+        assert.deepStrictEqual(yield* repository.getSyncTracking(), {
+          workflowId: null,
+          startedAt: null,
+        });
+      }),
+    ),
+  );
+});

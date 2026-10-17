@@ -21,6 +21,7 @@ import {
   type OrderActorCalls,
   QuietLogs,
   testOrderActors,
+  testOrdersSyncWorkflows,
   testShopify,
   testShopifyAdmin,
 } from "./layers.ts";
@@ -64,7 +65,11 @@ const layer = (
   Webhooks.layer.pipe(
     Layer.provideMerge(Orders.layer),
     Layer.provideMerge(
-      Layer.mergeAll(testOrderActors(calls, version, stub), testShopifyAdmin(replies, calls.admin)),
+      Layer.mergeAll(
+        testOrderActors(calls, version, stub),
+        testShopifyAdmin(replies, calls.admin),
+        testOrdersSyncWorkflows(),
+      ),
     ),
     Layer.provideMerge(testShopify(rows)),
     Layer.provideMerge(QuietLogs),

@@ -13,6 +13,10 @@ import type { Member } from "../../../src/contract/members.ts";
 import type { ShopKey } from "../../../src/contract/shop.ts";
 import type { LineItemNode, OrderNode } from "../../../src/backend/order-sync.ts";
 import { ShopifyAdmin, type ShopifyAdminError } from "../../../src/backend/shopify-admin.ts";
+import {
+  type OrdersSyncParams,
+  OrdersSyncWorkflows,
+} from "../../../src/backend/orders-sync-workflow.ts";
 import { settleDestroy, ShopActors } from "../../../src/backend/shop-actors.ts";
 import { migrations, syncTransaction } from "../../../src/backend/shop-actor.ts";
 import { makeOrderRepository } from "../../../src/backend/shop-actor/orders.ts";
@@ -188,3 +192,19 @@ export const testOrderActors = (
       };
     }),
   ).pipe(Layer.provide(ShopActors.layerTest([])));
+
+/**
+ * {@link OrdersSyncWorkflows} recording each instance it is asked to create in `created`, then
+ * answering `create`'s outcome (by default, created).
+ */
+export const testOrdersSyncWorkflows = (
+  created: Array<{ readonly id: string; readonly params: OrdersSyncParams }> = [],
+  create: Effect.Effect<void> = Effect.void,
+) =>
+  Layer.succeed(OrdersSyncWorkflows, {
+    create: (options) =>
+      Effect.suspend(() => {
+        created.push(options);
+        return create;
+      }),
+  });

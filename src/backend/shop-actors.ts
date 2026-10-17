@@ -131,6 +131,38 @@ const make = Effect.gen(function* () {
     return yield* actors.getByName(key).listOrders(input);
   });
 
+  /** Starts an open-orders sync's record; see `beginSync` on {@link ShopActor}. */
+  const beginSync = Effect.fn("ShopActors.beginSync")(function* (
+    key: ShopKey,
+    input: { readonly workflowId: string; readonly now: number },
+  ) {
+    return yield* actors.getByName(key).beginSync(input);
+  });
+
+  /** Streams a completed export into the shop; see `streamOrders` on {@link ShopActor}. */
+  const streamOrders = Effect.fn("ShopActors.streamOrders")(function* (
+    key: ShopKey,
+    input: { readonly workflowId: string; readonly url: string },
+  ) {
+    return yield* actors.getByName(key).streamOrders(input);
+  });
+
+  /** Ends a sync that found nothing; see `syncEmpty` on {@link ShopActor}. */
+  const syncEmpty = Effect.fn("ShopActors.syncEmpty")(function* (
+    key: ShopKey,
+    input: { readonly workflowId: string },
+  ) {
+    yield* actors.getByName(key).syncEmpty(input);
+  });
+
+  /** Ends a sync that failed; see `syncFailed` on {@link ShopActor}. */
+  const syncFailed = Effect.fn("ShopActors.syncFailed")(function* (
+    key: ShopKey,
+    input: { readonly workflowId: string; readonly message: string },
+  ) {
+    yield* actors.getByName(key).syncFailed(input);
+  });
+
   /** Destroys the shop's actor; see `destroy` on {@link ShopActor} and {@link settleDestroy}. */
   const destroy = Effect.fn("ShopActors.destroy")(function* (key: ShopKey) {
     yield* settleDestroy(key, actors.getByName(key).destroy());
@@ -146,6 +178,10 @@ const make = Effect.gen(function* () {
     storeOrder,
     getOrder,
     listOrders,
+    beginSync,
+    streamOrders,
+    syncEmpty,
+    syncFailed,
   };
 });
 
@@ -161,7 +197,7 @@ export class ShopActors extends Context.Service<ShopActors, Effect.Success<typeo
   /**
    * Records each revoke and closes nothing, answers every snapshot with `snapshot`, and records
    * each fixture load in `loaded` and each fixture add in `added`, answering the counts of its
-   * rows; it never finds a clash. Its order methods and `destroy` die: a test that reaches them
+   * rows; it never finds a clash. Its order and sync methods and `destroy` die: a test that reaches them
    * overrides them.
    */
   static readonly layerTest = (
@@ -199,6 +235,10 @@ export class ShopActors extends Context.Service<ShopActors, Effect.Success<typeo
       storeOrder: () => Effect.die(new Error("ShopActors.layerTest: storeOrder")),
       getOrder: () => Effect.die(new Error("ShopActors.layerTest: getOrder")),
       listOrders: () => Effect.die(new Error("ShopActors.layerTest: listOrders")),
+      beginSync: () => Effect.die(new Error("ShopActors.layerTest: beginSync")),
+      streamOrders: () => Effect.die(new Error("ShopActors.layerTest: streamOrders")),
+      syncEmpty: () => Effect.die(new Error("ShopActors.layerTest: syncEmpty")),
+      syncFailed: () => Effect.die(new Error("ShopActors.layerTest: syncFailed")),
       destroy: () => Effect.die(new Error("ShopActors.layerTest: destroy")),
     });
 }

@@ -13,11 +13,13 @@ import type { OrdersListInput, OrdersListPage } from "../../contract/shop-actor.
 import {
   type OrderDetail,
   OrderLineItem,
+  type OrdersSyncStatus,
   ShopOrder,
   SyncState,
   syncOrder,
 } from "../../domain/orders.ts";
 import { retentionCutoff, ShopLimits } from "../../domain/platform.ts";
+import { SYNC_STALE_MS } from "../orders-sync-constants.ts";
 
 /**
  * Failure to map stored rows into domain types — a `Schema` decode error, the
@@ -96,6 +98,23 @@ const OPEN = "fulfillmentStatus <> 'FULFILLED' and cancelledAt is null";
 const bit = (value: boolean) => (value ? 1 : 0);
 
 /**
+ * The open-orders sync in flight, as `SyncState` records it: `workflowId` names the Workflow
+ * instance and `startedAt` when the start was recorded. Both null when none is.
+ */
+export const SyncTracking = Schema.Struct({
+  workflowId: Schema.NullOr(Schema.String),
+  startedAt: Schema.NullOr(Schema.Number),
+});
+export type SyncTracking = typeof SyncTracking.Type;
+
+/**
+ * Whether a tracking record still means a sync is running at `now`: one younger than
+ * {@link SYNC_STALE_MS}, which is the rule. An older one is dead.
+ */
+export const isTrackingFresh = ({ startedAt }: SyncTracking, now: number) =>
+  startedAt !== null && now - startedAt < SYNC_STALE_MS;
+
+/**
  * The repository over the actor's `sql`, built once per activation. Every method that runs more
  * than one statement runs it under `transaction`.
  */
@@ -115,6 +134,7 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
   const decodeOrders = decode(Schema.Array(ShopOrder), "Invalid ShopOrder row");
   const decodeLineItems = decode(Schema.Array(OrderLineItem), "Invalid OrderLineItem row");
   const decodeSyncState = decode(Schema.Array(SyncState), "Invalid SyncState row");
+  const decodeSyncTracking = decode(Schema.Array(SyncTracking), "Invalid SyncState row");
 
   /** One order's items, in id order. */
   const lineItemsOf = (orderId: string) =>
@@ -438,6 +458,102 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
   });
 
   /**
+   * The open-orders sync in flight, as {@link SyncTracking}: both null when none is recorded.
+   * Whether a record still counts is {@link isTrackingFresh}'s rule, not the row's.
+   */
+  const getSyncTracking = Effect.fn("OrderRepository.getSyncTracking")(function* () {
+    const rows = yield* sql`select workflowId, startedAt from SyncState where id = 1`;
+    const [tracking] = yield* decodeSyncTracking(rows);
+    if (tracking === undefined)
+      return yield* Effect.fail(
+        new OrderRepositoryError({ message: "SyncState row is missing", cause: rows }),
+      );
+    return tracking;
+  });
+
+  /** Records the sync just started; the two columns are only ever written together. */
+  const trackSync = Effect.fn("OrderRepository.trackSync")(function* ({
+    workflowId,
+    startedAt,
+  }: {
+    readonly workflowId: string;
+    readonly startedAt: number;
+  }) {
+    yield* sql`
+      update SyncState set workflowId = ${workflowId}, startedAt = ${startedAt}
+      where id = 1
+    `;
+  });
+
+  /**
+   * Clears the tracking record, and only when it is `workflowId`'s: a sync that ends after a
+   * newer one started (its record went stale and the next press replaced it) must not
+   * re-enable the button under the newer one. Answers whether it cleared anything.
+   */
+  const clearSyncTracking = Effect.fn("OrderRepository.clearSyncTracking")(function* ({
+    workflowId,
+  }: {
+    readonly workflowId: string;
+  }) {
+    const cleared = yield* sql`
+      update SyncState set workflowId = null, startedAt = null
+      where id = 1 and workflowId = ${workflowId}
+      returning id
+    `;
+    return cleared.length > 0;
+  });
+
+  /** The sync status the orders index shows: {@link OrdersSyncStatus} at `now`. */
+  const getSyncStatus = Effect.fn("OrderRepository.getSyncStatus")(function* (now: number) {
+    const { lastError } = yield* getSyncState();
+    const tracking = yield* getSyncTracking();
+    return { inFlight: isTrackingFresh(tracking, now), lastError } satisfies OrdersSyncStatus;
+  });
+
+  /**
+   * The start of an open-orders sync, legacy's `syncOpenOrders` without the Workflow, in one
+   * transaction, so two presses can never both start: rule 3 on `syncOrder`, one sync at a
+   * time.
+   *
+   * - A fresh tracking record ({@link isTrackingFresh}) answers `InFlight` and writes nothing.
+   * - A stale one is dead and is cleared, without asking Cloudflare, and the start goes on;
+   *   `stale` reports it for the log.
+   * - At the order ceiling, read against the open orders stored now (rule 5), it answers
+   *   `Refused` and marks `ordersLimitedAt`.
+   * - Otherwise it clears `lastError` and `ordersLimitedAt` (the start is what closes the gap
+   *   the flag announced, {@link clearOrdersLimited}), records `workflowId` at `now`, and
+   *   answers `Started`. The caller creates the Workflow instance after: the record exists
+   *   before the instance does, so no press between the two can start a second one.
+   */
+  const beginSync = Effect.fn("OrderRepository.beginSync")(function* ({
+    workflowId,
+    now,
+  }: {
+    readonly workflowId: string;
+    readonly now: number;
+  }) {
+    return yield* transaction(
+      Effect.gen(function* () {
+        const tracking = yield* getSyncTracking();
+        if (isTrackingFresh(tracking, now))
+          return { _tag: "InFlight", workflowId: tracking.workflowId } as const;
+        const stale = tracking.workflowId === null ? null : tracking;
+        if (tracking.workflowId !== null)
+          yield* clearSyncTracking({ workflowId: tracking.workflowId });
+        const openOrders = yield* countOpenOrders();
+        if (openOrdersAtCeiling(openOrders)) {
+          yield* markOrdersLimited(now);
+          return { _tag: "Refused", openOrders, stale } as const;
+        }
+        yield* clearSyncError();
+        yield* clearOrdersLimited();
+        yield* trackSync({ workflowId, startedAt: now });
+        return { _tag: "Started", stale } as const;
+      }),
+    );
+  });
+
+  /**
    * Clears the refusal flag (`ShopUsage.ordersLimitedAt`), and is
    * the only thing that does. The flag means there is a gap: orders Shopify
    * sent that Baton refused and nothing re-reads but Sync open orders. So
@@ -536,6 +652,11 @@ export const makeOrderRepository = (sql: SqlClient.SqlClient, transaction: Trans
     setSyncError,
     setSyncErrorIfEmpty,
     clearSyncError,
+    getSyncTracking,
+    trackSync,
+    clearSyncTracking,
+    getSyncStatus,
+    beginSync,
     lastSweepAt,
     sweepExpiredOrders,
   };

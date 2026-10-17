@@ -10,6 +10,9 @@ import type { ShopifyFakeCall, ShopifyFakeReply } from "./rpcs.ts";
 
 type Route = ShopifyFakeReply["route"];
 
+/** The routes the Shopify library's fetch reaches; `bulk` is served by the test Backend itself. */
+type LibraryRoute = Exclude<Route, "bulk">;
+
 /** A route as the library's URLs spell it: `/admin/oauth/access_token`. */
 const TokenPath = Schema.Tuple([
   Schema.Literal(""),
@@ -67,7 +70,7 @@ export const FAKE_SHOP_GID = "gid://shopify/Shop/0";
 const unscripted = (reason: string) => Response.json({ error: reason }, { status: 599 });
 
 const make = Effect.sync(() => {
-  const queues: Record<Route, Array<ShopifyFakeReply>> = { token: [], graphql: [] };
+  const queues: Record<Route, Array<ShopifyFakeReply>> = { token: [], graphql: [], bulk: [] };
   let calls: Array<ShopifyFakeCall> = [];
   const refreshTokenLabels = new Map<string, string>();
 
@@ -80,7 +83,7 @@ const make = Effect.sync(() => {
     return label;
   };
 
-  const defaultReply = (route: Route) =>
+  const defaultReply = (route: LibraryRoute) =>
     route === "token"
       ? Response.json({
           access_token: `shpat_fake_${crypto.randomUUID()}`,
@@ -125,9 +128,24 @@ const make = Effect.sync(() => {
       Effect.sync(() => {
         queues.token = replies.filter((reply) => reply.route === "token");
         queues.graphql = replies.filter((reply) => reply.route === "graphql");
+        queues.bulk = replies.filter((reply) => reply.route === "bulk");
         calls = [];
         refreshTokenLabels.clear();
       }),
+    /**
+     * The next scripted bulk file, as the response the test Backend serves for it: the reply's
+     * `body`, a string of JSONL, as text. An empty queue answers 404. Recorded as a `bulk` call.
+     */
+    takeBulk: Effect.sync(() => {
+      calls.push({ route: "bulk" });
+      const scripted = queues.bulk.shift();
+      return scripted === undefined
+        ? new Response("no bulk file scripted", { status: 404 })
+        : new Response(typeof scripted.body === "string" ? scripted.body : "", {
+            status: scripted.status,
+            headers: { "content-type": "application/jsonl" },
+          });
+    }),
     /** The calls served since the last script or read, which it clears. */
     takeCalls: Effect.sync(() => {
       const taken = calls;
@@ -142,7 +160,10 @@ const make = Effect.sync(() => {
  * module-global fetch per isolate, so building this layer (once, in the test Backend's init)
  * replaces it with a function that answers `https://<shop>.myshopify.com`'s token endpoint and
  * Admin GraphQL endpoint from replies a test scripts through `ScriptShopify`, and records what it
- * served. The last install wins, so the test Backend builds it after the shared wiring, whose
+ * served. A `bulk` reply is a bulk operation's result file, which the Shopify library never
+ * fetches: the shop's actor does, from the URL a scripted `bulkOperation` names, so the test
+ * Backend serves the queue itself on `/api/integ/bulk/<n>` ({@link ShopifyFake}'s `takeBulk`).
+ * The last install wins, so the test Backend builds it after the shared wiring, whose
  * Shopify library installs its own on import. An empty queue answers a default: fresh tokens (an
  * hour, ninety days) for the token endpoint, and {@link FAKE_SHOP_GID} for GraphQL, which has no
  * database to read the shop's real id from. Anything else is answered 599 and never reaches the

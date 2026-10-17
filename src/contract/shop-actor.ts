@@ -1,7 +1,7 @@
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import { Rpc, RpcGroup, RpcMiddleware } from "effect/rpc";
-import { OrderDetail } from "../domain/orders.ts";
+import { OrderDetail, OrdersSyncStatus } from "../domain/orders.ts";
 import { ListOrdersInput, OrdersCursor } from "../domain/shop-work.ts";
 import { Email, Forbidden } from "./auth.ts";
 
@@ -33,6 +33,12 @@ export const COUNT_KEY = "count";
 
 /** The orders list's reactivity key: a write that moved an order row, or a sweep that deleted one. */
 export const ORDERS_KEY = "orders";
+
+/**
+ * The open-orders sync status's reactivity key (`MerchantSyncStatus`): a sync started, or ended
+ * in any way.
+ */
+export const SYNC_KEY = "sync";
 
 /**
  * One page of the orders list, run-free: `limit` and `cursor` as `ListOrdersInput` bounds them,
@@ -181,6 +187,7 @@ export const MerchantRpcs = RpcGroup.make(
   Rpc.make("MerchantResetCount", { success: Count }),
   Rpc.make("MerchantWhoAmI", { success: ConnectionCaller }),
   Rpc.make("MerchantListOrders", { payload: OrdersListInput, success: OrdersListPage }),
+  Rpc.make("MerchantSyncStatus", { success: OrdersSyncStatus }),
 )
   .middleware(RequireMerchant)
   .middleware(ConnectionMiddleware);

@@ -15,14 +15,19 @@ import { MagicLinkDelivery } from "../../src/backend/magic-link-delivery.ts";
 import { Members } from "../../src/backend/members.ts";
 import { ShopKey } from "../../src/contract/shop.ts";
 import { OrdersListInput, OrdersListPage } from "../../src/contract/shop-actor.ts";
-import { OrderDetail } from "../../src/domain/orders.ts";
+import { OrderDetail, OrdersSyncResult } from "../../src/domain/orders.ts";
+import { ShopNotInstalled } from "../../src/contract/fixture.ts";
+import { Orders } from "../../src/backend/orders.ts";
 import { LineItemNode, OrderNode } from "../../src/backend/order-sync.ts";
 import { ShopActors } from "../../src/backend/shop-actors.ts";
 import { ShopifyFake } from "./shopify-fake.ts";
 
-/** One scripted answer of the fake Shopify HTTP layer: which endpoint it answers, and how. */
+/**
+ * One scripted answer of the fake Shopify HTTP layer: which endpoint it answers, and how. A
+ * `bulk` reply's `body` is a bulk result file, a string of JSONL.
+ */
 export const ShopifyFakeReply = Schema.Struct({
-  route: Schema.Literals(["token", "graphql"]),
+  route: Schema.Literals(["token", "graphql", "bulk"]),
   status: Schema.Int,
   body: Schema.Unknown,
 });
@@ -34,7 +39,7 @@ export type ShopifyFakeReply = typeof ShopifyFakeReply.Type;
  * the token, so the same label twice means a retry with the same token.
  */
 export const ShopifyFakeCall = Schema.Struct({
-  route: Schema.Literals(["token", "graphql"]),
+  route: Schema.Literals(["token", "graphql", "bulk"]),
   grantType: Schema.optional(Schema.String),
   refreshToken: Schema.optional(Schema.String),
 });
@@ -51,6 +56,11 @@ export type ShopifyFakeCall = typeof ShopifyFakeCall.Type;
  *   `ShopifyCalls` answers the calls it served since, as {@link ShopifyFakeCall}, and clears them.
  * - `OrderVersion`, `StoreOrder`, `GetOrder` and `ListOrders` are the {@link ShopActors} methods
  *   of the same names on `shop`'s actor, as the Backend calls them.
+ * - `SyncOpenOrders` is `Orders.beginOpenOrdersSync`, the Backend's Sync open orders, because
+ *   integ has no merchant page to press it on.
+ * - `TrackSync` and `SyncFailed` are the {@link ShopActors} methods `beginSync` and `syncFailed`
+ *   on `shop`'s actor: a start recorded at a `startedAt` the test picks (an old one is a dead
+ *   sync's record) with no Workflow behind it, and a sync's end as a late caller reports it.
  * - `ShopIdentityNames` answers the emails of `shop`'s `Member` rows and the names of its `Team`
  *   rows, read from D1 alone ({@link Members}' `identityNames`), so it never reaches the actor.
  */
@@ -88,6 +98,19 @@ export const IntegRpcs = RpcGroup.make(
     payload: { shop: ShopKey, ...OrdersListInput.fields },
     success: OrdersListPage,
   }),
+  Rpc.make("SyncOpenOrders", {
+    payload: { shop: ShopKey },
+    success: OrdersSyncResult,
+    error: ShopNotInstalled,
+  }),
+  Rpc.make("TrackSync", {
+    payload: { shop: ShopKey, workflowId: Schema.String, startedAt: Schema.Number },
+    success: OrdersSyncResult,
+  }),
+  Rpc.make("SyncFailed", {
+    payload: { shop: ShopKey, workflowId: Schema.String, message: Schema.String },
+    success: Schema.Struct({}),
+  }),
   Rpc.make("ShopIdentityNames", {
     payload: { shop: ShopKey },
     success: Schema.Struct({ emails: Schema.Array(Email), teams: Schema.Array(Schema.String) }),
@@ -101,6 +124,7 @@ export const IntegHandlers = IntegRpcs.toLayer(
     const shopifyFake = yield* ShopifyFake;
     const actors = yield* ShopActors;
     const members = yield* Members;
+    const orders = yield* Orders;
 
     return IntegRpcs.of({
       IssueMagicLink: ({ email, returnTo }, { headers }) =>
@@ -124,6 +148,10 @@ export const IntegHandlers = IntegRpcs.toLayer(
       StoreOrder: ({ shop, ...input }) => actors.storeOrder(shop, input),
       GetOrder: ({ shop, orderId }) => actors.getOrder(shop, orderId),
       ListOrders: ({ shop, ...input }) => actors.listOrders(shop, input),
+      SyncOpenOrders: ({ shop }) => orders.beginOpenOrdersSync(shop),
+      TrackSync: ({ shop, workflowId, startedAt }) =>
+        actors.beginSync(shop, { workflowId, now: startedAt }),
+      SyncFailed: ({ shop, ...input }) => actors.syncFailed(shop, input).pipe(Effect.as({})),
       ShopIdentityNames: ({ shop }) => members.identityNames(shop),
     });
   }),
