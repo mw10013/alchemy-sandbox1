@@ -28,7 +28,7 @@ export const BULK_POLL_INTERVAL_MS = 5000;
  *
  * **A tracking record disables Sync open orders only while it is fresh.** The orders index
  * reads a stale record as no sync, so the button comes back, and the next press clears the
- * record without asking Cloudflare (`ShopActor.beginSync`) and starts a new
+ * record without asking Cloudflare (`OrderRepository.beginSync`) and starts a new
  * sync. Were a stale record to keep the button disabled, the press that clears
  * it could never happen, and one dead instance would disable the button for
  * good. Rule 3 on `syncOrder`.

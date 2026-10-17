@@ -766,8 +766,8 @@ describe("OrderRepository.beginSync", () => {
    * Legacy compared the whole `SyncState` row before and after, because the tracking row was the
    * Agents SDK's own table. Here the tracking record is `SyncState.workflowId` and `startedAt`,
    * so the completion clears exactly those two columns and every other column, of `SyncState`
-   * and `ShopUsage`, is as the start left it. Both completions, `ShopActor.streamOrders` and
-   * `syncEmpty`, end in this `clearSyncTracking`; the orders a stream writes are its rows.
+   * and `ShopUsage`, is as the start left it. Both completions, `ShopActor.onOrdersStream` and
+   * `onOrdersSyncEmpty`, end in this `clearSyncTracking`; the orders a stream writes are its rows.
    */
   it.effect("a completed sync deletes the tracking row and writes nothing else", () =>
     runInRepository((repository, sql) =>
