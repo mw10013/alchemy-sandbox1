@@ -155,6 +155,7 @@ Checked against this checkout at `7ab5028` and `refs/baton-legacy/`. Baseline be
 
 - 2026-10-17 [Step 1] `vp check`: 207 files formatted, 164 linted, green. `vp test`: 31 files / 275 tests passed, 28.3 s.
 - 2026-10-17 [Step 2] `vp check`: 209 files formatted, 166 linted, green. `vp test`: 32 files / 282 tests passed, 24.7 s.
+- CHECKPOINT: Steps 1–2 ready to merge (db9dd05)
 
 ### Spike verdict (Step 5)
 
