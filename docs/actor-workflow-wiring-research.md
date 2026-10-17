@@ -1,19 +1,30 @@
 # The actor and the orders sync Workflow: how they are wired
 
-Status: research, written 2026-10-17, for review. No code has changed. An explainer first: legacy's architecture, this repo's before and after the actor ownership correction (`docs/actor-ownership-plan.md`), what we wanted, and why one edge, the actor creating the Workflow, came out hand-rolled. The questions at the end decide whether that edge stays as it is.
+Status: research, written 2026-10-17; rewritten the same day after review ("go deeper into how Alchemy works"). No code has changed. It lays out Alchemy's model from its own docs, legacy's architecture, this repo's before and after the actor ownership correction, the one edge that came out hand-rolled, and why. The finding: the design Alchemy documents for this case is the right one, it fails only because of a one-line bug in Alchemy's local provider, and the repo already has the mechanism to patch Alchemy.
 
-Legacy paths are relative to `refs/baton-legacy/`.
+Sources: Alchemy's docs under `refs/alchemy/website/src/content/docs/` (`infrastructure-as-effects/phases.mdx`, `runtime.mdx`, `binding.mdx`, `layers.mdx`, `circular-bindings.mdx`, `project-structure/file-layout.mdx`) and source under `refs/alchemy/packages/alchemy/src/`. Legacy paths are relative to `refs/baton-legacy/`.
 
 ---
 
-## 1. The one idea that explains the problem
+## 1. Alchemy's model, in six rules
 
-**Legacy declares its bindings in a config file and finds them by name at runtime. Alchemy declares its bindings in the code: yielding a class registers the binding and returns a typed handle.**
+Each rule is quoted or paraphrased from the doc named.
 
-- In legacy, `wrangler.jsonc` lists `D1`, `SHOP_AGENT` and `ORDERS_SYNC_WORKFLOW` once, for the one Worker script. Any code in that script reads `env.SHOP_AGENT` or `env.ORDERS_SYNC_WORKFLOW` when it runs. Nothing at build time knows who uses what, so two pieces that call each other are no problem: each one looks the other up by name.
-- In Alchemy, there is no config file. When the stack is planned, Alchemy runs each runtime's **outer phase** (the outer `Effect.gen`). Every `yield* SomeClass` there does two things: it tells Alchemy "this script needs a binding to `SomeClass`", and it hands back a typed handle. So the code's dependency graph **is** the binding graph, and TypeScript and Effect check it.
+1. **A Runtime is a Resource that carries its code** (`runtime.mdx`). A Worker, a Durable Object and a Workflow are each declared with an **Effectful Constructor**: an outer `Effect.gen` that binds what it needs and returns what it exposes. A Worker returns handlers, a Durable Object its RPC methods, a Workflow its run function.
+2. **The outer phase runs twice** (`phases.mdx`): at plantime, to discover bindings, and again at cold start, where the same calls return live clients. The returned inner Effect runs per request.
+3. **A `yield*` in the outer phase is a binding** (`binding.mdx`): it records, on the host script, what the code needs (a native Cloudflare binding), and returns a typed client. There is no config file; the code's dependency graph is the binding graph.
+4. **A contract and its implementation are separate** (`layers.mdx`, `binding.mdx`): a tag (`Context.Service`, `Binding.Service`) names the capability; a Layer builds it. Consumers yield the tag; the Layer is provided where the unit is composed.
+5. **Runtimes have three declaration forms** (`runtime.mdx`, "Three ways to declare a Runtime"): inline, class, and **tag and Layer**, where the class declares only identity and shape and `.make()` gives the implementation. "Other Runtimes bind to the Tag, never the implementation." "This split is what makes Circular Bindings possible."
+6. **Cycles are resolved by letting only identity cross them** (`circular-bindings.mdx`): A and B each import only the other's tag, bind it by identity (`bindWorker(B)`), and keep their implementations behind `.make()`. At deploy, Alchemy precreates each side, then wires the bindings in a converge pass. Resources are memoized by logical id, so a resource yielded from two units is created once (`file-layout.mdx`).
 
-That checking is what makes Alchemy safe. It is also why two pieces that need each other, the actor and the Workflow, form a **cycle**: the actor's outer phase would yield the Workflow, and the Workflow's outer phase yields the actor.
+What "identity-only" means per runtime kind:
+
+| Runtime        | Identity-only reference                                                                                                                                 | Needs the other side's Layer?                               |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Worker         | `Cloudflare.Workers.bindWorker(Tag)`                                                                                                                    | no                                                          |
+| Durable Object | `Tag.from(<host Worker>)`, documented also for the host itself ("Using `.from(Self)` Inside the Host", `Cloudflare/Workers/DurableObject.ts`)           | no                                                          |
+| Durable Object | `yield* Tag`                                                                                                                                            | **yes**: the tag's value comes from `Tag.make(...)`'s Layer |
+| Workflow       | none: `Cloudflare.Workflow` has the inline and class forms only (`Cloudflare/Workflows/Workflow.ts`, `WorkflowClass`); yielding it runs its constructor | **yes** (it is the implementation)                          |
 
 ---
 
@@ -21,16 +32,16 @@ That checking is what makes Alchemy safe. It is also why two pieces that need ea
 
 ### 2.1 What runs where
 
-One Worker script. Its `env` holds every binding, and every class in the script sees all of it.
+One Worker script. `wrangler.jsonc` declares every binding once, and every class in the script sees all of `env`.
 
 ```mermaid
 flowchart LR
   subgraph script["One Worker script (wrangler.jsonc)"]
     W["Worker<br/>routes, loaders, webhooks"]
-    A["ShopAgent<br/>(Durable Object, one per shop)"]
+    A["ShopAgent<br/>Durable Object, one per shop"]
     WF["OrdersSyncWorkflow"]
   end
-  ENV[("env<br/>D1 · SHOP_AGENT · ORDERS_SYNC_WORKFLOW<br/>SHOPIFY_API_KEY · SHOPIFY_API_SECRET")]
+  ENV[("env<br/>D1 · SHOP_AGENT · ORDERS_SYNC_WORKFLOW<br/>Shopify key and secret")]
   W -. reads .-> ENV
   A -. reads .-> ENV
   WF -. reads .-> ENV
@@ -38,19 +49,21 @@ flowchart LR
   SH["Shopify"] -- webhooks --> W
   W -- "env.SHOP_AGENT.getByName(shop)" --> A
   A -- "env.ORDERS_SYNC_WORKFLOW.create()" --> WF
-  WF -- "env.SHOP_AGENT.getByName(shop)<br/>onOrdersStream, onOrdersSyncError" --> A
-  A -- "Admin API, refresh" --> SH
+  WF -- "env.SHOP_AGENT…onOrdersStream" --> A
+  A -- "one-order Admin API, refresh" --> SH
   WF -- "bulk Admin API" --> SH
 ```
 
 ### 2.2 How the two edges are found
 
-- **Object → Workflow.** `ShopAgent.syncOpenOrders` calls `this.runWorkflow("ORDERS_SYNC_WORKFLOW", {shop})`. The agents SDK looks up the binding **by name in `env`** (`_findWorkflowBindingByName` in `refs/agents/packages/agents/src/index.ts`, "Workflow binding '…' not found in environment") and calls `create`.
-- **Workflow → object.** `this.agent` in the Workflow is resolved by the SDK **by name in `env`** too: the binding name `SHOP_AGENT` travels in the params, then `getAgentByName(env[...], shop)` (`refs/agents/packages/agents/src/workflows.ts`, "Agent binding '…' not found in environment").
+Both by name, at runtime, through the agents SDK:
 
-Both edges are string lookups at runtime. That is how legacy has the cycle and never notices it.
+- **Object → Workflow:** `this.runWorkflow("ORDERS_SYNC_WORKFLOW", {shop})` finds the binding in `env` by name (`_findWorkflowBindingByName`, `refs/agents/packages/agents/src/index.ts`).
+- **Workflow → object:** `this.agent` is `getAgentByName(env[<binding name from the params>], shop)` (`refs/agents/packages/agents/src/workflows.ts`).
 
-### 2.3 One sync, start to finish
+Nothing at build time knows that the two point at each other, so the cycle never shows.
+
+### 2.3 One sync
 
 ```mermaid
 sequenceDiagram
@@ -59,127 +72,148 @@ sequenceDiagram
   participant WF as OrdersSyncWorkflow
   participant S as Shopify
   B->>A: syncOpenOrders() (socket)
-  A->>A: in-flight? ceiling? clear banner
-  A->>WF: env.ORDERS_SYNC_WORKFLOW.create({shop})
-  A-->>B: Started (and publish)
+  A->>A: in flight? ceiling? clear banner
+  A->>WF: create({shop})
+  A-->>B: Started, publish
   WF->>S: bulk query, poll every 5 s
   S-->>WF: signed JSONL URL
-  WF->>A: env.SHOP_AGENT…onOrdersStream({url})
-  A->>S: GET the JSONL, upsert each order
-  A-->>B: publish (invalidated)
+  WF->>A: onOrdersStream({url})
+  A->>S: GET the file, upsert each order
+  A-->>B: publish
 ```
 
 ---
 
-## 3. This repo before the correction (slice A)
+## 3. This repo
 
-Two Workers and an actor. The Backend held D1, the Shopify secret and the Workflow; the actor held only its own SQLite.
+### 3.1 Before the correction (slice A)
+
+The Backend created the Workflow; the Workflow called the actor. No cycle, so both edges were plain yields.
 
 ```mermaid
 flowchart LR
-  B["Browser"] -- "server functions" --> WS["Website"]
-  B -- "WebSocket (procedures)" --> A
-  WS -- "env.BACKEND (schemaless methods)" --> BE
   subgraph be["Backend script"]
-    BE["Backend<br/>D1, Shopify secret, refresh"]
+    BE["Backend<br/>D1, secret, refresh, one-order Admin calls"]
     A["ShopActor<br/>SQLite only"]
-    WF["OrdersSyncWorkflow"]
-  end
-  BE -- "yield* ShopActor → stub" --> A
-  BE -- "yield* OrdersSyncWorkflow → create()" --> WF
-  WF -- "yield* ShopActors → stub<br/>streamOrders, syncFailed" --> A
-  BE -- "Admin API" --> SH["Shopify"]
-  WF -- "bulk Admin API" --> SH
-```
-
-There was no cycle: the Backend created the Workflow, and the Workflow called the actor. Both edges were Alchemy yields. That is also why it diverged from legacy without anyone deciding it: the Backend owning the start was the shape that wired cleanly.
-
----
-
-## 4. What we wanted (A1) and what we have
-
-A1 moved the start into the actor, as legacy's object does. The arrows we wanted are legacy's:
-
-```mermaid
-flowchart LR
-  B["Browser"] -- "MerchantSyncOpenOrders (socket)" --> A
-  subgraph be["Backend script"]
-    BE["Backend<br/>gate, webhooks, first-render reads"]
-    A["ShopActor<br/>D1, Shopify secret, refresh, one-order Admin calls"]
     WF["OrdersSyncWorkflow<br/>bulk Admin calls"]
   end
-  BE -- "stub" --> A
+  BE -- "yield* ShopActor" --> A
+  BE -- "yield* OrdersSyncWorkflow → create()" --> WF
+  WF -- "yield* ShopActors → callbacks" --> A
+```
+
+### 3.2 What A1 asked for
+
+Legacy's arrows: the actor creates the Workflow, the Workflow calls the actor back.
+
+```mermaid
+flowchart LR
+  subgraph be["Backend script"]
+    BE["Backend<br/>gate, webhooks, first-render reads"]
+    A["ShopActor<br/>D1, secret, refresh, one-order Admin calls"]
+    WF["OrdersSyncWorkflow<br/>bulk Admin calls"]
+  end
+  BE -- stub --> A
   A == "create()" ==> WF
   WF == "onOrdersStream, onOrdersSyncEmpty, onOrdersSyncError" ==> A
 ```
 
-The two bold edges point at each other. Here is how each is wired today (`main` at f074b64):
+### 3.3 What we have (`main` at c37ab3e)
 
-| Edge                                 | How it is wired                                                                                                                                                                                             | Alchemy-typed?                                 |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Workflow → actor                     | The Workflow's outer phase yields `ShopActors`, which yields `ShopActor`: a typed stub (`orders-sync-workflow.ts`).                                                                                         | yes                                            |
-| Actor → Workflow                     | The actor's outer phase yields `Cloudflare.WorkerEnvironment` and reads `env.OrdersSyncWorkflow` by name when `create` runs (`makeOrdersSyncWorkflows`, `src/backend/shop-actor/orders-sync-workflows.ts`). | **no**: a name lookup, as legacy's SDK does it |
-| Who registers the Workflow's binding | The Backend's outer phase yields `OrdersSyncWorkflow` (`backend.ts`), which puts the binding and the Workflow class on the Backend's script. The actor shares that script, so its `env` has the binding.    | yes                                            |
+| Edge                   | Wiring                                                                                                                                              | Form                                   |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| Workflow → actor       | The Workflow's outer phase yields `ShopActors`, which yields the `ShopActor` tag.                                                                   | Alchemy yield, needs the actor's Layer |
+| Actor → Workflow       | The actor reads `env.OrdersSyncWorkflow` by name when `create` runs (`makeOrdersSyncWorkflows`, `src/backend/shop-actor/orders-sync-workflows.ts`). | **hand-rolled**, legacy's way          |
+| The Workflow's binding | The Backend's outer phase yields `OrdersSyncWorkflow`, so the binding and the class export live on the Backend's script, which the actor shares.    | Alchemy yield                          |
 
-So today's code is **legacy's shape on one edge and Alchemy's on the other**. It works locally and in every suite. Staging has it deployed (2026-10-17), not yet checked by hand.
+The runtime picture matches legacy (§3.2), and every suite passes. What is off is one edge's wiring style.
 
 ---
 
-## 5. Why the actor cannot simply yield the Workflow
+## 4. The cycle, exactly
 
-### 5.1 The wiring graph
-
-What runs when the Backend's stack is planned, as yields (an arrow means "its outer phase yields"):
+An arrow means "building this needs that":
 
 ```mermaid
 flowchart TD
-  BE["Backend outer phase"] --> A["ShopActor (the tag)"]
-  BE --> WF["OrdersSyncWorkflow"]
-  A --> AL["ShopActorLive<br/>= ShopActor.make(makeShopActor)"]
-  WF --> WFO["Workflow outer phase<br/>(ordersSyncBody)"]
-  WFO --> SA["ShopActors"]
-  SA --> A
-  AL -. "wanted: yield* OrdersSyncWorkflow" .-> WF
+  AL["ShopActorLive<br/>= ShopActor.make(makeShopActor)"] -- "wanted: yield* OrdersSyncWorkflow" --> WFC["OrdersSyncWorkflow constructor"]
+  WFC -- "yield* ShopActors" --> SA["ShopActors"]
+  SA -- "yield* ShopActor (the tag)" --> T["ShopActor tag's value"]
+  T -- "provided only by" --> AL
   classDef bad stroke:#c00,stroke-width:3px
-  class AL,WF,WFO,SA bad
+  class AL,WFC,SA,T bad
 ```
 
-The dotted edge closes a loop: building the actor's layer needs the Workflow, whose outer phase needs `ShopActors`, which needs the `ShopActor` tag, which is what the actor's layer is building. It fails twice, in two places:
+Both ends of the cycle use the **implementation-needing** forms from §1's table: the actor yields the Workflow class (the only form a Workflow has), and the Workflow yields the `ShopActor` tag (which needs `ShopActorLive`). Rule 6 says one edge must be identity-only. A Workflow has no identity-only form; a Durable Object does. So the edge to change is **Workflow → actor**, to `ShopActor.from(<host>)`.
 
-1. **Types.** `ShopActor`'s shape (the list of its methods) was inferred from its implementation (`Effect.Success<Effect.Success<typeof makeShopActor>>`). The implementation yields the Workflow, the Workflow's type mentions `ShopActors`, `ShopActors` mentions `ShopActor`'s shape: TypeScript reports `TS2506: 'OrdersSyncWorkflow' is referenced directly or indirectly in its own base expression` (151 errors in the first try of S1).
-2. **Layers.** Even with the types fixed, Effect cannot build a layer that requires itself: `ShopActorLive` would need `ShopActor`, which only `ShopActorLive` provides.
+The cycle shows in two places, and each has its fix:
 
-### 5.2 Alchemy's idiom, and where it broke
-
-Alchemy's guide for cycles (`refs/alchemy/website/src/content/docs/infrastructure-as-effects/circular-bindings.mdx`) splits **identity** (a class used as a tag, with its shape declared by hand) from **implementation** (`.make()`), and lets only the identity cross the cycle. Follow-up round 2 tried both halves:
-
-| Piece                                                                                                         | Fixes         | Result                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| ------------------------------------------------------------------------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Declare `ShopActorShape` on the tag (`DurableObject<ShopActor, ShopActorShape>()("ShopActor")`)               | 1, the types  | **Worked.** `vp check` green; the tag moved to its own module (load order), as the guide does.                                                                                                                                                                                                                                                                                                                                     |
-| The Workflow binds the actor with `ShopActor.from(<host Worker>)`, which needs only the Worker, not the layer | 2, the layers | **Failed on every fresh local stack**: `[TestBackend] fail (local) — Cannot coerce Output<TestBackend.workerName> to a string`. `from` names the host by its script name, which a local stack has not created yet when the binding is planned. Passing the `Backend` class instead would point the test Backend at the production Backend's script; a plain string is not available, since Alchemy generates local and test names. |
-
-The second piece is documented by Alchemy for a Worker binding a Durable Object it hosts (`.from(Self)`, "Using `.from(Self)` Inside the Host"), and tested only across two Workers. A Workflow on the same script, on a local stack, is the case that breaks. That is a gap in Alchemy's local provider, not in our code; fixing it means a change or an answer from Alchemy. The round reverted to today's handle (33640ee records it).
-
-One more finding from the round: **the Backend must keep `yield* OrdersSyncWorkflow` in every option.** At runtime the Backend's init does not run the actor's outer phase, so without the Backend's yield the Workflow class would be missing from the script's exports wherever no actor has started.
+| Where         | Symptom                                                                                                                                                                                                                                                            | Fix (Alchemy's)                                                                                                                       |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| TypeScript    | `TS2506: 'OrdersSyncWorkflow' is referenced directly or indirectly in its own base expression`: `ShopActor`'s shape was inferred from its implementation (`Effect.Success<Effect.Success<typeof makeShopActor>>`), so the tag's type depends on the implementation | Declare the shape on the tag: `Cloudflare.DurableObject<ShopActor, ShopActorShape>()("ShopActor")` (rule 5). **Verified in round 2.** |
+| Effect Layers | `ShopActorLive` would require the `ShopActor` tag, which only it provides                                                                                                                                                                                          | The Workflow binds `ShopActor.from(<host>)`, which needs only the host Worker (rule 6). **Failed in round 2, see §5.**                |
 
 ---
 
-## 6. Options
+## 5. Why `.from(Self)` failed: a bug in Alchemy's local provider
 
-| #   | Option                                                                                                                               | Matches legacy                  | Alchemy-typed on both edges | Cost                                                                                                                                                                       |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **Keep today's**: the actor finds the Workflow's binding by name; the Workflow yields the actor.                                     | yes (legacy finds both by name) | no (one edge)               | 30 lines in `orders-sync-workflows.ts`; a typo in the name is a runtime defect, guarded by the shared constant `ORDERS_SYNC_WORKFLOW` and by the integ and e2e sync tests. |
-| 2   | Today's plus the declared `ShopActorShape` (round 2's first piece)                                                                   | yes                             | no (one edge)               | A hand-written interface of the actor's stub methods to keep in step; gains a written-down list of what the Backend and the Workflow may call. No behaviour change.        |
-| 3   | Wait for Alchemy: declared shape plus `ShopActor.from(Self)` once its local provider resolves the host's own name                    | yes                             | yes                         | Blocked; needs an issue filed with Alchemy and a release. Option 1 holds until then.                                                                                       |
-| 4   | Flip the other edge: the Workflow finds the actor by name (`env.ShopActor`) and the actor yields the Workflow class                  | yes                             | no (the other edge)         | The Workflow's three callbacks lose their typed stub, which is the edge with more calls; also re-runs the Workflow's registration on every activation. Worse than 1.       |
-| 5   | Remove the Workflow → actor edge: the Workflow returns the bulk URL as its result and the actor polls `get(id).status()` on an alarm | no (legacy calls back)          | yes                         | A new alarm loop and its staleness rules in the actor; sync completes on the next poll, not at once; more code than it removes. Rejected unless 1 is unacceptable.         |
-| 6   | Back to slice A's shape: the Backend creates the Workflow                                                                            | no (A1 decided against it)      | yes                         | Reverses decision A1.                                                                                                                                                      |
+Round 2 (`docs/actor-ownership-plan.md` §7) built both fixes. Types passed. Every fresh local stack (each integ file, e2e, a first `alchemy dev`) then failed:
+
+```
+[TestBackend] fail (local) — Cannot coerce Output<TestBackend.workerName> to a string via JS coercion
+```
+
+The cause is one expression in `LocalWorkerProvider`'s `precreate` (`refs/alchemy/packages/alchemy/src/Cloudflare/Workers/LocalWorkerProvider.ts`):
+
+```ts
+precreate: Effect.fn(function* ({ id, fqn, news, bindings }) {
+  const name = yield* createWorkerName(id, news.name);
+  ...
+  if (binding.type === "durable_object_namespace") {
+    durableObjectNamespaces[binding.className] =
+      binding.namespaceId ??
+      encodeURIComponent(`${binding.scriptName!}-${binding.className}`);
+```
+
+- `precreate` reserves a Worker before the converge pass (rule 6). For a binding from `.from(Self)`, `scriptName` is the Worker's **own** name as an `Output`, which cannot exist yet while the Worker itself is being precreated; the template string coerces it and throws.
+- The same file's `resolveConfig` already treats a self-binding as local: `!binding.scriptName || binding.scriptName === name`, using the Worker's own `name`. `precreate` is the one place that does not, and it even builds `undefined-ShopActor` for an ordinary local binding (no `scriptName`).
+- The deployed provider is separate code (`WorkerProvider.ts`) and treats `scriptName === name` as owned locally in its migration logic (`ownedLocally = !("scriptName" in oldBinding) || oldBinding.scriptName === name`). Whether its own precreate and the Cloudflare API accept a self-`script_name` binding is **unverified**; staging is the check.
+
+So the documented pattern is right for this case, and it breaks on a local-provider bug: `precreate` should use its own `name` when the binding's `scriptName` is the Worker itself (or is not yet a string), as `resolveConfig` does.
+
+**The repo already patches Alchemy.** `patches/alchemy@2.0.0-beta.81.patch`, mapped in `pnpm-workspace.yaml` and described in `docs/dependency-patches-runbook.md`, adds an export Alchemy leaves out. A second hunk in the same patch can fix `precreate`, with an upstream issue so it retires on a release.
+
+---
+
+## 6. The design this gives
+
+```mermaid
+flowchart TD
+  subgraph identity["Identity (tags, imported across the cycle)"]
+    T["ShopActor tag<br/>+ ShopActorShape (declared)"]
+  end
+  subgraph impl["Implementations"]
+    AL["ShopActorLive<br/>ShopActor.make(...)"]
+    WFC["OrdersSyncWorkflow<br/>(class form)"]
+  end
+  AL -- "yield* OrdersSyncWorkflow → typed create()" --> WFC
+  WFC -- "ShopActor.from(Self) → typed callbacks" --> T
+  BE["Backend outer phase"] -- "yield* ShopActor (via ShopActorLive)" --> AL
+  BE -- "yield* OrdersSyncWorkflow (export on its script)" --> WFC
+```
+
+- `src/backend/shop-actor/` gains the tag module: `ShopActor` and `ShopActorShape` (the stub methods the Backend and the Workflow may call), the identity only. `shop-actor.ts` keeps `ShopActor.make(...)`. That is `file-layout.mdx`'s rule, one file per Resource or Layer, and round 2 found the split necessary anyway (load order).
+- The Workflow's outer phase binds `ShopActor.from(<the Backend Worker>)` and wraps it in `ShopActors`; the Backend keeps `yield* ShopActor`.
+- The actor's outer phase yields `OrdersSyncWorkflow` and uses Alchemy's handle. `orders-sync-workflows.ts` and `ORDERS_SYNC_WORKFLOW` go.
+- The Backend keeps `yield* OrdersSyncWorkflow`: at runtime the Backend's init does not run the actor's constructor, so without it the Workflow class would be missing from the script's exports wherever no actor has started (round 2). Memoization by logical id makes the two yields one resource.
+
+Costs: `ShopActorShape` is a hand-written interface to keep in step with the actor (it is also the written contract of what may call it); the Workflow's constructor re-runs on each actor activation, as every constructor a runtime yields does at cold start (rule 2).
 
 ---
 
 ## 7. Questions
 
-1. **Is the architecture off?** **Recommendation:** no. The runtime picture (§4) is legacy's, and every behaviour test passes. What differs is wiring style: legacy wires both edges by name and so never sees the cycle; Alchemy wires by yield and does. Today's code wires one edge legacy's way, with the name in one shared constant.
-2. **Which option?** **Recommendation:** option 1, with the handle's JSDoc saying in two sentences why the actor reads the binding by name (the cycle, and `.from(Self)` failing on local stacks). Take option 2 too only if you want the actor's stub list written down.
-3. **Report the `.from(Self)` gap to Alchemy?** **Recommendation:** yes, as an issue with the error and the shape (a Workflow and a Durable Object on one script, each binding the other); if it is fixed, option 3 replaces the handle in one small change.
-4. **Staging.** It runs today's code (deployed 2026-10-17). **Recommendation:** verify it by hand now, since no option changes behaviour, then push `main`.
+1. **Which design?** **Recommendation:** §6, Alchemy's documented one: tag with declared shape, `ShopActor.from(Self)` in the Workflow, the actor yielding the Workflow class. Today's hand-rolled handle stays until it is proven on staging.
+2. **How to get past the local bug?** **Recommendation:** a second hunk in `patches/alchemy@2.0.0-beta.81.patch` making `LocalWorkerProvider.precreate` use the Worker's own `name` for a self-bound (or unresolved) `scriptName`, recorded in `docs/dependency-patches-runbook.md` with when to retire it; and an upstream Alchemy issue with the error, the line and the fix.
+3. **What proves it?** **Recommendation:** a spike before the change lands: the patch plus §6 green in `vp check`, the integ sync tests, e2e, and a fresh `alchemy dev`; then **staging**, since the deployed provider is separate code: the deploy output shows one `ShopActor` binding (self `script_name` accepted, migrations unchanged), and a Sync open orders shows `OrdersAgent.syncOpenOrders … status=started` then `OrdersSyncWorkflow.run … status=complete`. If staging refuses a self-`script_name`, keep today's handle and add that to the upstream issue.
+4. **Staging now.** It runs today's code (deployed 2026-10-17). **Recommendation:** verify it by hand before the spike, so the spike's staging run is compared against a known-good baseline; push `main` after.
