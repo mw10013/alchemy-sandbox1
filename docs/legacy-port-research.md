@@ -43,6 +43,8 @@ Found while researching slice C (`docs/members-teams-research.md`, parked). Lega
 | A2  | A read a page needs on first render is a server function (SSR, and the socket query is seeded from it). Every browser write and every live read is a role-prefixed procedure on the socket. A server function writes only when the actor genuinely cannot do the work.                                                         | Q5 (restated and tightened; the orders screen's sync buttons become procedures).                                               |
 | A3  | One socket per tab, held by the `/app` layout (merchant) and the member shop layout, kept open across navigation; pages seed and read their queries and never own the socket.                                                                                                                                                  | The per-page socket the orders screen and the member shop page have today (the client is released when no page reads an atom). |
 
+**Refined 2026-10-17** (`docs/actor-ownership-research.md`, settled): under A1 the actor makes the one-order Admin calls and creates the Workflow instance, while the bulk Admin calls stay in the Workflow, as legacy's `OrdersSyncWorkflow` made them itself; the Workflow's callbacks into the actor stay stub methods.
+
 Slices B and D are unaffected (pure). Slice A's ownership is reworked by an **architecture correction** with its own research and plan, before C resumes; C's research keeps its settled answers and is revised for A2 and A3.
 
 ---
