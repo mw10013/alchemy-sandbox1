@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -23,6 +24,7 @@ import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_FORBIDDEN,
   CONNECTION_CLOSE_REVOKED,
+  CONNECTION_CLOSE_UNINSTALLED,
   CONNECTION_HEADER,
   COUNT_KEY,
   ConnectionCaller,
@@ -74,6 +76,20 @@ const REVOKED_REASON = "membership changed";
 const DISPLACED_REASON = "signed in elsewhere";
 const EXPIRED_REASON = "session expired";
 const UNIDENTIFIED_REASON = "unidentified connection";
+const UNINSTALLED_REASON = "uninstalled";
+
+/**
+ * The reason `ShopActor.destroy` aborts the object with. The stub call it lands in rejects with
+ * an `Error` of this message, which is how `ShopActors.destroy` tells the abort from a failure.
+ */
+export const ABORT_UNINSTALLED = "uninstalled";
+
+/**
+ * How long `destroy` waits for the sockets it closed to finish their close handshake before it
+ * aborts. An abort drops a socket whose close frame has not gone out, and the browser then sees
+ * 1006, which it retries, instead of the terminal code.
+ */
+const CLOSE_HANDSHAKE_WAIT = "1 second";
 
 /**
  * One shop's work: its synced orders, its workflows and the runs applied to order items. Identity
@@ -358,7 +374,7 @@ const tagsOf = (caller: ConnectionCaller) =>
  * It has two surfaces that never overlap. Browsers call `ShopActorRpcs` with Effect RPC over a
  * hibernating WebSocket; there is no HTTP RPC into the actor. The Backend calls the schemaless
  * methods `revoke`, `snapshot`, `loadFixture`, `addFixture`, `orderVersion`, `storeOrder`,
- * `getOrder` and `listOrders` on its stub, which no browser can reach.
+ * `getOrder`, `listOrders` and `destroy` on its stub, which no browser can reach.
  *
  * Who is on a socket is fixed when the socket is accepted: the Backend's gate resolves the
  * browser and names it in {@link CONNECTION_HEADER} on the upgrade it forwards, and the actor
@@ -766,6 +782,36 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
         Effect.provide(runtime),
       );
 
+      /**
+       * Tears the shop's actor down on uninstall: closes every socket with
+       * {@link CONNECTION_CLOSE_UNINSTALLED} (best effort, as every close here), deletes the alarm
+       * and then all storage, which is what ends the object's storage billing, waits up to
+       * {@link CLOSE_HANDSHAKE_WAIT} for the closes to complete, and aborts the object with
+       * {@link ABORT_UNINSTALLED}. The abort matters: the actor migrates once per activation, so
+       * without it this activation would keep serving with its tables gone. The abort lands
+       * mid-call, so the stub call rejects instead of answering; `ShopActors.destroy` reads that
+       * rejection as success.
+       */
+      const destroy = Effect.fn("ShopActor.destroy")(function* () {
+        const sockets = yield* state.getWebSockets();
+        for (const ws of sockets)
+          yield* closeSocket(ws, CONNECTION_CLOSE_UNINSTALLED, UNINSTALLED_REASON);
+        yield* state.storage.deleteAlarm();
+        yield* state.storage.deleteAll();
+        const closed = yield* Effect.sync(() =>
+          sockets.every((ws) => ws.ws.readyState === WebSocket.CLOSED),
+        ).pipe(
+          Effect.repeat({ schedule: Schedule.spaced("10 millis"), until: (done) => done }),
+          Effect.timeoutOption(CLOSE_HANDSHAKE_WAIT),
+        );
+        yield* Effect.logInfo(
+          `ShopActor.destroy: shop=${shop} sockets=${String(sockets.length)} closed=${String(Option.isSome(closed))}: storage deleted`,
+        ).pipe(
+          Effect.annotateLogs({ shop, sockets: sockets.length, closed: Option.isSome(closed) }),
+        );
+        yield* state.abort(ABORT_UNINSTALLED);
+      }, Effect.provide(runtime));
+
       return {
         fetch,
         webSocketMessage: socket.webSocketMessage,
@@ -779,6 +825,7 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
         storeOrder,
         getOrder,
         listOrders,
+        destroy,
       };
     });
   }),

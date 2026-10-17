@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -7,6 +8,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { orderSyncQuery, orderSyncVariables } from "../../../src/backend/order-sync.ts";
 import { Orders } from "../../../src/backend/orders.ts";
+import { ABORT_UNINSTALLED } from "../../../src/backend/shop-actor.ts";
 import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
 import { ReauthorizationRequired, Shopify } from "../../../src/backend/shopify.ts";
 import type { ShopifyAdminError } from "../../../src/backend/shopify-admin.ts";
@@ -42,8 +44,8 @@ const session: ShopSessionRow = {
 
 /**
  * {@link Webhooks} over {@link testShopify} holding `rows`, which stays readable, and
- * {@link Orders} over {@link testOrderActors} answering `version` and {@link testShopifyAdmin}
- * answering `replies`, both recording into `calls`.
+ * {@link Orders} over {@link testOrderActors} answering `version` (and `stub` for a destroy) and
+ * {@link testShopifyAdmin} answering `replies`, both recording into `calls`.
  */
 const layer = (
   rows: ReadonlyArray<ShopSessionRow> = [session],
@@ -51,27 +53,29 @@ const layer = (
     calls = newCalls(),
     version = "fetch",
     replies = [],
+    stub = Effect.void,
   }: {
     calls?: Calls;
     version?: "stale" | "fetch" | "refused";
     replies?: Array<Effect.Effect<unknown, ShopifyAdminError>>;
+    stub?: Effect.Effect<void>;
   } = {},
 ) =>
   Webhooks.layer.pipe(
     Layer.provideMerge(Orders.layer),
     Layer.provideMerge(
-      Layer.mergeAll(testOrderActors(calls, version), testShopifyAdmin(replies, calls.admin)),
+      Layer.mergeAll(testOrderActors(calls, version, stub), testShopifyAdmin(replies, calls.admin)),
     ),
     Layer.provideMerge(testShopify(rows)),
     Layer.provideMerge(QuietLogs),
   );
 
-/** Every call an `orders/*` delivery can make past the session read. */
+/** Every call a delivery can make on the actor or the Admin API. */
 interface Calls extends OrderActorCalls {
   readonly admin: Array<AdminCall>;
 }
 
-const newCalls = (): Calls => ({ versions: [], stored: [], admin: [] });
+const newCalls = (): Calls => ({ versions: [], stored: [], destroyed: [], admin: [] });
 
 /**
  * A delivery of `payload` for `topic` (the header's form), signed by {@link signWebhook}.
@@ -297,14 +301,6 @@ describe("Webhooks.serve", () => {
         yield* webhookRequest({ topic: "app/scopes_update", payload: { previous: [] } }),
       );
       assert.strictEqual(response.status, 500);
-      assert.deepStrictEqual(yield* storedScope, Option.some("read_products"));
-    }).pipe(Effect.provide(layer())),
-  );
-
-  it.effect.each(["app/uninstalled"])("%s answers 200 and acts on nothing yet", (topic) =>
-    Effect.gen(function* () {
-      const response = yield* serve(yield* webhookRequest({ topic, payload: { id: 1 } }));
-      assert.strictEqual(response.status, 200);
       assert.deepStrictEqual(yield* storedScope, Option.some("read_products"));
     }).pipe(Effect.provide(layer())),
   );
@@ -558,3 +554,62 @@ for (const [name, toml] of [
       for (const block of trimmed) assert.include(block, ORDER_INCLUDE_FIELDS);
     });
   });
+
+/**
+ * The stub's rejection, as the integ suite observed it, carrying `message` as its cause's. Typed
+ * as the stub types its methods, with no error, though it fails at runtime.
+ */
+const stubRejection = (message: string) =>
+  Effect.fail(
+    new Cloudflare.RpcCallError({
+      method: "destroy",
+      cause: Object.assign(new Error(message), { durableObjectReset: true }),
+    }),
+  ) as unknown as Effect.Effect<void>;
+
+describe("app/uninstalled", () => {
+  it.effect("deletes the session, then destroys the actor", () => {
+    const calls = newCalls();
+    return Effect.gen(function* () {
+      const response = yield* serve(
+        yield* webhookRequest({ topic: "app/uninstalled", payload: { id: 1 } }),
+      );
+      assert.strictEqual(response.status, 200);
+      assert.isTrue(Option.isNone(yield* storedScope));
+      assert.deepStrictEqual(calls.destroyed, [{ key: SEED_SHOP, hadSession: false }]);
+    }).pipe(Effect.provide(layer([session], { calls })));
+  });
+
+  it.effect("a shop with no session still has its actor destroyed", () => {
+    const calls = newCalls();
+    return Effect.gen(function* () {
+      const response = yield* serve(
+        yield* webhookRequest({ topic: "app/uninstalled", payload: { id: 1 } }),
+      );
+      assert.strictEqual(response.status, 200);
+      assert.deepStrictEqual(calls.destroyed, [{ key: SEED_SHOP, hadSession: false }]);
+    }).pipe(Effect.provide(layer([], { calls })));
+  });
+
+  it.effect("the abort's rejection of the stub call counts as destroyed", () =>
+    Effect.gen(function* () {
+      const response = yield* serve(
+        yield* webhookRequest({ topic: "app/uninstalled", payload: { id: 1 } }),
+      );
+      assert.strictEqual(response.status, 200);
+    }).pipe(Effect.provide(layer([session], { stub: stubRejection(ABORT_UNINSTALLED) }))),
+  );
+
+  it.effect.each<{ name: string; stub: Effect.Effect<void> }>([
+    { name: "another stub rejection", stub: stubRejection("deleteAll timed out") },
+    { name: "a defect with the abort's message", stub: Effect.die(new Error(ABORT_UNINSTALLED)) },
+  ])("$name answers 500, the session already deleted", ({ stub }) =>
+    Effect.gen(function* () {
+      const response = yield* serve(
+        yield* webhookRequest({ topic: "app/uninstalled", payload: { id: 1 } }),
+      );
+      assert.strictEqual(response.status, 500);
+      assert.isTrue(Option.isNone(yield* storedScope));
+    }).pipe(Effect.provide(layer([session], { stub }))),
+  );
+});

@@ -12,6 +12,7 @@ import { Rpc, RpcGroup } from "effect/rpc";
 import { Email, ReturnPath } from "../../src/contract/auth.ts";
 import { Auth } from "../../src/backend/auth.ts";
 import { MagicLinkDelivery } from "../../src/backend/magic-link-delivery.ts";
+import { Members } from "../../src/backend/members.ts";
 import { ShopKey } from "../../src/contract/shop.ts";
 import { OrdersListInput, OrdersListPage } from "../../src/contract/shop-actor.ts";
 import { OrderDetail } from "../../src/domain/orders.ts";
@@ -50,6 +51,8 @@ export type ShopifyFakeCall = typeof ShopifyFakeCall.Type;
  *   `ShopifyCalls` answers the calls it served since, as {@link ShopifyFakeCall}, and clears them.
  * - `OrderVersion`, `StoreOrder`, `GetOrder` and `ListOrders` are the {@link ShopActors} methods
  *   of the same names on `shop`'s actor, as the Backend calls them.
+ * - `ShopIdentityNames` answers the emails of `shop`'s `Member` rows and the names of its `Team`
+ *   rows, read from D1 alone ({@link Members}' `identityNames`), so it never reaches the actor.
  */
 export const IntegRpcs = RpcGroup.make(
   Rpc.make("IssueMagicLink", {
@@ -85,6 +88,10 @@ export const IntegRpcs = RpcGroup.make(
     payload: { shop: ShopKey, ...OrdersListInput.fields },
     success: OrdersListPage,
   }),
+  Rpc.make("ShopIdentityNames", {
+    payload: { shop: ShopKey },
+    success: Schema.Struct({ emails: Schema.Array(Email), teams: Schema.Array(Schema.String) }),
+  }),
 );
 
 export const IntegHandlers = IntegRpcs.toLayer(
@@ -93,6 +100,7 @@ export const IntegHandlers = IntegRpcs.toLayer(
     const delivery = yield* MagicLinkDelivery;
     const shopifyFake = yield* ShopifyFake;
     const actors = yield* ShopActors;
+    const members = yield* Members;
 
     return IntegRpcs.of({
       IssueMagicLink: ({ email, returnTo }, { headers }) =>
@@ -116,6 +124,7 @@ export const IntegHandlers = IntegRpcs.toLayer(
       StoreOrder: ({ shop, ...input }) => actors.storeOrder(shop, input),
       GetOrder: ({ shop, orderId }) => actors.getOrder(shop, orderId),
       ListOrders: ({ shop, ...input }) => actors.listOrders(shop, input),
+      ShopIdentityNames: ({ shop }) => members.identityNames(shop),
     });
   }),
 );

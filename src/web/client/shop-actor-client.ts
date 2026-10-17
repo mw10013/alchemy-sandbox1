@@ -20,6 +20,7 @@ import {
   merchantExpiredAtom,
   merchantTokenAtom,
   notAMemberAtom,
+  uninstalledAtom,
   reconnectAtom,
   retryPolicy,
   shopKeyAtom,
@@ -262,6 +263,7 @@ export const seedShop = (
   registry.set(merchantTokenAtom, input.merchantToken);
   registry.set(notAMemberAtom, false);
   registry.set(merchantExpiredAtom, false);
+  registry.set(uninstalledAtom, false);
   registry.set(connectionStateAtom, "connecting");
   if (Option.isSome(input.merchantToken)) {
     seed(registry, merchantCountQuery, input.snapshot.count);

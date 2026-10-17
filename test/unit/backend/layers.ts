@@ -5,6 +5,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
@@ -12,7 +13,7 @@ import type { Member } from "../../../src/contract/members.ts";
 import type { ShopKey } from "../../../src/contract/shop.ts";
 import type { LineItemNode, OrderNode } from "../../../src/backend/order-sync.ts";
 import { ShopifyAdmin, type ShopifyAdminError } from "../../../src/backend/shopify-admin.ts";
-import { ShopActors } from "../../../src/backend/shop-actors.ts";
+import { settleDestroy, ShopActors } from "../../../src/backend/shop-actors.ts";
 import { migrations, syncTransaction } from "../../../src/backend/shop-actor.ts";
 import { makeOrderRepository } from "../../../src/backend/shop-actor/orders.ts";
 import { Auth } from "../../../src/backend/auth.ts";
@@ -147,20 +148,25 @@ export interface OrderActorCalls {
     readonly order: OrderNode;
     readonly lineItems: ReadonlyArray<LineItemNode>;
   }>;
+  /** Each destroy, with whether the shop still had a `ShopSession` row when it ran. */
+  readonly destroyed: Array<{ readonly key: ShopKey; readonly hadSession: boolean }>;
 }
 
 /**
- * `ShopActors.layerTest` whose `orderVersion` answers `version` and whose `storeOrder` writes a
- * fresh, changed row, each recorded in `calls`.
+ * `ShopActors.layerTest` whose `orderVersion` answers `version`, whose `storeOrder` writes a
+ * fresh, changed row, and whose `destroy` reads `stub` as the actor's answer through the real
+ * {@link settleDestroy}, each recorded in `calls`.
  */
 export const testOrderActors = (
   calls: OrderActorCalls,
   version: "stale" | "fetch" | "refused" = "fetch",
+  stub: Effect.Effect<void> = Effect.void,
 ) =>
   Layer.effect(
     ShopActors,
     Effect.gen(function* () {
       const base = yield* ShopActors;
+      const sessions = yield* ShopSessions;
       return {
         ...base,
         orderVersion: (key, { orderId, updatedAt }) =>
@@ -172,6 +178,12 @@ export const testOrderActors = (
           Effect.sync(() => {
             calls.stored.push({ key, order, lineItems });
             return { written: true, fresh: true, changed: true, refused: false };
+          }),
+        destroy: (key) =>
+          Effect.gen(function* () {
+            const hadSession = Option.isSome(yield* sessions.find(key));
+            calls.destroyed.push({ key, hadSession });
+            yield* settleDestroy(key, stub);
           }),
       };
     }),

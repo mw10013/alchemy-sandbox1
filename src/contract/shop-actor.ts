@@ -146,6 +146,13 @@ export const CONNECTION_CLOSE_TRY_AGAIN = 1013;
  */
 export const CONNECTION_CLOSE_DISPLACED = 4409;
 
+/**
+ * Close code for every socket when the shop uninstalls Baton and its actor is destroyed.
+ * Terminal: the actor and its storage are gone, so the browser must not reconnect. The gate
+ * would refuse it anyway, since the shop's session and members went first.
+ */
+export const CONNECTION_CLOSE_UNINSTALLED = 4410;
+
 /** At most this many sockets per member (Baton's `maxConnectionsPerMember`); merchants are not capped. */
 export const MAX_CONNECTIONS_PER_MEMBER = 2;
 

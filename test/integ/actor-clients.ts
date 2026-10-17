@@ -21,6 +21,7 @@ import {
   CONNECTION_CLOSE_FORBIDDEN,
   CONNECTION_CLOSE_NOT_A_MEMBER,
   CONNECTION_CLOSE_UNAUTHENTICATED,
+  CONNECTION_CLOSE_UNINSTALLED,
   type ConnectionCaller,
   type Notice,
   NoticeFrame,
@@ -112,6 +113,7 @@ const TERMINAL_CODES: ReadonlySet<number> = new Set([
   CONNECTION_CLOSE_FORBIDDEN,
   CONNECTION_CLOSE_NOT_A_MEMBER,
   CONNECTION_CLOSE_DISPLACED,
+  CONNECTION_CLOSE_UNINSTALLED,
 ]);
 const isTerminal = (error: Socket.SocketError) =>
   error.reason._tag === "SocketCloseError" && TERMINAL_CODES.has(error.reason.code);

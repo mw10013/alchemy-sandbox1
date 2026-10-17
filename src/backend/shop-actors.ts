@@ -1,3 +1,5 @@
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -7,7 +9,44 @@ import * as Match from "effect/Match";
 import { FixtureConflict } from "../contract/fixture.ts";
 import type { ActorFixtureRows } from "./fixture.ts";
 import type { LineItemNode, OrderNode } from "./order-sync.ts";
-import ShopActor from "./shop-actor.ts";
+import ShopActor, { ABORT_UNINSTALLED } from "./shop-actor.ts";
+
+/**
+ * `ShopActors.destroy`'s reading of the stub call (legacy's `destroyShopAgent`). The actor's abort
+ * lands mid-call, so a successful destroy rejects: the stub fails with an `RpcCallError` whose
+ * cause is workerd's reset, an `Error` with message {@link ABORT_UNINSTALLED} (and
+ * `durableObjectReset: true`). That rejection, and only that, is success: the abort comes after
+ * `deleteAll`, so seeing it proves the storage is gone. A call that answers before its abort
+ * lands is success too. Anything else (the actor unreachable, or `deleteAll` hitting its time
+ * limit, which is safe to retry until it succeeds) logs `status=failed` and propagates, so the
+ * uninstall answers non-2xx and Shopify retries.
+ *
+ * The stub types its methods' errors as `never`, but the rejection arrives as a typed failure,
+ * so this reads the cause.
+ */
+export const settleDestroy = (key: ShopKey, call: Effect.Effect<void>) =>
+  call.pipe(
+    Effect.catchCause((cause) =>
+      isUninstallAbort(Cause.squash(cause)) ? Effect.void : Effect.failCause(cause),
+    ),
+    Effect.tap(() =>
+      Effect.logInfo(`ShopActors.destroy: shop=${key} status=destroyed`).pipe(
+        Effect.annotateLogs({ shop: key, status: "destroyed" }),
+      ),
+    ),
+    Effect.tapCause((cause) =>
+      Effect.logError(
+        `ShopActors.destroy: shop=${key} status=failed: ${messageOf(Cause.squash(cause))}`,
+      ).pipe(Effect.annotateLogs({ shop: key, status: "failed" })),
+    ),
+  );
+
+const isUninstallAbort = (error: unknown) =>
+  error instanceof Cloudflare.RpcCallError &&
+  error.cause instanceof Error &&
+  error.cause.message === ABORT_UNINSTALLED;
+
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 const make = Effect.gen(function* () {
   const actors = yield* ShopActor;
@@ -92,7 +131,13 @@ const make = Effect.gen(function* () {
     return yield* actors.getByName(key).listOrders(input);
   });
 
+  /** Destroys the shop's actor; see `destroy` on {@link ShopActor} and {@link settleDestroy}. */
+  const destroy = Effect.fn("ShopActors.destroy")(function* (key: ShopKey) {
+    yield* settleDestroy(key, actors.getByName(key).destroy());
+  });
+
   return {
+    destroy,
     revoke,
     snapshot,
     loadFixture,
@@ -116,7 +161,7 @@ export class ShopActors extends Context.Service<ShopActors, Effect.Success<typeo
   /**
    * Records each revoke and closes nothing, answers every snapshot with `snapshot`, and records
    * each fixture load in `loaded` and each fixture add in `added`, answering the counts of its
-   * rows; it never finds a clash. Its order methods die: a test that reaches an actor's orders
+   * rows; it never finds a clash. Its order methods and `destroy` die: a test that reaches them
    * overrides them.
    */
   static readonly layerTest = (
@@ -154,5 +199,6 @@ export class ShopActors extends Context.Service<ShopActors, Effect.Success<typeo
       storeOrder: () => Effect.die(new Error("ShopActors.layerTest: storeOrder")),
       getOrder: () => Effect.die(new Error("ShopActors.layerTest: getOrder")),
       listOrders: () => Effect.die(new Error("ShopActors.layerTest: listOrders")),
+      destroy: () => Effect.die(new Error("ShopActors.layerTest: destroy")),
     });
 }

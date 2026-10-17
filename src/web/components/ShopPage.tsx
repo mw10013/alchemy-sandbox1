@@ -17,6 +17,7 @@ import {
   merchantExpiredAtom,
   notAMemberAtom,
   reconnectAtom,
+  uninstalledAtom,
 } from "../client/actor-connection.ts";
 import type { ShopKey } from "../../contract/shop.ts";
 import type { ConnectionCaller, Count } from "../../contract/shop-actor.ts";
@@ -40,6 +41,7 @@ import { Things } from "./screen/Things.tsx";
 const UNREACHABLE = "Couldn't reach the shop. Try again.";
 const NOT_A_MEMBER = "You're not a member of this shop.";
 const EXPIRED = "Your Shopify session expired.";
+const UNINSTALLED = "Baton was uninstalled from this shop.";
 
 type Role = "member" | "merchant";
 
@@ -178,12 +180,14 @@ function LiveShop(props: {
   const [writeResult, write] = useAtom(atoms.write);
   const notAMember = useAtomValue(notAMemberAtom);
   const merchantExpired = useAtomValue(merchantExpiredAtom);
+  const uninstalled = useAtomValue(uninstalledAtom);
   const connection = useAtomValue(connectionStateAtom);
   const lost = useAtomValue(lostAtom);
   const reconnect = useAtomSet(reconnectAtom);
 
   if (notAMember) return <Refusal text={NOT_A_MEMBER} />;
   if (merchantExpired) return <Refusal text={EXPIRED} />;
+  if (uninstalled) return <Refusal text={UNINSTALLED} />;
   return (
     <>
       {connection === "displaced" && (
@@ -223,7 +227,7 @@ function LiveShop(props: {
  *
  * The socket's state shows as a banner: "Reconnecting…" once it has been lost for a few
  * seconds, and "Signed in elsewhere" with Reconnect when a newer window displaced it. When the
- * gate refuses a reconnect, the card gives way to why.
+ * gate refuses a reconnect, or the shop uninstalls Baton, the card gives way to why.
  */
 export default function ShopPage(props: {
   readonly role: Role;

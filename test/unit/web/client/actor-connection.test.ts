@@ -11,6 +11,7 @@ import {
   merchantExpiredAtom,
   notAMemberAtom,
   retryPolicy,
+  uninstalledAtom,
 } from "../../../../src/web/client/actor-connection.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,
@@ -19,6 +20,7 @@ import {
   CONNECTION_CLOSE_REVOKED,
   CONNECTION_CLOSE_TRY_AGAIN,
   CONNECTION_CLOSE_UNAUTHENTICATED,
+  CONNECTION_CLOSE_UNINSTALLED,
 } from "../../../../src/contract/shop-actor.ts";
 
 const closed = (code: number) =>
@@ -38,6 +40,7 @@ describe("retry policy", () => {
     { code: CONNECTION_CLOSE_FORBIDDEN, continues: false },
     { code: CONNECTION_CLOSE_NOT_A_MEMBER, continues: false },
     { code: CONNECTION_CLOSE_DISPLACED, continues: false },
+    { code: CONNECTION_CLOSE_UNINSTALLED, continues: false },
     { code: CONNECTION_CLOSE_REVOKED, continues: true },
     { code: 1006, continues: true },
     { code: CONNECTION_CLOSE_TRY_AGAIN, continues: true },
@@ -55,6 +58,8 @@ describe("close outcome", () => {
     { code: CONNECTION_CLOSE_FORBIDDEN, merchant: false, outcome: "forbidden" },
     { code: CONNECTION_CLOSE_NOT_A_MEMBER, merchant: false, outcome: "not-a-member" },
     { code: CONNECTION_CLOSE_DISPLACED, merchant: false, outcome: "displaced" },
+    { code: CONNECTION_CLOSE_UNINSTALLED, merchant: false, outcome: "uninstalled" },
+    { code: CONNECTION_CLOSE_UNINSTALLED, merchant: true, outcome: "uninstalled" },
     { code: CONNECTION_CLOSE_REVOKED, merchant: false, outcome: "lost" },
     { code: CONNECTION_CLOSE_TRY_AGAIN, merchant: true, outcome: "lost" },
   ] as const)("$code for a merchant: $merchant is $outcome", ({ code, merchant, outcome }) => {
@@ -62,19 +67,53 @@ describe("close outcome", () => {
   });
 
   it.effect.each([
-    { outcome: "expired", state: "forbidden", notAMember: false, expired: true },
-    { outcome: "not-a-member", state: "forbidden", notAMember: true, expired: false },
-    { outcome: "displaced", state: "displaced", notAMember: false, expired: false },
-    { outcome: "forbidden", state: "forbidden", notAMember: false, expired: false },
-    { outcome: "lost", state: "lost", notAMember: false, expired: false },
-  ] as const)("$outcome leaves the page $state", ({ outcome, state, notAMember, expired }) =>
-    Effect.gen(function* () {
-      const registry = AtomRegistry.make();
-      yield* applyCloseOutcome(registry, outcome);
-      assert.strictEqual(registry.get(connectionStateAtom), state);
-      assert.strictEqual(registry.get(notAMemberAtom), notAMember);
-      assert.strictEqual(registry.get(merchantExpiredAtom), expired);
-      registry.dispose();
-    }),
+    {
+      outcome: "expired",
+      state: "forbidden",
+      notAMember: false,
+      expired: true,
+      uninstalled: false,
+    },
+    {
+      outcome: "not-a-member",
+      state: "forbidden",
+      notAMember: true,
+      expired: false,
+      uninstalled: false,
+    },
+    {
+      outcome: "displaced",
+      state: "displaced",
+      notAMember: false,
+      expired: false,
+      uninstalled: false,
+    },
+    {
+      outcome: "uninstalled",
+      state: "forbidden",
+      notAMember: false,
+      expired: false,
+      uninstalled: true,
+    },
+    {
+      outcome: "forbidden",
+      state: "forbidden",
+      notAMember: false,
+      expired: false,
+      uninstalled: false,
+    },
+    { outcome: "lost", state: "lost", notAMember: false, expired: false, uninstalled: false },
+  ] as const)(
+    "$outcome leaves the page $state",
+    ({ outcome, state, notAMember, expired, uninstalled }) =>
+      Effect.gen(function* () {
+        const registry = AtomRegistry.make();
+        yield* applyCloseOutcome(registry, outcome);
+        assert.strictEqual(registry.get(connectionStateAtom), state);
+        assert.strictEqual(registry.get(notAMemberAtom), notAMember);
+        assert.strictEqual(registry.get(merchantExpiredAtom), expired);
+        assert.strictEqual(registry.get(uninstalledAtom), uninstalled);
+        registry.dispose();
+      }),
   );
 });

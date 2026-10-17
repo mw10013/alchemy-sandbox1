@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { EpochMillis } from "../domain/platform.ts";
 import { Orders } from "./orders.ts";
+import { ShopActors } from "./shop-actors.ts";
 import { ShopSessions } from "./shop-sessions.ts";
 import { Shopify, type ValidatedWebhook, WebhookRejected } from "./shopify.ts";
 
@@ -131,6 +132,7 @@ const make = Effect.gen(function* () {
   const shopify = yield* Shopify;
   const shopSessions = yield* ShopSessions;
   const orders = yield* Orders;
+  const actors = yield* ShopActors;
 
   /**
    * Baton's `handleWebhook`: validates `request` (a rejection fails as `WebhookRejected` and
@@ -190,9 +192,36 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * One handler per {@link WebhookTopic}. `app/uninstalled` answers 200 and does nothing yet,
-   * so a delivery is not retried for four hours against a handler that does not exist.
+   * `app/uninstalled`. When a merchant uninstalls the app, their OAuth tokens are immediately
+   * invalidated. Retaining stale sessions risks conflicting OAuth flows on re-install, so
+   * uninstall is the one teardown point for the shop's session and its actor's storage.
+   *
+   * Deletes the shop's session unconditionally (`ShopSessions.remove`): a single D1 call whether
+   * this is the first delivery or a retry after the row is already gone, where a load-then-delete
+   * would cost two on the first. The delete cascades to the shop's `Member`, `Team` and
+   * `TeamMember` rows; Better Auth's users stay, since a user may belong to other shops.
+   *
+   * Then destroys the shop's actor (`ShopActors.destroy`) so its storage stops being billed. The
+   * destroy failure is deliberately not swallowed: a genuine failure (the actor unreachable, or
+   * `deleteAll` hitting its time limit, which is safe to retry until it succeeds) propagates, so
+   * the answer is non-2xx and Shopify retries the idempotent teardown rather than leaking
+   * storage.
+   *
+   * The one background path that does not check for the shop's session before touching its
+   * actor: after a partial teardown (the session deleted, the destroy failed) the retry finds no
+   * session and must still destroy.
+   *
+   * Billing's usage-event flush goes first, best effort, when billing lands.
    */
+  const appUninstalled = Effect.fn("Webhooks.appUninstalled")(function* (
+    webhook: ValidatedWebhook,
+  ) {
+    yield* shopSessions.remove(webhook.shop);
+    yield* actors.destroy(webhook.shop);
+    return ok;
+  });
+
+  /** One handler per {@link WebhookTopic}. */
   const dispatch = (webhook: ValidatedWebhook) =>
     Option.match(decodeTopic(webhook.topic), {
       onNone: () =>
@@ -206,7 +235,7 @@ const make = Effect.gen(function* () {
             () => compliance,
           ),
           Match.when("APP_SCOPES_UPDATE", () => scopesUpdate(webhook)),
-          Match.when("APP_UNINSTALLED", () => Effect.succeed(ok)),
+          Match.when("APP_UNINSTALLED", () => appUninstalled(webhook)),
           Match.when(
             Match.is(
               "ORDERS_CREATE",

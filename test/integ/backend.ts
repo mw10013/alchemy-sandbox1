@@ -18,6 +18,7 @@ import {
   upgradeRequired,
 } from "../../src/backend/backend.ts";
 import { MagicLinkDelivery } from "../../src/backend/magic-link-delivery.ts";
+import { Members } from "../../src/backend/members.ts";
 import ShopActor from "../../src/backend/shop-actor.ts";
 import { ShopActors } from "../../src/backend/shop-actors.ts";
 import { IntegHandlers, IntegRpcs } from "./rpcs.ts";
@@ -56,7 +57,9 @@ export default class TestBackend extends Cloudflare.Worker<TestBackend>()(
     Effect.gen(function* () {
       const base = yield* backendBody;
       const actors = yield* ShopActor;
-      const services = yield* Effect.context<Auth | MagicLinkDelivery | ShopifyFake | ShopActors>();
+      const services = yield* Effect.context<
+        Auth | MagicLinkDelivery | Members | ShopifyFake | ShopActors
+      >();
       // Built per request, inside the request's scope, as the Backend's own RPC servers are.
       const integ = RpcServer.toHttpEffect(IntegRpcs).pipe(
         Effect.provide(
