@@ -230,13 +230,19 @@ const make = Effect.gen(function* () {
     return yield* orders.beginOpenOrdersSync(yield* shopify.sessionTokenShop(sessionToken));
   });
 
-  /** Sync from Shopify on one order of the token's shop: `Orders.syncOrder`; the token as on {@link listOrders}. */
+  /**
+   * Sync from Shopify on one order of the token's shop, the token as on {@link listOrders}: the
+   * session read (no row is {@link ShopNotInstalled}, no actor call), then the shop's actor's
+   * one-order sync, whose failure is re-raised as its class.
+   */
   const syncOrder = Effect.fn("BackendApi.syncOrder")(function* (
     _request: RequestInfo,
     payload: SyncOrderRequest,
   ) {
     const { sessionToken, orderId } = yield* decodeSyncOrderRequest(payload).pipe(Effect.orDie);
-    return yield* orders.syncOrder(yield* shopify.sessionTokenShop(sessionToken), orderId);
+    const shop = yield* shopify.sessionTokenShop(sessionToken);
+    if (Option.isNone(yield* shopSessions.find(shop))) return yield* new ShopNotInstalled({ shop });
+    return yield* actors.syncOrder(shop, orderId);
   });
 
   return {

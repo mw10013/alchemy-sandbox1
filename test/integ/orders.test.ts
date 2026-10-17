@@ -11,15 +11,25 @@ import { ShopLimits } from "../../src/domain/platform.ts";
 import { OTHER_SHOP, SEED_SHOP } from "../seed-shops.ts";
 import { mintSessionToken } from "../shopify-session-token.ts";
 import { Email } from "../../src/contract/auth.ts";
-import { dev, integ, openAs } from "./actor-clients.ts";
+import {
+  dev,
+  integ,
+  openAs,
+  orderSyncAnswer,
+  scriptGraphql,
+  storeByWebhook,
+  syncOrderAs,
+} from "./actor-clients.ts";
+import { deliverWebhook } from "../shopify-webhook.ts";
 import { fileStage } from "./file-stage.ts";
 import Stack from "./stack.ts";
 
 /**
- * The shop actor's orders against a real Backend and actor: the stub methods the Backend calls
- * (`storeOrder`, `orderVersion`, `getOrder`, `listOrders`), the merchant's `MerchantListOrders`
- * and its notice, the Backend's one-order sync against the fake Shopify, and the retention sweep
- * `storeOrder` runs when due. The repository's own rules are unit tests over the same schema.
+ * The shop actor's orders against a real Backend and actor: orders arrive as production gets
+ * them, by signed `orders/*` webhook with the order scripted into the fake Shopify, which the
+ * actor fetches itself; the merchant's `MerchantListOrders`, `MerchantSyncOrder` and their
+ * notices; the stub reads `getOrder` and `listOrders`; and the retention sweep the actor runs
+ * after a fetch when due. The repository's own rules are unit tests over the same schema.
  */
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),
@@ -34,14 +44,6 @@ const UNINSTALLED_SHOP = Schema.decodeUnknownSync(ShopKey)("uninstalled-shop.mys
 
 const orderId = (n: number) => `gid://shopify/Order/${String(n)}`;
 const lineItemId = (n: number) => `gid://shopify/LineItem/${String(n)}`;
-
-/** A `storeOrder` answer. */
-const answer = (written: boolean, fresh: boolean, changed: boolean, refused: boolean) => ({
-  written,
-  fresh,
-  changed,
-  refused,
-});
 
 /** An order as Shopify answers it, at `updatedAt`; a recent `processedAt`, so retention keeps it. */
 const aNode = (n: number, updatedAt: number, overrides: Partial<OrderNode> = {}): OrderNode => ({
@@ -78,10 +80,22 @@ const reset = (shop: ShopKey) =>
     );
   });
 
+/** Arranges `order` with `lineItems` in `shop`'s actor by webhook ({@link storeByWebhook}). */
 const store = (shop: ShopKey, order: OrderNode, lineItems: ReadonlyArray<LineItemNode>) =>
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
-    return yield* integ(backendUrl, (c) => c.StoreOrder({ shop, order, lineItems }));
+    yield* storeByWebhook(backendUrl, shop, order, lineItems);
+  });
+
+/**
+ * Sync from Shopify on `order`'s id with the fake answering `order` and `lineItems`: the
+ * one-order fetch with no version probe, so the upsert's own guard decides.
+ */
+const syncAnswering = (shop: ShopKey, order: OrderNode, lineItems: ReadonlyArray<LineItemNode>) =>
+  Effect.gen(function* () {
+    const { backendUrl } = yield* stack;
+    yield* scriptGraphql(backendUrl, [orderSyncAnswer(order, lineItems)]);
+    return yield* syncOrderAs(backendUrl, shop, order.id);
   });
 
 const read = (shop: ShopKey, id: string) =>
@@ -90,21 +104,33 @@ const read = (shop: ShopKey, id: string) =>
     return yield* integ(backendUrl, (c) => c.GetOrder({ shop, orderId: id }));
   });
 
-const version = (shop: ShopKey, id: string, updatedAt: number | null) =>
+/**
+ * A signed order webhook for `id` at `updatedAt` (null: an edit, no version), the fake answering
+ * `answer` if the actor fetches; the GraphQL calls the delivery made.
+ */
+const webhook = (shop: ShopKey, id: string, updatedAt: number | null, answer: unknown) =>
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
-    return yield* integ(backendUrl, (c) => c.OrderVersion({ shop, orderId: id, updatedAt }));
+    yield* scriptGraphql(backendUrl, [answer]);
+    const status = yield* deliverWebhook(`${backendUrl}/webhooks/orders`, "orders/paid", shop, {
+      id: 0,
+      admin_graphql_api_id: id,
+      updated_at: updatedAt === null ? null : new Date(updatedAt).toISOString(),
+    });
+    assert.strictEqual(status, 200);
+    return (yield* integ(backendUrl, (c) => c.ShopifyCalls({}))).filter(
+      ({ route }) => route === "graphql",
+    ).length;
   });
 
 test(
-  "storeOrder stores the order Shopify answered, and getOrder reads it back with its items",
+  "a webhook stores the order Shopify answered, and getOrder reads it back with its items",
   Effect.gen(function* () {
     yield* reset(SEED_SHOP);
-    const stored = yield* store(SEED_SHOP, aNode(1, 2000, { note: "Rush" }), [
+    yield* store(SEED_SHOP, aNode(1, 2000, { note: "Rush" }), [
       aLineItemNode(1, { customAttributes: [{ key: "text", value: "Hello" }] }),
       aLineItemNode(2, { product: null }),
     ]);
-    assert.deepStrictEqual(stored, answer(true, true, true, false));
     const detail = yield* read(SEED_SHOP, orderId(1));
     assert.isNotNull(detail);
     if (detail === null) return;
@@ -132,31 +158,34 @@ test(
   Effect.gen(function* () {
     yield* reset(SEED_SHOP);
     const items = Array.from({ length: 40 }, (_, i) => aLineItemNode(100 + i));
-    const stored = yield* store(SEED_SHOP, aNode(2, 2000), items).pipe(
-      Effect.timeout("10 seconds"),
-    );
-    assert.strictEqual(stored.written, true);
+    yield* store(SEED_SHOP, aNode(2, 2000), items).pipe(Effect.timeout("10 seconds"));
     assert.strictEqual((yield* read(SEED_SHOP, orderId(2)))?.lineItems.length, 40);
   }),
 );
 
+/** Sync from Shopify has no version probe, so each copy reaches the upsert's own guard. */
 test(
-  "storeOrder's version guard: an older copy is skipped, the same version rewritten, a newer one replaces the items",
+  "the upsert's version guard on Sync from Shopify: an older copy is skipped, the same version rewritten, a newer one replaces the items",
   Effect.gen(function* () {
     yield* reset(SEED_SHOP);
     yield* store(SEED_SHOP, aNode(3, 2000), [aLineItemNode(1)]);
-    const older = yield* store(SEED_SHOP, aNode(3, 1000, { name: "#STALE" }), [aLineItemNode(9)]);
-    assert.deepStrictEqual(older, answer(false, false, false, false));
+    const stored = { _tag: "Stored" } as const;
+    assert.deepStrictEqual(
+      yield* syncAnswering(SEED_SHOP, aNode(3, 1000, { name: "#STALE" }), [aLineItemNode(9)]),
+      stored,
+    );
     assert.strictEqual((yield* read(SEED_SHOP, orderId(3)))?.order.name, "#1003");
 
-    const equal = yield* store(SEED_SHOP, aNode(3, 2000, { note: "same version" }), [
-      aLineItemNode(1),
-    ]);
-    assert.deepStrictEqual(equal, answer(true, false, false, false));
+    assert.deepStrictEqual(
+      yield* syncAnswering(SEED_SHOP, aNode(3, 2000, { note: "same version" }), [aLineItemNode(1)]),
+      stored,
+    );
     assert.strictEqual((yield* read(SEED_SHOP, orderId(3)))?.order.note, "same version");
 
-    const newer = yield* store(SEED_SHOP, aNode(3, 3000), [aLineItemNode(2), aLineItemNode(3)]);
-    assert.deepStrictEqual(newer, answer(true, false, true, false));
+    assert.deepStrictEqual(
+      yield* syncAnswering(SEED_SHOP, aNode(3, 3000), [aLineItemNode(2), aLineItemNode(3)]),
+      stored,
+    );
     assert.deepStrictEqual(
       (yield* read(SEED_SHOP, orderId(3)))?.lineItems.map(({ id }) => id),
       [lineItemId(2), lineItemId(3)],
@@ -165,15 +194,16 @@ test(
 );
 
 test(
-  "orderVersion skips a version not newer than the row, and fetches a newer one, an edit and a new order",
+  "a webhook skips a version not newer than the row, and fetches a newer one, an edit and a new order",
   Effect.gen(function* () {
     yield* reset(SEED_SHOP);
     yield* store(SEED_SHOP, aNode(4, 2000), []);
-    assert.strictEqual(yield* version(SEED_SHOP, orderId(4), 1999), "stale");
-    assert.strictEqual(yield* version(SEED_SHOP, orderId(4), 2000), "stale");
-    assert.strictEqual(yield* version(SEED_SHOP, orderId(4), 2001), "fetch");
-    assert.strictEqual(yield* version(SEED_SHOP, orderId(4), null), "fetch");
-    assert.strictEqual(yield* version(SEED_SHOP, orderId(5), 1), "fetch");
+    const gone = { data: { order: null } };
+    assert.strictEqual(yield* webhook(SEED_SHOP, orderId(4), 1999, gone), 0);
+    assert.strictEqual(yield* webhook(SEED_SHOP, orderId(4), 2000, gone), 0);
+    assert.strictEqual(yield* webhook(SEED_SHOP, orderId(4), 2001, gone), 1);
+    assert.strictEqual(yield* webhook(SEED_SHOP, orderId(4), null, gone), 1);
+    assert.strictEqual(yield* webhook(SEED_SHOP, orderId(5), 1, gone), 1);
   }),
 );
 
@@ -182,7 +212,7 @@ test(
   Effect.gen(function* () {
     yield* reset(SEED_SHOP);
     const kept = { key: "text", value: "Hello" };
-    const stored = yield* store(SEED_SHOP, aNode(6, 2000), [
+    yield* store(SEED_SHOP, aNode(6, 2000), [
       aLineItemNode(1, {
         customAttributes: [
           kept,
@@ -191,7 +221,6 @@ test(
         ],
       }),
     ]);
-    assert.strictEqual(stored.written, true);
     const detail = yield* read(SEED_SHOP, orderId(6));
     assert.strictEqual(detail?.lineItems.length, 1);
     assert.deepStrictEqual(detail?.lineItems[0]?.properties, [kept]);
@@ -200,7 +229,9 @@ test(
 
 /**
  * The ceiling is reached with real rows: `LoadFixture` stores {@link ShopLimits.maxOpenOrders}
- * open orders, so no limit is lowered for the test.
+ * open orders, so no limit is lowered for the test. "Before the fetch" is a webhook for a new
+ * order, which asks Shopify nothing; "by the write" is Sync from Shopify on a new order, which
+ * has no probe, so the upsert refuses it (and answers `Stored`, as legacy did).
  */
 test(
   "at the order ceiling a new order is refused before the fetch and by the write, and a stored one still updates",
@@ -220,21 +251,27 @@ test(
         },
       }),
     );
-    assert.strictEqual(yield* version(OTHER_SHOP, orderId(7), 1), "refused");
-    const refused = yield* store(OTHER_SHOP, aNode(7, 2000), []);
-    assert.deepStrictEqual(refused, answer(false, false, false, true));
+    const newOrder = aNode(7, 2000);
+    assert.strictEqual(yield* webhook(OTHER_SHOP, orderId(7), 1, orderSyncAnswer(newOrder, [])), 0);
+    assert.deepStrictEqual(yield* syncAnswering(OTHER_SHOP, newOrder, []), { _tag: "Stored" });
     assert.isNull(yield* read(OTHER_SHOP, orderId(7)));
 
     const fixtureOrder = "gid://shopify/Order/fixture-1";
-    assert.strictEqual(yield* version(OTHER_SHOP, fixtureOrder, Date.now() + 60_000), "fetch");
-    const update = yield* store(
-      OTHER_SHOP,
-      aNode(1, Date.now() + 60_000, { id: fixtureOrder, displayFulfillmentStatus: "FULFILLED" }),
-      [],
+    const fulfilled = aNode(1, Date.now() + 60_000, {
+      id: fixtureOrder,
+      displayFulfillmentStatus: "FULFILLED",
+    });
+    assert.strictEqual(
+      yield* webhook(OTHER_SHOP, fixtureOrder, fulfilled.updatedAt, orderSyncAnswer(fulfilled, [])),
+      1,
     );
-    assert.deepStrictEqual(update, answer(true, false, true, false));
+    assert.strictEqual(
+      (yield* read(OTHER_SHOP, fixtureOrder))?.order.fulfillmentStatus,
+      "FULFILLED",
+    );
     // Fulfilling one made room for one.
-    assert.strictEqual(yield* version(OTHER_SHOP, orderId(7), 1), "fetch");
+    assert.strictEqual(yield* webhook(OTHER_SHOP, orderId(7), 1, orderSyncAnswer(newOrder, [])), 1);
+    assert.isNotNull(yield* read(OTHER_SHOP, orderId(7)));
   }),
   { timeout: 60_000 },
 );
@@ -247,12 +284,11 @@ test(
     yield* Effect.gen(function* () {
       const merchant = yield* openAs(backendUrl, SEED_SHOP, { role: "merchant" });
       yield* merchant.client.MerchantWhoAmI();
-      yield* store(SEED_SHOP, aNode(8, 2000), [aLineItemNode(1)]);
+      yield* syncAnswering(SEED_SHOP, aNode(8, 2000), [aLineItemNode(1)]);
       const notice = yield* PubSub.take(merchant.received).pipe(Effect.timeout("5 seconds"));
       assert.deepStrictEqual(notice, { _tag: "ShopActorNotice", invalidated: [ORDERS_KEY] });
 
-      const same = yield* store(SEED_SHOP, aNode(8, 2000), [aLineItemNode(1)]);
-      assert.deepStrictEqual(same, answer(true, false, false, false));
+      yield* syncAnswering(SEED_SHOP, aNode(8, 2000), [aLineItemNode(1)]);
       yield* Effect.sleep("500 millis");
       assert.strictEqual(yield* PubSub.remaining(merchant.received), 0, "no notice");
     }).pipe(Effect.scoped);
@@ -325,34 +361,22 @@ test(
 
 const DAY = 86_400_000;
 
-/** Order `n` as Shopify's `OrderSync` answers it (the wire's ISO dates), with one line item. */
-const orderSyncBody = (n: number, updatedAt: number) => {
-  const { processedAt, ...node } = aNode(n, updatedAt);
-  return {
-    data: {
-      order: {
-        ...node,
-        processedAt: new Date(processedAt).toISOString(),
-        updatedAt: new Date(updatedAt).toISOString(),
-        lineItems: { pageInfo: { hasNextPage: false }, nodes: [aLineItemNode(n)] },
-      },
-    },
-  };
-};
+/** Order `n` as Shopify's `OrderSync` answers it, with one line item. */
+const orderSyncBody = (n: number, updatedAt: number) =>
+  orderSyncAnswer(aNode(n, updatedAt), [aLineItemNode(n)]);
 
 /** The fake's next GraphQL answers, with its call log cleared. */
-const scriptGraphql = (bodies: ReadonlyArray<unknown>) =>
+const script = (bodies: ReadonlyArray<unknown>) =>
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
-    yield* integ(backendUrl, (c) =>
-      c.ScriptShopify({ replies: bodies.map((body) => ({ route: "graphql", status: 200, body })) }),
-    );
+    yield* scriptGraphql(backendUrl, bodies);
   });
 
+/** Sync from Shopify on `id`: `MerchantSyncOrder` on a merchant socket to `shop`. */
 const syncOrder = (shop: ShopKey, id: string) =>
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
-    return yield* integ(backendUrl, (c) => c.SyncOrder({ shop, orderId: id }));
+    return yield* syncOrderAs(backendUrl, shop, id);
   });
 
 /** `LoadFixture` with only `orders`, as order numbers with no items; `ShopUsage` starts over. */
@@ -375,16 +399,17 @@ const loadOrders = (shop: ShopKey, numbers: ReadonlyArray<number>) =>
 const fixtureOrderId = (n: number) => `gid://shopify/Order/fixture-${String(n)}`;
 
 /**
- * Rewrites fixture order `n` at its own version with a `processedAt` past retention: an order
- * already stored keeps taking writes however old it is (the retention rule refuses only a new
- * one), and the same version changes nothing a screen shows. The only way an expired row reaches
- * a real actor, since no fixture order is older than a year.
+ * Rewrites fixture order `n` at its own version with a `processedAt` past retention, by Sync from
+ * Shopify with the fake answering that copy: an order already stored keeps taking writes however
+ * old it is (the retention rule refuses only a new one), and the same version changes nothing a
+ * screen shows. The only way an expired row reaches a real actor, since no fixture order is older
+ * than a year; a webhook at the same version would be stale and fetch nothing.
  */
 const age = (shop: ShopKey, n: number) =>
   Effect.gen(function* () {
     const stored = yield* read(shop, fixtureOrderId(n));
     assert.isNotNull(stored);
-    return yield* store(
+    return yield* syncAnswering(
       shop,
       aNode(n, stored?.order.updatedAt ?? 0, {
         id: fixtureOrderId(n),
@@ -407,7 +432,7 @@ test(
   "the one-order sync answers Gone for an order Shopify no longer has and leaves the stored row",
   Effect.gen(function* () {
     yield* reset(SEED_SHOP);
-    yield* scriptGraphql([orderSyncBody(21, 2000), { data: { order: null } }]);
+    yield* script([orderSyncBody(21, 2000), { data: { order: null } }]);
     assert.deepStrictEqual(yield* syncOrder(SEED_SHOP, orderId(21)), { _tag: "Stored" });
     const before = yield* read(SEED_SHOP, orderId(21));
     assert.strictEqual(before?.lineItems.length, 1);
@@ -421,7 +446,7 @@ test(
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
     yield* reset(SEED_SHOP);
-    yield* scriptGraphql([orderSyncBody(22, 2000), orderSyncBody(22, 2000)]);
+    yield* script([orderSyncBody(22, 2000), orderSyncBody(22, 2000)]);
     yield* Effect.gen(function* () {
       const merchant = yield* openAs(backendUrl, SEED_SHOP, { role: "merchant" });
       yield* merchant.client.MerchantWhoAmI();
@@ -436,20 +461,25 @@ test(
   }),
 );
 
+/**
+ * The gate refuses a socket to a shop with no `ShopSession`, so this is the row deleted while a
+ * socket stays open: the forged-caller route opens one anyway.
+ */
 test(
-  "the one-order sync of a shop with no ShopSession is ShopNotInstalled and asks Shopify nothing",
+  "Sync from Shopify on a shop whose ShopSession is gone is OfflineSessionMissing and asks Shopify nothing",
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
-    yield* scriptGraphql([]);
+    yield* script([]);
     const error = yield* Effect.flip(syncOrder(UNINSTALLED_SHOP, orderId(23)));
-    assert.strictEqual(error._tag, "ShopNotInstalled");
+    assert.strictEqual(error._tag, "OfflineSessionMissing");
     assert.deepStrictEqual(yield* integ(backendUrl, (c) => c.ShopifyCalls({})), []);
   }),
 );
 
 /**
- * Legacy wrote the expired row behind the actor's back; here {@link age} writes it through
- * `storeOrder` on a fresh `ShopUsage` (`lastSweepAt` null), so that very write's sweep deletes it.
+ * Legacy wrote the expired row behind the actor's back; here {@link age} writes it through the
+ * actor's one-order fetch on a fresh `ShopUsage` (`lastSweepAt` null), so that very write's sweep
+ * deletes it.
  */
 test(
   "a webhook whose sweep deletes an order publishes and the orders index stops showing it",
@@ -459,7 +489,7 @@ test(
     yield* Effect.gen(function* () {
       const merchant = yield* openAs(backendUrl, SEED_SHOP, { role: "merchant" });
       yield* merchant.client.MerchantWhoAmI();
-      assert.deepStrictEqual(yield* age(SEED_SHOP, 2), answer(true, false, false, false));
+      assert.deepStrictEqual(yield* age(SEED_SHOP, 2), { _tag: "Stored" });
       const notice = yield* PubSub.take(merchant.received).pipe(Effect.timeout("5 seconds"));
       assert.deepStrictEqual(notice, { _tag: "ShopActorNotice", invalidated: [ORDERS_KEY] });
     }).pipe(Effect.scoped);
@@ -477,11 +507,11 @@ test(
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
     yield* loadOrders(SEED_SHOP, [1]);
-    assert.isTrue((yield* store(SEED_SHOP, aNode(24, 2000), [])).written);
+    yield* store(SEED_SHOP, aNode(24, 2000), []);
     yield* Effect.gen(function* () {
       const merchant = yield* openAs(backendUrl, SEED_SHOP, { role: "merchant" });
       yield* merchant.client.MerchantWhoAmI();
-      assert.deepStrictEqual(yield* age(SEED_SHOP, 1), answer(true, false, false, false));
+      assert.deepStrictEqual(yield* age(SEED_SHOP, 1), { _tag: "Stored" });
       yield* Effect.sleep("500 millis");
       assert.strictEqual(yield* PubSub.remaining(merchant.received), 0, "no notice");
     }).pipe(Effect.scoped);
@@ -566,6 +596,30 @@ test(
   }),
 );
 
+test(
+  "a member socket is refused MerchantSyncOrder",
+  Effect.gen(function* () {
+    const { backendUrl } = yield* stack;
+    yield* script([]);
+    yield* Effect.gen(function* () {
+      const member = yield* openAs(backendUrl, SEED_SHOP, {
+        role: "member",
+        memberId: "mem-orders-one",
+        memberEmail: Schema.decodeUnknownSync(Email)("orders-one@m.com"),
+        teamIds: [],
+        userId: "user-orders-one",
+        sessionId: "session-orders-one",
+        sessionExpiresAt: Date.now() + 600_000,
+      });
+      const error = yield* member.client
+        .MerchantSyncOrder({ orderId: orderId(32) })
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "Forbidden");
+    }).pipe(Effect.scoped);
+    assert.deepStrictEqual(yield* integ(backendUrl, (c) => c.ShopifyCalls({})), []);
+  }),
+);
+
 /**
  * Legacy's `onOrdersStream`, `onOrdersSyncEmpty` and `onOrdersSyncError` were agent methods a
  * socket could name; here they are `streamOrders`, `syncEmpty` and `syncFailed` on the actor's
@@ -604,7 +658,7 @@ test(
       const error = yield* member.client.MerchantSyncStatus().pipe(Effect.flip);
       assert.strictEqual(error._tag, "Forbidden");
     }).pipe(Effect.scoped);
-    yield* scriptGraphql([]);
+    yield* script([]);
     const refusals = yield* integ(backendUrl, (c) =>
       Effect.all([
         c.ApiSyncOpenOrders({ sessionToken: sessionId }).pipe(Effect.flip),

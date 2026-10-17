@@ -24,13 +24,12 @@ import { OrdersListInput, OrdersListPage } from "../../src/contract/shop-actor.t
 import { OrderDetail, OrdersSyncResult, SyncOrderResult } from "../../src/domain/orders.ts";
 import { ShopNotInstalled } from "../../src/contract/fixture.ts";
 import { Orders } from "../../src/backend/orders.ts";
-import { LineItemNode, OrderNode } from "../../src/backend/order-sync.ts";
 import { ShopActors } from "../../src/backend/shop-actors.ts";
 import {
   OfflineSessionMissing,
   ReauthorizationRequired,
   ShopifyUnavailable,
-} from "../../src/backend/shopify.ts";
+} from "../../src/contract/shopify.ts";
 import { ShopifyFake } from "./shopify-fake.ts";
 
 /**
@@ -65,11 +64,11 @@ export type ShopifyFakeCall = typeof ShopifyFakeCall.Type;
  * - `ScriptShopify` replaces {@link ShopifyFake}'s queued replies (a reply per call to its token
  *   or GraphQL endpoint, in order; an empty queue answers with defaults) and clears its call log;
  *   `ShopifyCalls` answers the calls it served since, as {@link ShopifyFakeCall}, and clears them.
- * - `OrderVersion`, `StoreOrder`, `GetOrder` and `ListOrders` are the {@link ShopActors} methods
- *   of the same names on `shop`'s actor, as the Backend calls them.
- * - `SyncOpenOrders` is `Orders.beginOpenOrdersSync`, the Backend's Sync open orders, and
- *   `SyncOrder` is `Orders.syncOrder`, its Sync from Shopify on one order, because integ has no
- *   merchant page to press either on.
+ * - `GetOrder` and `ListOrders` are the {@link ShopActors} methods of the same names on `shop`'s
+ *   actor, as the Backend calls them. A test arranges an order the way production gets one: a
+ *   signed `orders/*` webhook with the order scripted into {@link ShopifyFake}.
+ * - `SyncOpenOrders` is `Orders.beginOpenOrdersSync`, the Backend's Sync open orders, because
+ *   integ has no merchant page to press it on.
  * - `TrackSync` and `SyncFailed` are the {@link ShopActors} methods `beginSync` and `syncFailed`
  *   on `shop`'s actor: a start recorded at a `startedAt` the test picks (an old one is a dead
  *   sync's record) with no Workflow behind it, and a sync's end as a late caller reports it.
@@ -92,19 +91,6 @@ export const IntegRpcs = RpcGroup.make(
     payload: {},
     success: Schema.Array(ShopifyFakeCall),
   }),
-  Rpc.make("OrderVersion", {
-    payload: { shop: ShopKey, orderId: Schema.String, updatedAt: Schema.NullOr(Schema.Number) },
-    success: Schema.Literals(["stale", "fetch", "refused"]),
-  }),
-  Rpc.make("StoreOrder", {
-    payload: { shop: ShopKey, order: OrderNode, lineItems: Schema.Array(LineItemNode) },
-    success: Schema.Struct({
-      written: Schema.Boolean,
-      fresh: Schema.Boolean,
-      changed: Schema.Boolean,
-      refused: Schema.Boolean,
-    }),
-  }),
   Rpc.make("GetOrder", {
     payload: { shop: ShopKey, orderId: Schema.String },
     success: Schema.NullOr(OrderDetail),
@@ -117,16 +103,6 @@ export const IntegRpcs = RpcGroup.make(
     payload: { shop: ShopKey },
     success: OrdersSyncResult,
     error: ShopNotInstalled,
-  }),
-  Rpc.make("SyncOrder", {
-    payload: { shop: ShopKey, orderId: Schema.String },
-    success: SyncOrderResult,
-    error: Schema.Union([
-      ShopNotInstalled,
-      OfflineSessionMissing,
-      ReauthorizationRequired,
-      ShopifyUnavailable,
-    ]),
   }),
   Rpc.make("TrackSync", {
     payload: { shop: ShopKey, workflowId: Schema.String, startedAt: Schema.Number },
@@ -192,12 +168,9 @@ export const IntegHandlers = IntegRpcs.toLayer(
         }).pipe(Effect.provide(RuntimeContext.phantom)),
       ScriptShopify: ({ replies }) => shopifyFake.script(replies).pipe(Effect.as({})),
       ShopifyCalls: () => shopifyFake.takeCalls,
-      OrderVersion: ({ shop, ...input }) => actors.orderVersion(shop, input),
-      StoreOrder: ({ shop, ...input }) => actors.storeOrder(shop, input),
       GetOrder: ({ shop, orderId }) => actors.getOrder(shop, orderId),
       ListOrders: ({ shop, ...input }) => actors.listOrders(shop, input),
       SyncOpenOrders: ({ shop }) => orders.beginOpenOrdersSync(shop),
-      SyncOrder: ({ shop, orderId }) => orders.syncOrder(shop, orderId),
       TrackSync: ({ shop, workflowId, startedAt }) =>
         actors.beginSync(shop, { workflowId, now: startedAt }),
       SyncFailed: ({ shop, ...input }) => actors.syncFailed(shop, input).pipe(Effect.as({})),

@@ -6,8 +6,9 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
+import { ShopLimits } from "../../../src/domain/platform.ts";
 import { orderSyncQuery, orderSyncVariables } from "../../../src/backend/order-sync.ts";
-import { Orders } from "../../../src/backend/orders.ts";
 import { ABORT_UNINSTALLED } from "../../../src/backend/shop-actor.ts";
 import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
 import { ReauthorizationRequired, Shopify } from "../../../src/backend/shopify.ts";
@@ -17,11 +18,12 @@ import { SEED_SHOP } from "../../seed-shops.ts";
 import { signWebhook } from "../../shopify-webhook.ts";
 import recorded from "./fixtures/order-sync-response.json";
 import {
+  ActorSqliteTest,
   type AdminCall,
   type OrderActorCalls,
   QuietLogs,
   testOrderActors,
-  testOrdersSyncWorkflows,
+  testOrderRepository,
   testShopify,
   testShopifyAdmin,
 } from "./layers.ts";
@@ -45,32 +47,26 @@ const session: ShopSessionRow = {
 
 /**
  * {@link Webhooks} over {@link testShopify} holding `rows`, which stays readable, and
- * {@link Orders} over {@link testOrderActors} answering `version` (and `stub` for a destroy) and
- * {@link testShopifyAdmin} answering `replies`, both recording into `calls`.
+ * {@link testOrderActors}, whose `syncOrderWebhook` runs the actor's `OrdersAgent` over a fresh
+ * in-memory actor schema (readable through `testOrderRepository`) and {@link testShopifyAdmin}
+ * answering `replies`, and whose destroy answers `stub`, all recording into `calls`.
  */
 const layer = (
   rows: ReadonlyArray<ShopSessionRow> = [session],
   {
     calls = newCalls(),
-    version = "fetch",
     replies = [],
     stub = Effect.void,
   }: {
     calls?: Calls;
-    version?: "stale" | "fetch" | "refused";
     replies?: Array<Effect.Effect<unknown, ShopifyAdminError>>;
     stub?: Effect.Effect<void>;
   } = {},
 ) =>
   Webhooks.layer.pipe(
-    Layer.provideMerge(Orders.layer),
-    Layer.provideMerge(
-      Layer.mergeAll(
-        testOrderActors(calls, version, stub),
-        testShopifyAdmin(replies, calls.admin),
-        testOrdersSyncWorkflows(),
-      ),
-    ),
+    Layer.provideMerge(testOrderActors(calls, stub)),
+    Layer.provideMerge(testShopifyAdmin(replies, calls.admin)),
+    Layer.provideMerge(ActorSqliteTest),
     Layer.provideMerge(testShopify(rows)),
     Layer.provideMerge(QuietLogs),
   );
@@ -80,7 +76,13 @@ interface Calls extends OrderActorCalls {
   readonly admin: Array<AdminCall>;
 }
 
-const newCalls = (): Calls => ({ versions: [], stored: [], destroyed: [], admin: [] });
+const newCalls = (): Calls => ({ webhooks: [], notices: [], destroyed: [], admin: [] });
+
+/** The order the shop's actor stored for `orderId`, or null. */
+const storedOrder = (orderId: string) =>
+  Effect.gen(function* () {
+    return Option.getOrNull(yield* (yield* testOrderRepository).getOrder(orderId));
+  });
 
 /**
  * A delivery of `payload` for `topic` (the header's form), signed by {@link signWebhook}.
@@ -403,17 +405,15 @@ describe("orders webhooks", () => {
       return Effect.gen(function* () {
         const response = yield* delivery(topic, paid);
         assert.strictEqual(response.status, 200);
-        assert.deepStrictEqual(calls.versions, [
-          { key: SEED_SHOP, orderId: ORDER_GID, updatedAt: Date.parse("2026-10-15T09:30:45Z") },
-        ]);
+        assert.deepStrictEqual(
+          calls.webhooks.map(({ key, orderId, updatedAt }) => ({ key, orderId, updatedAt })),
+          [{ key: SEED_SHOP, orderId: ORDER_GID, updatedAt: Date.parse("2026-10-15T09:30:45Z") }],
+        );
         assert.deepStrictEqual(calls.admin, [
           { shop: SEED_SHOP, query: orderSyncQuery, variables: orderSyncVariables(ORDER_GID) },
         ]);
-        assert.lengthOf(calls.stored, 1);
-        const [stored] = calls.stored;
-        assert.strictEqual(stored?.key, SEED_SHOP);
+        const stored = yield* storedOrder(ORDER_GID);
         assert.strictEqual(stored?.order.id, ORDER_GID);
-        assert.notProperty(stored?.order, "lineItems");
         assert.deepStrictEqual(
           stored?.lineItems.map(({ id }) => id),
           ["gid://shopify/LineItem/15234567890123", "gid://shopify/LineItem/15234567890124"],
@@ -425,8 +425,8 @@ describe("orders webhooks", () => {
   );
 
   /**
-   * The topic never reaches the actor: `storeOrder` takes the order Shopify answered and nothing
-   * of the delivery. Legacy also asserted the order's run stayed open; runs are not ported.
+   * The topic decides nothing in the actor: the order stored is the one Shopify answered.
+   * Legacy also asserted the order's run stayed open; runs are not ported.
    */
   it.effect(
     "a webhook's topic decides nothing: a cancelled topic on an open order stores it open",
@@ -435,10 +435,9 @@ describe("orders webhooks", () => {
       return Effect.gen(function* () {
         const response = yield* delivery("orders/cancelled", paid);
         assert.strictEqual(response.status, 200);
-        assert.lengthOf(calls.stored, 1);
-        const [stored] = calls.stored;
+        const stored = yield* storedOrder(ORDER_GID);
         assert.strictEqual(stored?.order.cancelledAt, null);
-        assert.strictEqual(stored?.order.displayFulfillmentStatus, "UNFULFILLED");
+        assert.strictEqual(stored?.order.fulfillmentStatus, "UNFULFILLED");
       }).pipe(
         Effect.provide(layer([session], { calls, replies: [Effect.succeed(recorded.data)] })),
       );
@@ -452,11 +451,11 @@ describe("orders webhooks", () => {
         order_edit: { order_id: 6123456789012 },
       });
       assert.strictEqual(response.status, 200);
-      assert.deepStrictEqual(calls.versions, [
-        { key: SEED_SHOP, orderId: ORDER_GID, updatedAt: null },
+      assert.deepStrictEqual(calls.webhooks, [
+        { key: SEED_SHOP, orderId: ORDER_GID, topic: "ORDERS_EDITED", updatedAt: null },
       ]);
       assert.lengthOf(calls.admin, 1);
-      assert.lengthOf(calls.stored, 1);
+      assert.isNotNull(yield* storedOrder(ORDER_GID));
     }).pipe(Effect.provide(layer([session], { calls, replies: [Effect.succeed(recorded.data)] })));
   });
 
@@ -469,19 +468,42 @@ describe("orders webhooks", () => {
     }).pipe(Effect.provide(layer([], { calls })));
   });
 
-  it.effect.each(["stale", "refused"] as const)(
-    "a %s version answers 200 with no Admin call and nothing stored",
-    (version) => {
-      const calls = newCalls();
-      return Effect.gen(function* () {
-        const response = yield* delivery("orders/paid", paid);
-        assert.strictEqual(response.status, 200);
-        assert.lengthOf(calls.versions, 1);
-        assert.deepStrictEqual(calls.admin, []);
-        assert.deepStrictEqual(calls.stored, []);
-      }).pipe(Effect.provide(layer([session], { calls, version })));
-    },
-  );
+  it.effect("a stale version answers 200 with no Admin call and nothing stored", () => {
+    const calls = newCalls();
+    return Effect.gen(function* () {
+      assert.strictEqual((yield* delivery("orders/create", paid)).status, 200);
+      const before = yield* storedOrder(ORDER_GID);
+      calls.admin.length = 0;
+      calls.notices.length = 0;
+      const response = yield* delivery("orders/paid", paid);
+      assert.strictEqual(response.status, 200);
+      assert.lengthOf(calls.webhooks, 2);
+      assert.deepStrictEqual(calls.admin, []);
+      assert.deepStrictEqual(calls.notices, []);
+      assert.deepStrictEqual(yield* storedOrder(ORDER_GID), before);
+    }).pipe(Effect.provide(layer([session], { calls, replies: [Effect.succeed(recorded.data)] })));
+  });
+
+  it.effect("a refused version answers 200 with no Admin call and nothing stored", () => {
+    const calls = newCalls();
+    return Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          for (let i = 1; i <= ShopLimits.maxOpenOrders; i++)
+            yield* sql`
+              insert into ShopOrder (id, legacyId, name, processedAt, updatedAt, cancelledAt, fulfillmentStatus, fullyPaid, note, syncedAt)
+              values (${`gid://shopify/Order/open-${String(i)}`}, ${`open-${String(i)}`}, ${`#open-${String(i)}`}, 0, 0, null, 'UNFULFILLED', 1, null, 0)
+            `;
+        }),
+      );
+      const response = yield* delivery("orders/paid", paid);
+      assert.strictEqual(response.status, 200);
+      assert.lengthOf(calls.webhooks, 1);
+      assert.deepStrictEqual(calls.admin, []);
+      assert.isNull(yield* storedOrder(ORDER_GID));
+    }).pipe(Effect.provide(layer([session], { calls })));
+  });
 
   it.effect("an order Shopify no longer has answers 200 and stores nothing", () => {
     const calls = newCalls();
@@ -489,7 +511,7 @@ describe("orders webhooks", () => {
       const response = yield* delivery("orders/cancelled", paid);
       assert.strictEqual(response.status, 200);
       assert.lengthOf(calls.admin, 1);
-      assert.deepStrictEqual(calls.stored, []);
+      assert.isNull(yield* storedOrder(ORDER_GID));
     }).pipe(
       Effect.provide(layer([session], { calls, replies: [Effect.succeed({ order: null })] })),
     );
@@ -500,7 +522,7 @@ describe("orders webhooks", () => {
     return Effect.gen(function* () {
       const response = yield* delivery("orders/create", paid);
       assert.strictEqual(response.status, 500);
-      assert.deepStrictEqual(calls.stored, []);
+      assert.isNull(yield* storedOrder(ORDER_GID));
     }).pipe(
       Effect.provide(
         layer([session], {

@@ -10,7 +10,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { CONNECTION_CLOSE_UNINSTALLED } from "../../src/contract/shop-actor.ts";
 import { SEED_SHOP } from "../seed-shops.ts";
 import { signWebhook } from "../shopify-webhook.ts";
-import { dev, email, integ, nextCloseCode, openAs } from "./actor-clients.ts";
+import { dev, email, integ, nextCloseCode, openAs, storeByWebhook } from "./actor-clients.ts";
 import { fileStage } from "./file-stage.ts";
 import Stack from "./stack.ts";
 
@@ -70,22 +70,21 @@ test(
   "uninstall deletes the shop row, its members and teams, and destroys the object",
   Effect.gen(function* () {
     const { backendUrl, backendName } = yield* stack;
-    yield* integ(backendUrl, (c) =>
-      c.StoreOrder({
-        shop: SEED_SHOP,
-        order: {
-          id: ORDER_ID,
-          legacyResourceId: "1",
-          name: "#1001",
-          processedAt: Date.now() - 60_000,
-          updatedAt: Date.now() - 60_000,
-          cancelledAt: null,
-          displayFulfillmentStatus: "UNFULFILLED",
-          fullyPaid: true,
-          note: null,
-        },
-        lineItems: [],
-      }),
+    yield* storeByWebhook(
+      backendUrl,
+      SEED_SHOP,
+      {
+        id: ORDER_ID,
+        legacyResourceId: "1",
+        name: "#1001",
+        processedAt: Date.now() - 60_000,
+        updatedAt: Date.now() - 60_000,
+        cancelledAt: null,
+        displayFulfillmentStatus: "UNFULFILLED",
+        fullyPaid: true,
+        note: null,
+      },
+      [],
     );
     assert.isNotNull(
       yield* integ(backendUrl, (c) => c.GetOrder({ shop: SEED_SHOP, orderId: ORDER_ID })),

@@ -40,7 +40,7 @@ import { ShopifyAdmin } from "./shopify-admin.ts";
 import { ShopSessions } from "./shop-sessions.ts";
 import { workerNameOf } from "./stage.ts";
 import { Webhooks } from "./webhooks.ts";
-import ShopActor from "./shop-actor.ts";
+import ShopActor, { ShopActorLive } from "./shop-actor.ts";
 
 /** Under `alchemy dev` the limiter is open; see {@link SignInLimiter.layerOpen}. */
 const signInLimiter = Layer.unwrap(
@@ -259,6 +259,7 @@ export const provideBackend = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     Effect.provide(ShopAccess.layer),
     Effect.provide(Auth.layer),
     Effect.provide(ShopActors.layer),
+    Effect.provide(ShopActorLive),
     Effect.provide(MagicLinkDelivery.layer),
     Effect.provide(OrdersBulkRepository.layer),
     Effect.provide(

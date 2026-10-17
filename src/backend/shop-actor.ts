@@ -19,8 +19,13 @@ import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as SqlClient from "effect/sql/SqlClient";
+import type * as SqlError from "effect/sql/SqlError";
 import { Forbidden } from "../contract/auth.ts";
 import { ShopKey } from "../contract/shop.ts";
+import {
+  OrdersSyncFailure,
+  ShopifyUnavailable as ShopifyUnreachable,
+} from "../contract/shopify.ts";
 import { ShopLimits } from "../domain/platform.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,
@@ -47,11 +52,18 @@ import {
 import type { OrdersSyncResult } from "../domain/orders.ts";
 import * as ActorSocket from "./actor-socket.ts";
 import type { ActorFixtureAdded, ActorFixtureRows } from "./fixture.ts";
-import { type LineItemNode, type OrderNode, toOrderLineItems, toShopOrder } from "./order-sync.ts";
-import { makeOrderRepository, type Transaction } from "./shop-actor/orders.ts";
+import {
+  makeOrderRepository,
+  type OrderRepositoryError,
+  type Transaction,
+} from "./shop-actor/orders.ts";
+import { makeOrdersAgent } from "./shop-actor/orders-agent.ts";
+import type { EnsureShopSessionError } from "./shopify.ts";
 import { runOrdersStream } from "./shop-actor/orders-stream.ts";
+import { ShopifyAdmin } from "./shopify-admin.ts";
 
 const encodeNotice = Schema.encodeSync(NoticeFrame);
+const encodeSyncFailure = Schema.encodeSync(OrdersSyncFailure);
 const decodeConnectionHeader = Schema.decodeUnknownOption(Schema.fromJsonString(ConnectionCaller));
 const decodeShopKey = Schema.decodeUnknownOption(ShopKey);
 const decodeIdentity = Schema.decodeUnknownOption(
@@ -388,16 +400,617 @@ const tagsOf = (caller: ConnectionCaller) =>
     }),
   );
 
+const makeShopActor = Effect.gen(function* () {
+  const state = yield* Cloudflare.DurableObjectState;
+  const admin = yield* ShopifyAdmin;
+  return Effect.gen(function* () {
+    // Every actor is reached by name (`getByName`), so a nameless id is a broken invariant.
+    const shop = yield* Effect.fromOption(decodeShopKey(state.id.name)).pipe(Effect.orDie);
+    const runtime = yield* Effect.context<RuntimeContext>();
+    const sql = yield* Layer.build(SqliteClient.layer({ storage: state.raw.storage })).pipe(
+      Effect.map((context) => Context.get(context, SqlClient.SqlClient)),
+    );
+    yield* SqliteMigrator.run({ loader: migrations }).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+      Effect.orDie,
+    );
+    const activationId = yield* Effect.sync(() => crypto.randomUUID());
+    /**
+     * The bulk file's client, over the object's own `fetch`. Provided here: a Durable Object's
+     * activation may not require `HttpClient`, though Alchemy's Worker runtime has one.
+     */
+    const http = yield* HttpClient.HttpClient.pipe(Effect.provide(FetchHttpClient.layer));
+
+    /** Every multi-statement write's transaction; see {@link syncTransaction}. */
+    const transaction = syncTransaction(sql);
+    const orders = makeOrderRepository(sql, transaction);
+
+    /**
+     * The count the shop page shows, in memory: an example of the socket's reads, writes and
+     * notices, not shop data. It starts at 0 on every activation, so a hibernation resets it.
+     */
+    const count = yield* Ref.make(0);
+    const readCount = Ref.get(count).pipe(Effect.map((value): Count => ({ value })));
+    const increment = Ref.updateAndGet(count, (value) => value + 1).pipe(
+      Effect.map((value): Count => ({ value })),
+    );
+    const resetCount = Ref.setAndGet(count, 0).pipe(Effect.map((value): Count => ({ value })));
+
+    const notify = Effect.fn("ShopActor.notify")(function* (invalidated: ReadonlyArray<string>) {
+      const frame = encodeNotice({ _tag: "ShopActorNotice", invalidated });
+      for (const socket of yield* state.getWebSockets())
+        // A socket mid-close throws on send, which `send` surfaces as a defect; the next
+        // notice or the client's reconnect covers that browser.
+        yield* socket.send(frame).pipe(Effect.catchDefect(() => Effect.void));
+    });
+
+    const ordersAgent = makeOrdersAgent({ repository: orders, admin, notify, shop });
+
+    /**
+     * A sync press's failure as its caller is told it ({@link OrdersSyncFailure}): a session
+     * failure crosses as it is, except `ShopifyUnavailable`, whose cause is logged here and never
+     * sent. A storage failure is a defect.
+     */
+    const syncFailure =
+      (operation: string) =>
+      (error: EnsureShopSessionError | SqlError.SqlError | OrderRepositoryError) =>
+        Match.value(error).pipe(
+          Match.tags({
+            OfflineSessionMissing: (failure) => Effect.fail(failure),
+            ReauthorizationRequired: (failure) => Effect.fail(failure),
+            ShopifyUnavailable: ({ cause }) =>
+              Effect.logWarning(`${operation}: shop=${shop}: Shopify unavailable`, cause).pipe(
+                Effect.annotateLogs({ shop }),
+                Effect.andThen(Effect.fail(new ShopifyUnreachable({ shop }))),
+              ),
+          }),
+          Match.orElse((defect) => Effect.die(defect)),
+        );
+
+    /** Closes a socket; a close that throws is logged and never fails the caller. */
+    const closeSocket = (socket: Cloudflare.Workers.WebSocket, code: number, reason: string) =>
+      socket
+        .close(code, reason)
+        .pipe(
+          Effect.catchDefect((defect) =>
+            Effect.logWarning(`ShopActor: close ${code} failed`, defect),
+          ),
+        );
+
+    /**
+     * Baton's `displaceConnections`: after a member's socket is accepted, keeps the member at
+     * {@link MAX_CONNECTIONS_PER_MEMBER} by closing the oldest of the others, by
+     * `connectedAt`. Best effort: a failure is logged and the new socket is served either way.
+     */
+    const displace = Effect.fn("ShopActor.displace")(
+      function* (memberId: string, newest: Cloudflare.Workers.WebSocket) {
+        const others = (yield* state.getWebSockets(`member:${memberId}`)).flatMap((socket) => {
+          if (socket.ws === newest.ws || socket.ws.readyState !== WebSocket.OPEN) return [];
+          const identity = decodeIdentity(socket.deserializeAttachment<unknown>());
+          return Option.isSome(identity)
+            ? [{ socket, connectedAt: identity.value.shopActor.connectedAt }]
+            : [];
+        });
+        const displaced = others
+          .toSorted((a, b) => b.connectedAt - a.connectedAt)
+          .slice(MAX_CONNECTIONS_PER_MEMBER - 1);
+        for (const { socket } of displaced) {
+          yield* closeSocket(socket, CONNECTION_CLOSE_DISPLACED, DISPLACED_REASON);
+          yield* Effect.logInfo(`ShopActor.displace: shop=${shop} memberId=${memberId}`);
+        }
+      },
+      Effect.catchCause((cause) => Effect.logWarning("ShopActor.displace failed", cause)),
+    );
+
+    const handlers = ShopActorRpcs.toLayer({
+      MemberGetCount: () => readCount,
+      MerchantGetCount: () => readCount,
+      MemberIncrement: () => increment.pipe(Effect.tap(() => notify([COUNT_KEY]))),
+      MerchantResetCount: () => resetCount.pipe(Effect.tap(() => notify([COUNT_KEY]))),
+      MemberActivation: () => Effect.succeed({ id: activationId }),
+      MemberWhoAmI: () => Effect.service(CurrentCaller),
+      MerchantWhoAmI: () => Effect.service(CurrentCaller),
+      MerchantListOrders: (input) => orders.listOrders(input).pipe(Effect.orDie),
+      MerchantSyncStatus: () =>
+        Clock.currentTimeMillis.pipe(Effect.flatMap(orders.getSyncStatus), Effect.orDie),
+      MerchantSyncOrder: (input) =>
+        ordersAgent.syncOrder(input).pipe(Effect.catch(syncFailure("ShopActor.MerchantSyncOrder"))),
+    });
+
+    const socket = yield* ActorSocket.make({
+      group: ShopActorRpcs,
+      handlers: Layer.mergeAll(
+        handlers,
+        ConnectionMiddlewareLive,
+        RequireMemberLive,
+        RequireMerchantLive,
+      ),
+      onAccept: ({ caller }) => ({ tags: tagsOf(caller) }),
+      beforeDispatch: ({ caller }, ws) =>
+        Effect.gen(function* () {
+          const now = yield* Clock.currentTimeMillis;
+          if (caller.role !== "member" || caller.sessionExpiresAt > now) return true;
+          yield* closeSocket(ws, CONNECTION_CLOSE_REVOKED, EXPIRED_REASON);
+          return false;
+        }),
+    });
+
+    /**
+     * Accepts a socket and closes it at once with a code the browser reads; how the actor
+     * refuses an upgrade whose identity it cannot read.
+     */
+    const refuse = (code: number, reason: string) =>
+      Effect.sync(() => {
+        const pair = new WebSocketPair();
+        pair[1].accept();
+        pair[1].close(code, reason);
+        return HttpServerResponse.setBody(
+          HttpServerResponse.empty({ status: 101 }),
+          HttpBody.raw(new Response(null, { status: 101, webSocket: pair[0] })),
+        );
+      });
+
+    const fetch = Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      if (request.headers.upgrade?.toLowerCase() !== "websocket")
+        return HttpServerResponse.empty({ status: 426, headers: { upgrade: "websocket" } });
+      const caller = decodeConnectionHeader(request.headers[CONNECTION_HEADER]);
+      if (Option.isNone(caller)) {
+        yield* Effect.logWarning(`ShopActor.fetch: shop=${shop} unidentified connection`);
+        return yield* refuse(CONNECTION_CLOSE_FORBIDDEN, UNIDENTIFIED_REASON);
+      }
+      const connectedAt = yield* Clock.currentTimeMillis;
+      const accepted = yield* socket.fetch({ caller: caller.value, connectedAt });
+      if (Option.isSome(accepted.socket)) {
+        const role = caller.value.role;
+        yield* Effect.logInfo(`ShopActor.fetch: shop=${shop} role=${role}: socket accepted`).pipe(
+          Effect.annotateLogs({ shop, role }),
+        );
+      }
+      if (caller.value.role === "member" && Option.isSome(accepted.socket))
+        yield* displace(caller.value.memberId, accepted.socket.value);
+      return accepted.response;
+    });
+
+    /**
+     * Closes every socket of one member (`by: "member"`, Baton's `revokeMemberConnections`) or
+     * of one Better Auth session (`by: "session"`) with {@link CONNECTION_CLOSE_REVOKED}.
+     */
+    const revoke = Effect.fn("ShopActor.revoke")(function* (input: {
+      readonly by: "member" | "session";
+      readonly id: string;
+    }) {
+      let closed = 0;
+      for (const ws of yield* state.getWebSockets(`${input.by}:${input.id}`)) {
+        if (ws.ws.readyState !== WebSocket.OPEN) continue;
+        yield* closeSocket(ws, CONNECTION_CLOSE_REVOKED, REVOKED_REASON);
+        closed += 1;
+      }
+      yield* Effect.logInfo(`ShopActor.revoke: shop=${shop} by=${input.by} closed=${closed}`);
+      return { closed };
+    }, Effect.provide(runtime));
+
+    /** The page's first data, for the Backend's server-rendering read. */
+    const snapshot = Effect.fn("ShopActor.snapshot")(function* () {
+      const result: ShopSnapshot = {
+        count: yield* readCount,
+        activation: { id: activationId },
+      };
+      return result;
+    });
+
+    /** The shop's work rows, read back. */
+    const countWork = Effect.gen(function* () {
+      return {
+        workflows: yield* decodeCount(yield* sql`SELECT count(*) AS n FROM Workflow`),
+        orders: yield* decodeCount(yield* sql`SELECT count(*) AS n FROM ShopOrder`),
+        lineItems: yield* decodeCount(yield* sql`SELECT count(*) AS n FROM OrderLineItem`),
+      };
+    });
+
+    /**
+     * Replaces the shop's work with a fixture's rows, in one {@link transaction}: every order,
+     * line item, workflow, run, run task and usage event goes, `SyncState` and `ShopUsage` go
+     * back to the single rows the migration inserts, and `rows` are written. Not
+     * `storage.deleteAll`, which would also drop the migrator's record of the schema. Answers
+     * the counts read back inside the transaction.
+     */
+    const loadFixture = Effect.fn("ShopActor.loadFixture")(
+      function* (rows: ActorFixtureRows) {
+        const counts = yield* transaction(
+          Effect.gen(function* () {
+            yield* sql`DELETE FROM RunTask`;
+            yield* sql`DELETE FROM Run`;
+            yield* sql`DELETE FROM OrderLineItem`;
+            yield* sql`DELETE FROM ShopOrder`;
+            yield* sql`DELETE FROM Workflow`;
+            yield* sql`DELETE FROM UsageEvent`;
+            yield* sql`DELETE FROM SyncState`;
+            yield* sql`INSERT INTO SyncState (id) VALUES (1)`;
+            yield* sql`DELETE FROM ShopUsage`;
+            yield* sql`INSERT INTO ShopUsage (id) VALUES (1)`;
+            yield* insertFixtureRows(sql, rows);
+            return yield* countWork;
+          }),
+        );
+        yield* Effect.logInfo(
+          `ShopActor.loadFixture: shop=${shop} workflows=${counts.workflows} orders=${counts.orders} lineItems=${counts.lineItems}`,
+        );
+        return counts;
+      },
+      Effect.orDie,
+      Effect.provide(runtime),
+    );
+
+    /**
+     * Adds a fixture's rows beside the shop's work, in one {@link transaction}, deleting
+     * nothing. It first reads for a workflow whose name or tag, or an order whose id, is
+     * already there, and answers the first clash as `Conflict` with nothing written; otherwise
+     * `Added`, with the counts read back inside the transaction. An answer rather than a
+     * failure, because the stub's methods are schemaless.
+     */
+    const addFixture = Effect.fn("ShopActor.addFixture")(
+      function* (rows: ActorFixtureRows) {
+        const added = yield* transaction(
+          Effect.gen(function* () {
+            for (const w of rows.workflows) {
+              const [clash] = yield* decodeWorkflowNames(
+                yield* sql`SELECT name, tag FROM Workflow WHERE name = ${w.name} OR tag = ${w.tag} LIMIT 1`,
+              );
+              if (clash !== undefined)
+                return {
+                  _tag: "Conflict" as const,
+                  reason:
+                    clash.name === w.name
+                      ? `workflow ${w.name} already exists`
+                      : `workflow tag ${w.tag} already exists`,
+                };
+            }
+            for (const o of rows.orders) {
+              const [clash] = yield* decodeOrderIds(
+                yield* sql`SELECT id FROM ShopOrder WHERE id = ${o.id}`,
+              );
+              if (clash !== undefined)
+                return { _tag: "Conflict" as const, reason: `order ${o.name} already exists` };
+            }
+            yield* insertFixtureRows(sql, rows);
+            return { _tag: "Added" as const, counts: yield* countWork };
+          }),
+        );
+        const answer: ActorFixtureAdded = added;
+        yield* Effect.logInfo(
+          Match.value(answer).pipe(
+            Match.tagsExhaustive({
+              Added: ({ counts }) =>
+                `ShopActor.addFixture: shop=${shop} workflows=${counts.workflows} orders=${counts.orders} lineItems=${counts.lineItems}`,
+              Conflict: ({ reason }) => `ShopActor.addFixture: shop=${shop} conflict: ${reason}`,
+            }),
+          ),
+        );
+        return answer;
+      },
+      Effect.orDie,
+      Effect.provide(runtime),
+    );
+
+    /**
+     * Deletes one stored order with its items and runs, the way the retention sweep does, and
+     * notifies {@link ORDERS_KEY} when there was one. Dev and test machinery only: it lets a
+     * test take a real order off the screen so that only a sync can bring it back.
+     */
+    const removeOrder = Effect.fn("ShopActor.removeOrder")(
+      function* ({ orderId }: { readonly orderId: string }) {
+        const deleted = yield* transaction(
+          Effect.gen(function* () {
+            yield* sql`delete from Run where orderId = ${orderId}`;
+            return yield* sql`delete from ShopOrder where id = ${orderId} returning id`;
+          }),
+        );
+        const removed = deleted.length > 0;
+        yield* Effect.logInfo(
+          `ShopActor.removeOrder: shop=${shop} orderId=${orderId} removed=${String(removed)}`,
+        ).pipe(Effect.annotateLogs({ shop, orderId, removed }));
+        if (removed) yield* notify([ORDERS_KEY]);
+        return { removed };
+      },
+      Effect.orDie,
+      Effect.provide(runtime),
+    );
+
+    /**
+     * Legacy's `ShopAgent.syncOrderWebhook`, the Backend's one call for an `orders/*` delivery
+     * whose shop it found installed: `OrdersAgent.syncOrderWebhook`. Any failure dies, which the
+     * Backend answers non-2xx, so Shopify retries.
+     */
+    const syncOrderWebhook = Effect.fn("ShopActor.syncOrderWebhook")(
+      function* (input: {
+        readonly orderId: string;
+        readonly topic: string;
+        readonly updatedAt: number | null;
+      }) {
+        return yield* ordersAgent.syncOrderWebhook(input);
+      },
+      Effect.orDie,
+      Effect.provide(runtime),
+    );
+
+    /**
+     * Sync from Shopify on one order for the Backend's `syncOrder` until the orders screen calls
+     * `MerchantSyncOrder` itself: the same call, answering a failure as data
+     * (`{ _tag: "Failed", failure }`, the {@link OrdersSyncFailure} encoded), since a stub method
+     * carries no typed failure; the Backend re-raises it.
+     */
+    const syncOrder = Effect.fn("ShopActor.syncOrder")(function* (input: {
+      readonly orderId: string;
+    }) {
+      return yield* ordersAgent.syncOrder(input).pipe(
+        Effect.catch(syncFailure("ShopActor.syncOrder")),
+        Effect.catch((failure) =>
+          Effect.succeed({
+            _tag: "Failed" as const,
+            failure: encodeSyncFailure(failure),
+          }),
+        ),
+      );
+    }, Effect.provide(runtime));
+
+    /** One stored order with its items, or null. */
+    const getOrder = Effect.fn("ShopActor.getOrder")(
+      function* ({ orderId }: { readonly orderId: string }) {
+        return Option.getOrNull(yield* orders.getOrder(orderId));
+      },
+      Effect.orDie,
+      Effect.provide(runtime),
+    );
+
+    /** One page of the orders list; the same read as `MerchantListOrders`. */
+    const listOrders = Effect.fn("ShopActor.listOrders")(
+      function* (input: OrdersListInput) {
+        const page: OrdersListPage = yield* orders.listOrders(input);
+        return page;
+      },
+      Effect.orDie,
+      Effect.provide(runtime),
+    );
+
+    /**
+     * Legacy's `syncOpenOrders`, the actor's half: the Backend calls it before it creates the
+     * Workflow instance named `workflowId`, and creates it only on `Started`. The rules are
+     * `beginSync` on the repository; this logs them and notifies {@link SYNC_KEY} when a sync
+     * starts. `now` is the Backend's clock, so the record and the rule read one instant.
+     */
+    const beginSync = Effect.fn("ShopActor.beginSync")(
+      function* ({ workflowId, now }: { readonly workflowId: string; readonly now: number }) {
+        const start = yield* orders.beginSync({ workflowId, now });
+        if (start._tag !== "InFlight" && start.stale !== null)
+          yield* Effect.logWarning(
+            `ShopActor.beginSync: shop=${shop} workflowId=${String(start.stale.workflowId)}: tracking record stale, cleared`,
+          ).pipe(Effect.annotateLogs({ shop, workflowId: start.stale.workflowId }));
+        const result: OrdersSyncResult = yield* Match.value(start).pipe(
+          Match.tagsExhaustive({
+            InFlight: () =>
+              Effect.logInfo(`ShopActor.beginSync: shop=${shop} status=in-flight`).pipe(
+                Effect.annotateLogs({ shop, status: "in-flight" }),
+                Effect.as({ _tag: "InFlight" } as const),
+              ),
+            Refused: ({ openOrders }) => {
+              const limit = ShopLimits.maxOpenOrders;
+              return Effect.logError(
+                `ShopActor.beginSync: shop=${shop} status=order-ceiling openOrders=${String(openOrders)} limit=${String(limit)}`,
+              ).pipe(
+                Effect.annotateLogs({ shop, status: "order-ceiling", openOrders, limit }),
+                Effect.as({ _tag: "Refused" } as const),
+              );
+            },
+            Started: () =>
+              Effect.logInfo(
+                `ShopActor.beginSync: shop=${shop} status=started workflowId=${workflowId}`,
+              ).pipe(
+                Effect.annotateLogs({ shop, status: "started", workflowId }),
+                Effect.andThen(notify([SYNC_KEY])),
+                Effect.as({ _tag: "Started" } as const),
+              ),
+          }),
+        );
+        return result;
+      },
+      Effect.orDie,
+      Effect.provide(runtime),
+    );
+
+    /**
+     * Legacy's `onOrdersStream`: the Workflow's last step for a completed export, never a
+     * browser's (rule 16 on `syncOrder`: the URL must only ever come from a bulk operation this
+     * shop started). The stream merges ({@link runOrdersStream}), then the retention pass rides
+     * it (rule 9), then the tracking record is cleared and both keys are notified, whatever the
+     * stream changed: the sync's end is on the screen either way. Answers the counts, which
+     * are logged and never shown (rule 18).
+     *
+     * The retention pass rides the open-orders sync: it is merchant-triggered,
+     * already the heaviest thing this object does, and the one moment
+     * where paying for a batch of deletes is invisible next to what the
+     * request is doing anyway.
+     *
+     * A step retry re-streams the whole file when the sweep throws after the writes: correct
+     * under rule 7, a full second pass, and rare. The billing seam: the usage flush after the
+     * stream goes here.
+     */
+    const streamOrders = Effect.fn("ShopActor.streamOrders")(
+      function* ({ workflowId, url }: { readonly workflowId: string; readonly url: string }) {
+        const counts = yield* runOrdersStream({ repository: orders, shop, url }).pipe(
+          Effect.provideService(HttpClient.HttpClient, http),
+          // A stream that fails partway keeps the orders it wrote, and the failure carries no
+          // counts, so the list is invalidated without knowing whether a row moved.
+          Effect.onError(() => notify([ORDERS_KEY])),
+        );
+        if (counts.ordersRefused > 0)
+          yield* Effect.logError(
+            `ShopActor.streamOrders: shop=${shop} status=order-ceiling ordersRefused=${String(counts.ordersRefused)} limit=${String(ShopLimits.maxOpenOrders)}`,
+          ).pipe(
+            Effect.annotateLogs({
+              shop,
+              status: "order-ceiling",
+              ordersRefused: counts.ordersRefused,
+              limit: ShopLimits.maxOpenOrders,
+            }),
+          );
+        const swept = yield* orders.sweepExpiredOrders({ now: yield* Clock.currentTimeMillis });
+        yield* orders.clearSyncTracking({ workflowId });
+        yield* Effect.logInfo(
+          `ShopActor.streamOrders: shop=${shop} ordersSeen=${String(counts.ordersSeen)} ordersUpserted=${String(counts.ordersUpserted)} ordersInserted=${String(counts.ordersInserted)} ordersRefused=${String(counts.ordersRefused)} lineItemsUpserted=${String(counts.lineItemsUpserted)} ordersTruncated=${String(counts.ordersTruncated)} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)}`,
+        ).pipe(
+          Effect.annotateLogs({
+            shop,
+            workflowId,
+            ...counts,
+            sweptOrders: swept.orders,
+            sweptRuns: swept.runs,
+          }),
+        );
+        yield* notify([ORDERS_KEY, SYNC_KEY]);
+        return counts;
+      },
+      Effect.orDie,
+      Effect.provide(runtime),
+    );
+
+    /**
+     * Legacy's `onOrdersSyncEmpty`: the last 30 days held no open orders. Deliberately does not
+     * touch stored rows: unlike a catalog scan, an empty result means "nothing changed", never
+     * "the shop has no orders" (rule 9 on `syncOrder`). Clears the tracking record.
+     */
+    const syncEmpty = Effect.fn("ShopActor.syncEmpty")(
+      function* ({ workflowId }: { readonly workflowId: string }) {
+        yield* Effect.logInfo(`ShopActor.syncEmpty: shop=${shop} workflowId=${workflowId}`).pipe(
+          Effect.annotateLogs({ shop, workflowId }),
+        );
+        if (yield* orders.clearSyncTracking({ workflowId })) yield* notify([SYNC_KEY]);
+      },
+      Effect.orDie,
+      Effect.provide(runtime),
+    );
+
+    /**
+     * A sync that will not finish: the Workflow's error sink, or the Backend when it could not
+     * create the instance. Legacy's `onOrdersSyncError` and `onWorkflowError` in one, since no
+     * platform callback follows here: the record is cleared, which re-enables the button, and
+     * `message` becomes the banner unless one is already written (rule 15 on `syncOrder`).
+     * Both only when the record is `workflowId`'s: a sync whose stale record a newer press
+     * replaced has nothing left to report, and the newer sync owns the banner.
+     */
+    const syncFailed = Effect.fn("ShopActor.syncFailed")(
+      function* ({
+        workflowId,
+        message,
+      }: {
+        readonly workflowId: string;
+        readonly message: string;
+      }) {
+        const cleared = yield* transaction(
+          Effect.gen(function* () {
+            const cleared = yield* orders.clearSyncTracking({ workflowId });
+            if (cleared) yield* orders.setSyncErrorIfEmpty({ error: message });
+            return cleared;
+          }),
+        );
+        yield* Effect.logError(
+          `ShopActor.syncFailed: shop=${shop} workflowId=${workflowId} tracked=${String(cleared)}: ${message}`,
+        ).pipe(Effect.annotateLogs({ shop, workflowId, tracked: cleared, message }));
+        if (cleared) yield* notify([SYNC_KEY]);
+      },
+      Effect.orDie,
+      Effect.provide(runtime),
+    );
+
+    /**
+     * Tears the shop's actor down on uninstall: closes every socket with
+     * {@link CONNECTION_CLOSE_UNINSTALLED} (best effort, as every close here), deletes the alarm
+     * and then all storage, which is what ends the object's storage billing, syncs storage to
+     * disk, waits up to {@link CLOSE_HANDSHAKE_WAIT} for the closes to complete, and aborts the
+     * object with {@link ABORT_UNINSTALLED}.
+     *
+     * SQLite-backed storage coalesces writes: `deleteAll` resolving does not mean the delete
+     * reached disk, and a reset discards writes that are still coalescing. So a method that
+     * deletes storage syncs before it aborts; without the sync, production kept the shop's
+     * orders across an uninstall. Local workerd writes synchronously and never shows this. The abort matters: the actor migrates once per activation, so
+     * without it this activation would keep serving with its tables gone. The abort lands
+     * mid-call, so the stub call rejects instead of answering; `ShopActors.destroy` reads that
+     * rejection as success.
+     *
+     * @see refs/cloudflare-docs/src/content/partials/durable-objects/api-storage-other-methods.mdx ("deleteAll", "sync")
+     */
+    const destroy = Effect.fn("ShopActor.destroy")(function* () {
+      const sockets = yield* state.getWebSockets();
+      for (const ws of sockets)
+        yield* closeSocket(ws, CONNECTION_CLOSE_UNINSTALLED, UNINSTALLED_REASON);
+      yield* state.storage.deleteAlarm();
+      yield* state.storage.deleteAll();
+      yield* Effect.promise(() => state.raw.storage.sync());
+      const closed = yield* Effect.sync(() =>
+        sockets.every((ws) => ws.ws.readyState === WebSocket.CLOSED),
+      ).pipe(
+        Effect.repeat({ schedule: Schedule.spaced("10 millis"), until: (done) => done }),
+        Effect.timeoutOption(CLOSE_HANDSHAKE_WAIT),
+      );
+      yield* Effect.logInfo(
+        `ShopActor.destroy: shop=${shop} sockets=${String(sockets.length)} closed=${String(Option.isSome(closed))}: storage deleted`,
+      ).pipe(Effect.annotateLogs({ shop, sockets: sockets.length, closed: Option.isSome(closed) }));
+      yield* state.abort(ABORT_UNINSTALLED);
+    }, Effect.provide(runtime));
+
+    /**
+     * Logs the close at Info with the caller's role and the close code and reason, then hands
+     * the socket to the transport. A socket without an identity logs `role=none`.
+     */
+    const webSocketClose = (ws: Cloudflare.Workers.WebSocket, code: number, reason: string) =>
+      Effect.gen(function* () {
+        const role = Option.match(decodeIdentity(ws.deserializeAttachment<unknown>()), {
+          onNone: () => "none",
+          onSome: ({ shopActor }) => shopActor.caller.role,
+        });
+        yield* Effect.logInfo(
+          `ShopActor.webSocketClose: shop=${shop} role=${role} code=${String(code)}: ${reason}`,
+        ).pipe(Effect.annotateLogs({ shop, role, code, reason }));
+        yield* socket.webSocketClose(ws);
+      });
+
+    return {
+      fetch,
+      webSocketMessage: socket.webSocketMessage,
+      webSocketClose,
+      webSocketError: socket.webSocketError,
+      revoke,
+      snapshot,
+      loadFixture,
+      addFixture,
+      removeOrder,
+      syncOrderWebhook,
+      syncOrder,
+      getOrder,
+      listOrders,
+      beginSync,
+      streamOrders,
+      syncEmpty,
+      syncFailed,
+      destroy,
+    };
+  });
+});
+
 /**
  * One shop's actor, named by its {@link ShopKey}, holding the shop's work in private SQLite
  * ({@link migrations}). After a write it pushes a `Notice` to every socket so each browser
  * refetches; it never pushes the value.
  *
  * It has two surfaces that never overlap. Browsers call `ShopActorRpcs` with Effect RPC over a
- * hibernating WebSocket; there is no HTTP RPC into the actor. The Backend calls the schemaless
- * methods `revoke`, `snapshot`, `loadFixture`, `addFixture`, `removeOrder`, `orderVersion`,
- * `storeOrder`, `getOrder`, `listOrders`, `beginSync`, `streamOrders`, `syncEmpty`, `syncFailed`
- * and `destroy` on its stub, which no browser can reach.
+ * hibernating WebSocket; there is no HTTP RPC into the actor. The Backend and the orders sync
+ * Workflow call the schemaless methods `revoke`, `snapshot`, `loadFixture`, `addFixture`,
+ * `removeOrder`, `syncOrderWebhook`, `syncOrder`, `getOrder`, `listOrders`, `beginSync`,
+ * `streamOrders`, `syncEmpty`, `syncFailed` and `destroy` on its stub, which no browser can reach.
+ *
+ * It owns its shop, as legacy's `ShopAgent` does: it fetches an order from the Admin API itself
+ * (`OrdersAgent`, over the Backend's own `ShopifyAdmin`, which refreshes the offline token when a
+ * call needs it).
  *
  * Who is on a socket is fixed when the socket is accepted: the Backend's gate resolves the
  * browser and names it in {@link CONNECTION_HEADER} on the upgrade it forwards, and the actor
@@ -412,649 +1025,25 @@ const tagsOf = (caller: ConnectionCaller) =>
  * arrived. A merchant socket has no such backstop: its token is checked at connect only, as in
  * Baton.
  *
- * Everything below `state` runs once per activation, including after a hibernation wake, so
- * the SQL client is rebuilt and the migrator re-checks its table each time. Migrations run
+ * The outer phase takes handles only: it runs at plan time against a mock state inside the
+ * Backend's init, which is what attaches every binding it yields to the Backend's script, and
+ * once per activation at runtime, where the services are the Backend's own instances, captured
+ * where {@link ShopActorLive} is provided. The inner phase runs once per activation too,
+ * including after a hibernation wake, so the SQL client is rebuilt and the migrator re-checks its table each time. Migrations run
  * inside the `blockConcurrencyWhile` Alchemy wraps construction in, so no request sees a
  * half-migrated store. The client is built on the ambient scope, as Alchemy's
  * `Drizzle.DurableObject` does: it wraps the object's local storage, so nothing behind it needs
  * releasing. A single-statement write needs no transaction; a multi-statement one goes through
  * `transaction` ({@link syncTransaction}), and the orders repository is built over both.
  */
-export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
-  "ShopActor",
-  Effect.gen(function* () {
-    const state = yield* Cloudflare.DurableObjectState;
-    return Effect.gen(function* () {
-      // Every actor is reached by name (`getByName`), so a nameless id is a broken invariant.
-      const shop = yield* Effect.fromOption(decodeShopKey(state.id.name)).pipe(Effect.orDie);
-      const runtime = yield* Effect.context<RuntimeContext>();
-      const sql = yield* Layer.build(SqliteClient.layer({ storage: state.raw.storage })).pipe(
-        Effect.map((context) => Context.get(context, SqlClient.SqlClient)),
-      );
-      yield* SqliteMigrator.run({ loader: migrations }).pipe(
-        Effect.provideService(SqlClient.SqlClient, sql),
-        Effect.orDie,
-      );
-      const activationId = yield* Effect.sync(() => crypto.randomUUID());
-      /**
-       * The bulk file's client, over the object's own `fetch`. Provided here: a Durable Object's
-       * activation may not require `HttpClient`, though Alchemy's Worker runtime has one.
-       */
-      const http = yield* HttpClient.HttpClient.pipe(Effect.provide(FetchHttpClient.layer));
+export default class ShopActor extends Cloudflare.DurableObject<
+  ShopActor,
+  Effect.Success<Effect.Success<typeof makeShopActor>>
+>()("ShopActor") {}
 
-      /** Every multi-statement write's transaction; see {@link syncTransaction}. */
-      const transaction = syncTransaction(sql);
-      const orders = makeOrderRepository(sql, transaction);
-
-      /**
-       * The count the shop page shows, in memory: an example of the socket's reads, writes and
-       * notices, not shop data. It starts at 0 on every activation, so a hibernation resets it.
-       */
-      const count = yield* Ref.make(0);
-      const readCount = Ref.get(count).pipe(Effect.map((value): Count => ({ value })));
-      const increment = Ref.updateAndGet(count, (value) => value + 1).pipe(
-        Effect.map((value): Count => ({ value })),
-      );
-      const resetCount = Ref.setAndGet(count, 0).pipe(Effect.map((value): Count => ({ value })));
-
-      const notify = Effect.fn("ShopActor.notify")(function* (invalidated: ReadonlyArray<string>) {
-        const frame = encodeNotice({ _tag: "ShopActorNotice", invalidated });
-        for (const socket of yield* state.getWebSockets())
-          // A socket mid-close throws on send, which `send` surfaces as a defect; the next
-          // notice or the client's reconnect covers that browser.
-          yield* socket.send(frame).pipe(Effect.catchDefect(() => Effect.void));
-      });
-
-      /** Closes a socket; a close that throws is logged and never fails the caller. */
-      const closeSocket = (socket: Cloudflare.Workers.WebSocket, code: number, reason: string) =>
-        socket
-          .close(code, reason)
-          .pipe(
-            Effect.catchDefect((defect) =>
-              Effect.logWarning(`ShopActor: close ${code} failed`, defect),
-            ),
-          );
-
-      /**
-       * Baton's `displaceConnections`: after a member's socket is accepted, keeps the member at
-       * {@link MAX_CONNECTIONS_PER_MEMBER} by closing the oldest of the others, by
-       * `connectedAt`. Best effort: a failure is logged and the new socket is served either way.
-       */
-      const displace = Effect.fn("ShopActor.displace")(
-        function* (memberId: string, newest: Cloudflare.Workers.WebSocket) {
-          const others = (yield* state.getWebSockets(`member:${memberId}`)).flatMap((socket) => {
-            if (socket.ws === newest.ws || socket.ws.readyState !== WebSocket.OPEN) return [];
-            const identity = decodeIdentity(socket.deserializeAttachment<unknown>());
-            return Option.isSome(identity)
-              ? [{ socket, connectedAt: identity.value.shopActor.connectedAt }]
-              : [];
-          });
-          const displaced = others
-            .toSorted((a, b) => b.connectedAt - a.connectedAt)
-            .slice(MAX_CONNECTIONS_PER_MEMBER - 1);
-          for (const { socket } of displaced) {
-            yield* closeSocket(socket, CONNECTION_CLOSE_DISPLACED, DISPLACED_REASON);
-            yield* Effect.logInfo(`ShopActor.displace: shop=${shop} memberId=${memberId}`);
-          }
-        },
-        Effect.catchCause((cause) => Effect.logWarning("ShopActor.displace failed", cause)),
-      );
-
-      const handlers = ShopActorRpcs.toLayer({
-        MemberGetCount: () => readCount,
-        MerchantGetCount: () => readCount,
-        MemberIncrement: () => increment.pipe(Effect.tap(() => notify([COUNT_KEY]))),
-        MerchantResetCount: () => resetCount.pipe(Effect.tap(() => notify([COUNT_KEY]))),
-        MemberActivation: () => Effect.succeed({ id: activationId }),
-        MemberWhoAmI: () => Effect.service(CurrentCaller),
-        MerchantWhoAmI: () => Effect.service(CurrentCaller),
-        MerchantListOrders: (input) => orders.listOrders(input).pipe(Effect.orDie),
-        MerchantSyncStatus: () =>
-          Clock.currentTimeMillis.pipe(Effect.flatMap(orders.getSyncStatus), Effect.orDie),
-      });
-
-      const socket = yield* ActorSocket.make({
-        group: ShopActorRpcs,
-        handlers: Layer.mergeAll(
-          handlers,
-          ConnectionMiddlewareLive,
-          RequireMemberLive,
-          RequireMerchantLive,
-        ),
-        onAccept: ({ caller }) => ({ tags: tagsOf(caller) }),
-        beforeDispatch: ({ caller }, ws) =>
-          Effect.gen(function* () {
-            const now = yield* Clock.currentTimeMillis;
-            if (caller.role !== "member" || caller.sessionExpiresAt > now) return true;
-            yield* closeSocket(ws, CONNECTION_CLOSE_REVOKED, EXPIRED_REASON);
-            return false;
-          }),
-      });
-
-      /**
-       * Accepts a socket and closes it at once with a code the browser reads; how the actor
-       * refuses an upgrade whose identity it cannot read.
-       */
-      const refuse = (code: number, reason: string) =>
-        Effect.sync(() => {
-          const pair = new WebSocketPair();
-          pair[1].accept();
-          pair[1].close(code, reason);
-          return HttpServerResponse.setBody(
-            HttpServerResponse.empty({ status: 101 }),
-            HttpBody.raw(new Response(null, { status: 101, webSocket: pair[0] })),
-          );
-        });
-
-      const fetch = Effect.gen(function* () {
-        const request = yield* HttpServerRequest.HttpServerRequest;
-        if (request.headers.upgrade?.toLowerCase() !== "websocket")
-          return HttpServerResponse.empty({ status: 426, headers: { upgrade: "websocket" } });
-        const caller = decodeConnectionHeader(request.headers[CONNECTION_HEADER]);
-        if (Option.isNone(caller)) {
-          yield* Effect.logWarning(`ShopActor.fetch: shop=${shop} unidentified connection`);
-          return yield* refuse(CONNECTION_CLOSE_FORBIDDEN, UNIDENTIFIED_REASON);
-        }
-        const connectedAt = yield* Clock.currentTimeMillis;
-        const accepted = yield* socket.fetch({ caller: caller.value, connectedAt });
-        if (Option.isSome(accepted.socket)) {
-          const role = caller.value.role;
-          yield* Effect.logInfo(`ShopActor.fetch: shop=${shop} role=${role}: socket accepted`).pipe(
-            Effect.annotateLogs({ shop, role }),
-          );
-        }
-        if (caller.value.role === "member" && Option.isSome(accepted.socket))
-          yield* displace(caller.value.memberId, accepted.socket.value);
-        return accepted.response;
-      });
-
-      /**
-       * Closes every socket of one member (`by: "member"`, Baton's `revokeMemberConnections`) or
-       * of one Better Auth session (`by: "session"`) with {@link CONNECTION_CLOSE_REVOKED}.
-       */
-      const revoke = Effect.fn("ShopActor.revoke")(function* (input: {
-        readonly by: "member" | "session";
-        readonly id: string;
-      }) {
-        let closed = 0;
-        for (const ws of yield* state.getWebSockets(`${input.by}:${input.id}`)) {
-          if (ws.ws.readyState !== WebSocket.OPEN) continue;
-          yield* closeSocket(ws, CONNECTION_CLOSE_REVOKED, REVOKED_REASON);
-          closed += 1;
-        }
-        yield* Effect.logInfo(`ShopActor.revoke: shop=${shop} by=${input.by} closed=${closed}`);
-        return { closed };
-      }, Effect.provide(runtime));
-
-      /** The page's first data, for the Backend's server-rendering read. */
-      const snapshot = Effect.fn("ShopActor.snapshot")(function* () {
-        const result: ShopSnapshot = {
-          count: yield* readCount,
-          activation: { id: activationId },
-        };
-        return result;
-      });
-
-      /** The shop's work rows, read back. */
-      const countWork = Effect.gen(function* () {
-        return {
-          workflows: yield* decodeCount(yield* sql`SELECT count(*) AS n FROM Workflow`),
-          orders: yield* decodeCount(yield* sql`SELECT count(*) AS n FROM ShopOrder`),
-          lineItems: yield* decodeCount(yield* sql`SELECT count(*) AS n FROM OrderLineItem`),
-        };
-      });
-
-      /**
-       * Replaces the shop's work with a fixture's rows, in one {@link transaction}: every order,
-       * line item, workflow, run, run task and usage event goes, `SyncState` and `ShopUsage` go
-       * back to the single rows the migration inserts, and `rows` are written. Not
-       * `storage.deleteAll`, which would also drop the migrator's record of the schema. Answers
-       * the counts read back inside the transaction.
-       */
-      const loadFixture = Effect.fn("ShopActor.loadFixture")(
-        function* (rows: ActorFixtureRows) {
-          const counts = yield* transaction(
-            Effect.gen(function* () {
-              yield* sql`DELETE FROM RunTask`;
-              yield* sql`DELETE FROM Run`;
-              yield* sql`DELETE FROM OrderLineItem`;
-              yield* sql`DELETE FROM ShopOrder`;
-              yield* sql`DELETE FROM Workflow`;
-              yield* sql`DELETE FROM UsageEvent`;
-              yield* sql`DELETE FROM SyncState`;
-              yield* sql`INSERT INTO SyncState (id) VALUES (1)`;
-              yield* sql`DELETE FROM ShopUsage`;
-              yield* sql`INSERT INTO ShopUsage (id) VALUES (1)`;
-              yield* insertFixtureRows(sql, rows);
-              return yield* countWork;
-            }),
-          );
-          yield* Effect.logInfo(
-            `ShopActor.loadFixture: shop=${shop} workflows=${counts.workflows} orders=${counts.orders} lineItems=${counts.lineItems}`,
-          );
-          return counts;
-        },
-        Effect.orDie,
-        Effect.provide(runtime),
-      );
-
-      /**
-       * Adds a fixture's rows beside the shop's work, in one {@link transaction}, deleting
-       * nothing. It first reads for a workflow whose name or tag, or an order whose id, is
-       * already there, and answers the first clash as `Conflict` with nothing written; otherwise
-       * `Added`, with the counts read back inside the transaction. An answer rather than a
-       * failure, because the stub's methods are schemaless.
-       */
-      const addFixture = Effect.fn("ShopActor.addFixture")(
-        function* (rows: ActorFixtureRows) {
-          const added = yield* transaction(
-            Effect.gen(function* () {
-              for (const w of rows.workflows) {
-                const [clash] = yield* decodeWorkflowNames(
-                  yield* sql`SELECT name, tag FROM Workflow WHERE name = ${w.name} OR tag = ${w.tag} LIMIT 1`,
-                );
-                if (clash !== undefined)
-                  return {
-                    _tag: "Conflict" as const,
-                    reason:
-                      clash.name === w.name
-                        ? `workflow ${w.name} already exists`
-                        : `workflow tag ${w.tag} already exists`,
-                  };
-              }
-              for (const o of rows.orders) {
-                const [clash] = yield* decodeOrderIds(
-                  yield* sql`SELECT id FROM ShopOrder WHERE id = ${o.id}`,
-                );
-                if (clash !== undefined)
-                  return { _tag: "Conflict" as const, reason: `order ${o.name} already exists` };
-              }
-              yield* insertFixtureRows(sql, rows);
-              return { _tag: "Added" as const, counts: yield* countWork };
-            }),
-          );
-          const answer: ActorFixtureAdded = added;
-          yield* Effect.logInfo(
-            Match.value(answer).pipe(
-              Match.tagsExhaustive({
-                Added: ({ counts }) =>
-                  `ShopActor.addFixture: shop=${shop} workflows=${counts.workflows} orders=${counts.orders} lineItems=${counts.lineItems}`,
-                Conflict: ({ reason }) => `ShopActor.addFixture: shop=${shop} conflict: ${reason}`,
-              }),
-            ),
-          );
-          return answer;
-        },
-        Effect.orDie,
-        Effect.provide(runtime),
-      );
-
-      /**
-       * Deletes one stored order with its items and runs, the way the retention sweep does, and
-       * notifies {@link ORDERS_KEY} when there was one. Dev and test machinery only: it lets a
-       * test take a real order off the screen so that only a sync can bring it back.
-       */
-      const removeOrder = Effect.fn("ShopActor.removeOrder")(
-        function* ({ orderId }: { readonly orderId: string }) {
-          const deleted = yield* transaction(
-            Effect.gen(function* () {
-              yield* sql`delete from Run where orderId = ${orderId}`;
-              return yield* sql`delete from ShopOrder where id = ${orderId} returning id`;
-            }),
-          );
-          const removed = deleted.length > 0;
-          yield* Effect.logInfo(
-            `ShopActor.removeOrder: shop=${shop} orderId=${orderId} removed=${String(removed)}`,
-          ).pipe(Effect.annotateLogs({ shop, orderId, removed }));
-          if (removed) yield* notify([ORDERS_KEY]);
-          return { removed };
-        },
-        Effect.orDie,
-        Effect.provide(runtime),
-      );
-
-      /**
-       * The webhook path's probe, `OrderRepository.orderVersion`, logged and answered as
-       * the stub's string. A refusal notifies nothing: it stored no order.
-       */
-      const orderVersion = Effect.fn("ShopActor.orderVersion")(
-        function* ({
-          orderId,
-          updatedAt,
-        }: {
-          readonly orderId: string;
-          readonly updatedAt: number | null;
-        }) {
-          const version = yield* orders.orderVersion({
-            orderId,
-            updatedAt,
-            now: yield* Clock.currentTimeMillis,
-          });
-          return yield* Match.value(version).pipe(
-            Match.tagsExhaustive({
-              Stale: () =>
-                Effect.logInfo(
-                  `ShopActor.orderVersion: shop=${shop} orderId=${orderId} status=stale`,
-                ).pipe(
-                  Effect.annotateLogs({ shop, orderId, status: "stale" }),
-                  Effect.as("stale" as const),
-                ),
-              Refused: ({ openOrders }) => {
-                const limit = ShopLimits.maxOpenOrders;
-                return Effect.logError(
-                  `ShopActor.orderVersion: shop=${shop} orderId=${orderId} status=order-ceiling openOrders=${String(openOrders)} limit=${String(limit)}`,
-                ).pipe(
-                  Effect.annotateLogs({
-                    shop,
-                    orderId,
-                    status: "order-ceiling",
-                    openOrders,
-                    limit,
-                  }),
-                  Effect.as("refused" as const),
-                );
-              },
-              Fetch: () =>
-                Effect.logInfo(
-                  `ShopActor.orderVersion: shop=${shop} orderId=${orderId} status=fetch`,
-                ).pipe(
-                  Effect.annotateLogs({ shop, orderId, status: "fetch" }),
-                  Effect.as("fetch" as const),
-                ),
-            }),
-          );
-        },
-        Effect.orDie,
-        Effect.provide(runtime),
-      );
-
-      /**
-       * Stores one order Shopify answered for: mapped through `toShopOrder` and
-       * `toOrderLineItems` at the actor's clock, then `upsertOrder`, which probes, gates and
-       * writes in one transaction. Then the retention pass, rate-limited by `lastSweepAt` rather
-       * than run on every delivery (`ShopLimits.sweepIntervalMs`): a busy shop must not pay for a
-       * batch of deletes per webhook. Notifies {@link ORDERS_KEY} when the order row moved or the
-       * sweep deleted a row, and only then: a sweep is a write the screens show even when the
-       * order did not change, and a rewrite of the same version shows nothing new (rule 17).
-       */
-      const storeOrder = Effect.fn("ShopActor.storeOrder")(
-        function* ({
-          order: node,
-          lineItems: nodes,
-        }: {
-          readonly order: OrderNode;
-          readonly lineItems: readonly LineItemNode[];
-        }) {
-          const orderId = node.id;
-          const order = toShopOrder({ node, syncedAt: yield* Clock.currentTimeMillis });
-          const upsert = yield* orders.upsertOrder({
-            order,
-            lineItems: yield* toOrderLineItems({ shop, orderId, nodes }),
-          });
-          const { written, fresh, changed, refused } = upsert;
-          yield* Effect.logInfo(
-            `ShopActor.storeOrder: shop=${shop} orderId=${orderId} written=${String(written)} changed=${String(changed)}`,
-          ).pipe(Effect.annotateLogs({ shop, orderId, written, changed, refused }));
-          const now = yield* Clock.currentTimeMillis;
-          const lastSweepAt = yield* orders.lastSweepAt();
-          const swept =
-            lastSweepAt === null || now - lastSweepAt >= ShopLimits.sweepIntervalMs
-              ? yield* orders.sweepExpiredOrders({ now })
-              : { orders: 0, runs: 0 };
-          const sweptAny = swept.orders > 0 || swept.runs > 0;
-          if (sweptAny)
-            yield* Effect.logInfo(
-              `ShopActor.storeOrder: shop=${shop} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)}`,
-            ).pipe(Effect.annotateLogs({ shop, sweptOrders: swept.orders, sweptRuns: swept.runs }));
-          if (changed || sweptAny) yield* notify([ORDERS_KEY]);
-          return { written, fresh, changed, refused };
-        },
-        Effect.orDie,
-        Effect.provide(runtime),
-      );
-
-      /** One stored order with its items, or null. */
-      const getOrder = Effect.fn("ShopActor.getOrder")(
-        function* ({ orderId }: { readonly orderId: string }) {
-          return Option.getOrNull(yield* orders.getOrder(orderId));
-        },
-        Effect.orDie,
-        Effect.provide(runtime),
-      );
-
-      /** One page of the orders list; the same read as `MerchantListOrders`. */
-      const listOrders = Effect.fn("ShopActor.listOrders")(
-        function* (input: OrdersListInput) {
-          const page: OrdersListPage = yield* orders.listOrders(input);
-          return page;
-        },
-        Effect.orDie,
-        Effect.provide(runtime),
-      );
-
-      /**
-       * Legacy's `syncOpenOrders`, the actor's half: the Backend calls it before it creates the
-       * Workflow instance named `workflowId`, and creates it only on `Started`. The rules are
-       * `beginSync` on the repository; this logs them and notifies {@link SYNC_KEY} when a sync
-       * starts. `now` is the Backend's clock, so the record and the rule read one instant.
-       */
-      const beginSync = Effect.fn("ShopActor.beginSync")(
-        function* ({ workflowId, now }: { readonly workflowId: string; readonly now: number }) {
-          const start = yield* orders.beginSync({ workflowId, now });
-          if (start._tag !== "InFlight" && start.stale !== null)
-            yield* Effect.logWarning(
-              `ShopActor.beginSync: shop=${shop} workflowId=${String(start.stale.workflowId)}: tracking record stale, cleared`,
-            ).pipe(Effect.annotateLogs({ shop, workflowId: start.stale.workflowId }));
-          const result: OrdersSyncResult = yield* Match.value(start).pipe(
-            Match.tagsExhaustive({
-              InFlight: () =>
-                Effect.logInfo(`ShopActor.beginSync: shop=${shop} status=in-flight`).pipe(
-                  Effect.annotateLogs({ shop, status: "in-flight" }),
-                  Effect.as({ _tag: "InFlight" } as const),
-                ),
-              Refused: ({ openOrders }) => {
-                const limit = ShopLimits.maxOpenOrders;
-                return Effect.logError(
-                  `ShopActor.beginSync: shop=${shop} status=order-ceiling openOrders=${String(openOrders)} limit=${String(limit)}`,
-                ).pipe(
-                  Effect.annotateLogs({ shop, status: "order-ceiling", openOrders, limit }),
-                  Effect.as({ _tag: "Refused" } as const),
-                );
-              },
-              Started: () =>
-                Effect.logInfo(
-                  `ShopActor.beginSync: shop=${shop} status=started workflowId=${workflowId}`,
-                ).pipe(
-                  Effect.annotateLogs({ shop, status: "started", workflowId }),
-                  Effect.andThen(notify([SYNC_KEY])),
-                  Effect.as({ _tag: "Started" } as const),
-                ),
-            }),
-          );
-          return result;
-        },
-        Effect.orDie,
-        Effect.provide(runtime),
-      );
-
-      /**
-       * Legacy's `onOrdersStream`: the Workflow's last step for a completed export, never a
-       * browser's (rule 16 on `syncOrder`: the URL must only ever come from a bulk operation this
-       * shop started). The stream merges ({@link runOrdersStream}), then the retention pass rides
-       * it (rule 9), then the tracking record is cleared and both keys are notified, whatever the
-       * stream changed: the sync's end is on the screen either way. Answers the counts, which
-       * are logged and never shown (rule 18).
-       *
-       * The retention pass rides the open-orders sync: it is merchant-triggered,
-       * already the heaviest thing this object does, and the one moment
-       * where paying for a batch of deletes is invisible next to what the
-       * request is doing anyway.
-       *
-       * A step retry re-streams the whole file when the sweep throws after the writes: correct
-       * under rule 7, a full second pass, and rare. The billing seam: the usage flush after the
-       * stream goes here.
-       */
-      const streamOrders = Effect.fn("ShopActor.streamOrders")(
-        function* ({ workflowId, url }: { readonly workflowId: string; readonly url: string }) {
-          const counts = yield* runOrdersStream({ repository: orders, shop, url }).pipe(
-            Effect.provideService(HttpClient.HttpClient, http),
-            // A stream that fails partway keeps the orders it wrote, and the failure carries no
-            // counts, so the list is invalidated without knowing whether a row moved.
-            Effect.onError(() => notify([ORDERS_KEY])),
-          );
-          if (counts.ordersRefused > 0)
-            yield* Effect.logError(
-              `ShopActor.streamOrders: shop=${shop} status=order-ceiling ordersRefused=${String(counts.ordersRefused)} limit=${String(ShopLimits.maxOpenOrders)}`,
-            ).pipe(
-              Effect.annotateLogs({
-                shop,
-                status: "order-ceiling",
-                ordersRefused: counts.ordersRefused,
-                limit: ShopLimits.maxOpenOrders,
-              }),
-            );
-          const swept = yield* orders.sweepExpiredOrders({ now: yield* Clock.currentTimeMillis });
-          yield* orders.clearSyncTracking({ workflowId });
-          yield* Effect.logInfo(
-            `ShopActor.streamOrders: shop=${shop} ordersSeen=${String(counts.ordersSeen)} ordersUpserted=${String(counts.ordersUpserted)} ordersInserted=${String(counts.ordersInserted)} ordersRefused=${String(counts.ordersRefused)} lineItemsUpserted=${String(counts.lineItemsUpserted)} ordersTruncated=${String(counts.ordersTruncated)} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)}`,
-          ).pipe(
-            Effect.annotateLogs({
-              shop,
-              workflowId,
-              ...counts,
-              sweptOrders: swept.orders,
-              sweptRuns: swept.runs,
-            }),
-          );
-          yield* notify([ORDERS_KEY, SYNC_KEY]);
-          return counts;
-        },
-        Effect.orDie,
-        Effect.provide(runtime),
-      );
-
-      /**
-       * Legacy's `onOrdersSyncEmpty`: the last 30 days held no open orders. Deliberately does not
-       * touch stored rows: unlike a catalog scan, an empty result means "nothing changed", never
-       * "the shop has no orders" (rule 9 on `syncOrder`). Clears the tracking record.
-       */
-      const syncEmpty = Effect.fn("ShopActor.syncEmpty")(
-        function* ({ workflowId }: { readonly workflowId: string }) {
-          yield* Effect.logInfo(`ShopActor.syncEmpty: shop=${shop} workflowId=${workflowId}`).pipe(
-            Effect.annotateLogs({ shop, workflowId }),
-          );
-          if (yield* orders.clearSyncTracking({ workflowId })) yield* notify([SYNC_KEY]);
-        },
-        Effect.orDie,
-        Effect.provide(runtime),
-      );
-
-      /**
-       * A sync that will not finish: the Workflow's error sink, or the Backend when it could not
-       * create the instance. Legacy's `onOrdersSyncError` and `onWorkflowError` in one, since no
-       * platform callback follows here: the record is cleared, which re-enables the button, and
-       * `message` becomes the banner unless one is already written (rule 15 on `syncOrder`).
-       * Both only when the record is `workflowId`'s: a sync whose stale record a newer press
-       * replaced has nothing left to report, and the newer sync owns the banner.
-       */
-      const syncFailed = Effect.fn("ShopActor.syncFailed")(
-        function* ({
-          workflowId,
-          message,
-        }: {
-          readonly workflowId: string;
-          readonly message: string;
-        }) {
-          const cleared = yield* transaction(
-            Effect.gen(function* () {
-              const cleared = yield* orders.clearSyncTracking({ workflowId });
-              if (cleared) yield* orders.setSyncErrorIfEmpty({ error: message });
-              return cleared;
-            }),
-          );
-          yield* Effect.logError(
-            `ShopActor.syncFailed: shop=${shop} workflowId=${workflowId} tracked=${String(cleared)}: ${message}`,
-          ).pipe(Effect.annotateLogs({ shop, workflowId, tracked: cleared, message }));
-          if (cleared) yield* notify([SYNC_KEY]);
-        },
-        Effect.orDie,
-        Effect.provide(runtime),
-      );
-
-      /**
-       * Tears the shop's actor down on uninstall: closes every socket with
-       * {@link CONNECTION_CLOSE_UNINSTALLED} (best effort, as every close here), deletes the alarm
-       * and then all storage, which is what ends the object's storage billing, syncs storage to
-       * disk, waits up to {@link CLOSE_HANDSHAKE_WAIT} for the closes to complete, and aborts the
-       * object with {@link ABORT_UNINSTALLED}.
-       *
-       * SQLite-backed storage coalesces writes: `deleteAll` resolving does not mean the delete
-       * reached disk, and a reset discards writes that are still coalescing. So a method that
-       * deletes storage syncs before it aborts; without the sync, production kept the shop's
-       * orders across an uninstall. Local workerd writes synchronously and never shows this. The abort matters: the actor migrates once per activation, so
-       * without it this activation would keep serving with its tables gone. The abort lands
-       * mid-call, so the stub call rejects instead of answering; `ShopActors.destroy` reads that
-       * rejection as success.
-       *
-       * @see refs/cloudflare-docs/src/content/partials/durable-objects/api-storage-other-methods.mdx ("deleteAll", "sync")
-       */
-      const destroy = Effect.fn("ShopActor.destroy")(function* () {
-        const sockets = yield* state.getWebSockets();
-        for (const ws of sockets)
-          yield* closeSocket(ws, CONNECTION_CLOSE_UNINSTALLED, UNINSTALLED_REASON);
-        yield* state.storage.deleteAlarm();
-        yield* state.storage.deleteAll();
-        yield* Effect.promise(() => state.raw.storage.sync());
-        const closed = yield* Effect.sync(() =>
-          sockets.every((ws) => ws.ws.readyState === WebSocket.CLOSED),
-        ).pipe(
-          Effect.repeat({ schedule: Schedule.spaced("10 millis"), until: (done) => done }),
-          Effect.timeoutOption(CLOSE_HANDSHAKE_WAIT),
-        );
-        yield* Effect.logInfo(
-          `ShopActor.destroy: shop=${shop} sockets=${String(sockets.length)} closed=${String(Option.isSome(closed))}: storage deleted`,
-        ).pipe(
-          Effect.annotateLogs({ shop, sockets: sockets.length, closed: Option.isSome(closed) }),
-        );
-        yield* state.abort(ABORT_UNINSTALLED);
-      }, Effect.provide(runtime));
-
-      /**
-       * Logs the close at Info with the caller's role and the close code and reason, then hands
-       * the socket to the transport. A socket without an identity logs `role=none`.
-       */
-      const webSocketClose = (ws: Cloudflare.Workers.WebSocket, code: number, reason: string) =>
-        Effect.gen(function* () {
-          const role = Option.match(decodeIdentity(ws.deserializeAttachment<unknown>()), {
-            onNone: () => "none",
-            onSome: ({ shopActor }) => shopActor.caller.role,
-          });
-          yield* Effect.logInfo(
-            `ShopActor.webSocketClose: shop=${shop} role=${role} code=${String(code)}: ${reason}`,
-          ).pipe(Effect.annotateLogs({ shop, role, code, reason }));
-          yield* socket.webSocketClose(ws);
-        });
-
-      return {
-        fetch,
-        webSocketMessage: socket.webSocketMessage,
-        webSocketClose,
-        webSocketError: socket.webSocketError,
-        revoke,
-        snapshot,
-        loadFixture,
-        addFixture,
-        removeOrder,
-        orderVersion,
-        storeOrder,
-        getOrder,
-        listOrders,
-        beginSync,
-        streamOrders,
-        syncEmpty,
-        syncFailed,
-        destroy,
-      };
-    });
-  }),
-) {}
+/**
+ * {@link ShopActor}'s implementation as a layer: provided in the Backend's init above the
+ * services it yields, so every activation uses the Backend's own `ShopifyAdmin` (and the D1 and
+ * secret behind it) rather than a second build.
+ */
+export const ShopActorLive = ShopActor.make(makeShopActor);

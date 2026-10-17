@@ -29,6 +29,8 @@ import {
 } from "../../src/contract/shop-actor.ts";
 import { DevRpcs } from "../../src/contract/dev.ts";
 import type { ShopFixtureData } from "../../src/contract/fixture.ts";
+import type { LineItemNode, OrderNode } from "../../src/backend/order-sync.ts";
+import { deliverWebhook } from "../shopify-webhook.ts";
 import { IntegRpcs } from "./rpcs.ts";
 
 /**
@@ -204,3 +206,54 @@ export const nextCloseCode = (closes: Queue.Dequeue<Socket.SocketError>) =>
     Effect.timeout("5 seconds"),
     Effect.map((error) => (error.reason._tag === "SocketCloseError" ? error.reason.code : -1)),
   );
+
+/**
+ * Shopify's `OrderSync` answer for `node` with `lineItems`, as the wire carries it (ISO dates),
+ * for a test to script into the fake.
+ */
+export const orderSyncAnswer = (node: OrderNode, lineItems: ReadonlyArray<LineItemNode>) => ({
+  data: {
+    order: {
+      ...node,
+      processedAt: new Date(node.processedAt).toISOString(),
+      updatedAt: new Date(node.updatedAt).toISOString(),
+      cancelledAt: node.cancelledAt === null ? null : new Date(node.cancelledAt).toISOString(),
+      lineItems: { pageInfo: { hasNextPage: false }, nodes: lineItems },
+    },
+  },
+});
+
+/** Replaces the fake's queues with GraphQL answers `bodies`, in order, clearing its call log. */
+export const scriptGraphql = (backendUrl: string, bodies: ReadonlyArray<unknown>) =>
+  integ(backendUrl, (c) =>
+    c.ScriptShopify({ replies: bodies.map((body) => ({ route: "graphql", status: 200, body })) }),
+  );
+
+/**
+ * Arranges an order the way production gets one: the fake scripted to answer `node` with
+ * `lineItems`, then a signed `orders/create` naming it with no `updated_at`, so the actor always
+ * fetches it. Fails the test unless the delivery answers 200. Clears the fake's call log.
+ */
+export const storeByWebhook = (
+  backendUrl: string,
+  shop: ShopKey,
+  node: OrderNode,
+  lineItems: ReadonlyArray<LineItemNode>,
+) =>
+  Effect.gen(function* () {
+    yield* scriptGraphql(backendUrl, [orderSyncAnswer(node, lineItems)]);
+    const status = yield* deliverWebhook(`${backendUrl}/webhooks/orders`, "orders/create", shop, {
+      id: 0,
+      admin_graphql_api_id: node.id,
+      updated_at: null,
+    });
+    assert.strictEqual(status, 200);
+    yield* integ(backendUrl, (c) => c.ShopifyCalls({}));
+  });
+
+/** Sync from Shopify on `orderId`: `MerchantSyncOrder` on a forged merchant socket to `shop`. */
+export const syncOrderAs = (backendUrl: string, shop: ShopKey, orderId: string) =>
+  Effect.gen(function* () {
+    const { client } = yield* openAs(backendUrl, shop, { role: "merchant" });
+    return yield* client.MerchantSyncOrder({ orderId });
+  }).pipe(Effect.scoped);

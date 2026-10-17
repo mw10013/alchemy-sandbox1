@@ -1,4 +1,7 @@
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schema from "effect/Schema";
 import type { ShopKey } from "../src/contract/shop.ts";
 import { SHOPIFY_API_SECRET_FAKE } from "../src/backend/shopify.ts";
@@ -38,3 +41,27 @@ export const signWebhook = Effect.fn("signWebhook")(function* (
   };
   return headers;
 });
+
+/**
+ * POSTs `payload` to `url` as Shopify delivers `topic` for `shop`, signed by {@link signWebhook}
+ * unless `signed` is false; the response's status.
+ */
+export const deliverWebhook = Effect.fn("deliverWebhook")(function* (
+  url: string,
+  topic: string,
+  shop: ShopKey,
+  payload: unknown,
+  signed = true,
+) {
+  const body = JSON.stringify(payload);
+  const headers = yield* signWebhook(topic, shop, body);
+  const response = yield* HttpClient.execute(
+    HttpClientRequest.post(url).pipe(
+      HttpClientRequest.setHeaders(
+        signed ? headers : { ...headers, "x-shopify-hmac-sha256": "unsigned" },
+      ),
+      HttpClientRequest.bodyText(body, "application/json"),
+    ),
+  );
+  return response.status;
+}, Effect.provide(FetchHttpClient.layer));

@@ -75,7 +75,7 @@ const TestBackend = ({
   gate?: Effect.Effect<ConnectionCaller, ShopAccessDenied>;
   memberRows?: ReadonlyArray<Member>;
   actors?: Layer.Layer<ShopActors>;
-  orderCalls?: Array<{ readonly shop: ShopKey; readonly orderId?: string }>;
+  orderCalls?: Array<{ readonly shop: ShopKey }>;
 } = {}) =>
   BackendApi.layer.pipe(
     Layer.provideMerge(
@@ -270,8 +270,14 @@ describe("BackendApi.authenticateAdmin", () => {
 
 describe("BackendApi orders", () => {
   const page = { orders: [], limit: 25, nextCursor: null };
-  /** {@link ShopActors.layerTest} whose `listOrders` answers {@link page}, recording each shop. */
-  const listingActors = (listed: Array<ShopKey>) =>
+  /**
+   * {@link ShopActors.layerTest} whose `listOrders` answers {@link page}, recording each shop,
+   * and whose `syncOrder` answers `Gone`, recording each shop and order in `synced`.
+   */
+  const listingActors = (
+    listed: Array<ShopKey>,
+    synced: Array<{ readonly shop: ShopKey; readonly orderId?: string }> = [],
+  ) =>
     Layer.effect(
       ShopActors,
       Effect.gen(function* () {
@@ -282,6 +288,11 @@ describe("BackendApi orders", () => {
             Effect.sync(() => {
               listed.push(key);
               return page;
+            }),
+          syncOrder: (shop: ShopKey, orderId: string) =>
+            Effect.sync(() => {
+              synced.push({ shop, orderId });
+              return { _tag: "Gone" } as const;
             }),
         };
       }),
@@ -308,7 +319,7 @@ describe("BackendApi orders", () => {
       );
       assert.deepStrictEqual(listed, []);
       assert.deepStrictEqual(orderCalls, []);
-    }).pipe(Effect.provide(TestBackend({ actors: listingActors(listed), orderCalls })));
+    }).pipe(Effect.provide(TestBackend({ actors: listingActors(listed, orderCalls), orderCalls })));
   });
 
   it.live("each acts for the shop its token names", () => {
@@ -334,7 +345,7 @@ describe("BackendApi orders", () => {
         { shop: SEED_SHOP },
         { shop: SEED_SHOP, orderId: "gid://shopify/Order/1" },
       ]);
-    }).pipe(Effect.provide(TestBackend({ actors: listingActors(listed), orderCalls })));
+    }).pipe(Effect.provide(TestBackend({ actors: listingActors(listed, orderCalls), orderCalls })));
   });
 
   it.live(

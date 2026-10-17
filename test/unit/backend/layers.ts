@@ -11,7 +11,6 @@ import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import type { Member } from "../../../src/contract/members.ts";
 import type { ShopKey } from "../../../src/contract/shop.ts";
-import type { LineItemNode, OrderNode } from "../../../src/backend/order-sync.ts";
 import { ShopifyAdmin, type ShopifyAdminError } from "../../../src/backend/shopify-admin.ts";
 import {
   type OrdersSyncParams,
@@ -20,6 +19,7 @@ import {
 import { settleDestroy, ShopActors } from "../../../src/backend/shop-actors.ts";
 import { migrations, syncTransaction } from "../../../src/backend/shop-actor.ts";
 import { makeOrderRepository } from "../../../src/backend/shop-actor/orders.ts";
+import { makeOrdersAgent } from "../../../src/backend/shop-actor/orders-agent.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { MagicLinkDelivery } from "../../../src/backend/magic-link-delivery.ts";
 import { Mailer } from "../../../src/backend/mailer.ts";
@@ -141,52 +141,46 @@ export const testShopifyAdmin = (
   });
 };
 
-/** The order calls {@link testOrderActors} recorded. */
+/** The calls {@link testOrderActors} recorded. */
 export interface OrderActorCalls {
-  readonly versions: Array<{
+  readonly webhooks: Array<{
     readonly key: ShopKey;
     readonly orderId: string;
+    readonly topic: string;
     readonly updatedAt: number | null;
   }>;
-  readonly stored: Array<{
-    readonly key: ShopKey;
-    readonly order: OrderNode;
-    readonly lineItems: ReadonlyArray<LineItemNode>;
-  }>;
+  /** Each notice the actor's orders sent, with its keys. */
+  readonly notices: Array<ReadonlyArray<string>>;
   /** Each destroy, with whether the shop still had a `ShopSession` row when it ran. */
   readonly destroyed: Array<{ readonly key: ShopKey; readonly hadSession: boolean }>;
 }
 
 /**
- * `ShopActors.layerTest` whose `orderVersion` answers `version`, whose `storeOrder` writes a
- * fresh, changed row (or, when `refused`, is refused at the ceiling and writes nothing), and
- * whose `destroy` reads `stub` as the actor's answer through the real {@link settleDestroy},
- * each recorded in `calls`.
+ * `ShopActors.layerTest` whose `syncOrderWebhook` runs the actor's own `OrdersAgent` for the
+ * shop, over the `SqlClient` in context (the actor's schema, {@link ActorSqliteTest}) and the
+ * `ShopifyAdmin` in context, recording each delivery and each notice, and whose `destroy` reads
+ * `stub` as the actor's answer through the real {@link settleDestroy}, each recorded in `calls`.
  */
-export const testOrderActors = (
-  calls: OrderActorCalls,
-  version: "stale" | "fetch" | "refused" = "fetch",
-  stub: Effect.Effect<void> = Effect.void,
-  refused = false,
-) =>
+export const testOrderActors = (calls: OrderActorCalls, stub: Effect.Effect<void> = Effect.void) =>
   Layer.effect(
     ShopActors,
     Effect.gen(function* () {
       const base = yield* ShopActors;
       const sessions = yield* ShopSessions;
+      const admin = yield* ShopifyAdmin;
+      const repository = yield* testOrderRepository;
+      const notify = (invalidated: ReadonlyArray<string>) =>
+        Effect.sync(() => {
+          calls.notices.push(invalidated);
+        });
       return {
         ...base,
-        orderVersion: (key, { orderId, updatedAt }) =>
-          Effect.sync(() => {
-            calls.versions.push({ key, orderId, updatedAt });
-            return version;
-          }),
-        storeOrder: (key, { order, lineItems }) =>
-          Effect.sync(() => {
-            calls.stored.push({ key, order, lineItems });
-            return refused
-              ? { written: false, fresh: false, changed: false, refused: true }
-              : { written: true, fresh: true, changed: true, refused: false };
+        syncOrderWebhook: (key, input) =>
+          Effect.suspend(() => {
+            calls.webhooks.push({ key, ...input });
+            return makeOrdersAgent({ repository, admin, notify, shop: key })
+              .syncOrderWebhook(input)
+              .pipe(Effect.orDie);
           }),
         destroy: (key) =>
           Effect.gen(function* () {
@@ -215,21 +209,11 @@ export const testOrdersSyncWorkflows = (
   });
 
 /**
- * {@link Orders} for a test that reaches the merchant's two sync buttons and nothing else:
- * `beginOpenOrdersSync` answers `InFlight` and `syncOrder` answers `Gone`, each recording the shop
- * (and order) it was asked for in `calls`. The webhook half dies.
+ * {@link Orders} for a test that reaches Sync open orders and nothing else: `beginOpenOrdersSync`
+ * answers `InFlight`, recording the shop it was asked for in `calls`.
  */
-export const testOrders = (
-  calls: Array<{ readonly shop: ShopKey; readonly orderId?: string }> = [],
-) =>
+export const testOrders = (calls: Array<{ readonly shop: ShopKey }> = []) =>
   Layer.succeed(Orders, {
-    fetchOrder: () => Effect.die(new Error("testOrders: fetchOrder")),
-    syncOrderFromWebhook: () => Effect.die(new Error("testOrders: syncOrderFromWebhook")),
-    syncOrder: (shop, orderId) =>
-      Effect.sync(() => {
-        calls.push({ shop, orderId });
-        return { _tag: "Gone" } as const;
-      }),
     beginOpenOrdersSync: (shop) =>
       Effect.sync(() => {
         calls.push({ shop });

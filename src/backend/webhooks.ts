@@ -7,7 +7,7 @@ import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { EpochMillis } from "../domain/platform.ts";
-import { Orders } from "./orders.ts";
+import type { OrderWebhookStatus } from "./shop-actor/orders-agent.ts";
 import { ShopActors } from "./shop-actors.ts";
 import { ShopSessions } from "./shop-sessions.ts";
 import { Shopify, type ValidatedWebhook, WebhookRejected } from "./shopify.ts";
@@ -86,6 +86,9 @@ export const orderRef = (payload: OrdersWebhookPayload) =>
         updatedAt: Option.getOrNull(decodeUpdatedAt(payload.updated_at)),
       };
 
+/** What one `orders/*` delivery came to; the delivery is answered 200 for each. */
+export type OrderWebhookOutcome = "uninstalled" | OrderWebhookStatus;
+
 const ok = HttpServerResponse.empty({ status: 200 });
 
 /**
@@ -131,7 +134,6 @@ const compliance = Effect.succeed(ok);
 const make = Effect.gen(function* () {
   const shopify = yield* Shopify;
   const shopSessions = yield* ShopSessions;
-  const orders = yield* Orders;
   const actors = yield* ShopActors;
 
   /**
@@ -175,25 +177,35 @@ const make = Effect.gen(function* () {
   /**
    * The real-time half of order intake, all five order topics. The payload is a signal, not the
    * data: REST-shaped, with no product tags or enriched line-item metadata, and trimmed to ids by
-   * `include_fields` anyway, so the order it names is fetched (`Orders.syncOrderFromWebhook`).
-   * Shopify's own OMS guidance is exactly this: query the full order after each webhook, and
-   * reconcile periodically for the ones that never arrived. The work is awaited inside Shopify's
-   * five-second budget.
+   * `include_fields` anyway, so the shop's actor fetches the order it names
+   * (`ShopActors.syncOrderWebhook`, one round trip). Shopify's own OMS guidance is exactly this:
+   * query the full order after each webhook, and reconcile periodically for the ones that never
+   * arrived. The work is awaited inside Shopify's five-second budget. One line per delivery
+   * records what it came to ({@link OrderWebhookOutcome}).
+   *
+   * The `ShopSession` read comes first, and no row means nothing is touched: an uninstalled
+   * shop's actor must never be recreated, and any stub call would recreate it, so an order
+   * webhook that arrives after `app/uninstalled` (Shopify does not order deliveries) answers
+   * 200 with no actor call. Baton had no such guard.
    *
    * A payload that decodes as neither shape fails as a 400 {@link WebhookRejected}, the answer a
    * malformed delivery gets, rather than a 500: the fault is the payload, not Baton. Any other
-   * failure propagates to a non-2xx too, so Shopify retries for four hours; subscriptions declared in `shopify.app.toml` are never auto-deleted for
-   * consecutive failures, so a bad deploy cannot silently unsubscribe a shop.
+   * failure propagates to a non-2xx too, so Shopify retries for four hours; subscriptions
+   * declared in `shopify.app.toml` are never auto-deleted for consecutive failures, so a bad
+   * deploy cannot silently unsubscribe a shop.
    */
   const ordersWebhook = Effect.fn("Webhooks.ordersWebhook")(function* (webhook: ValidatedWebhook) {
     const payload = yield* decodeOrdersPayload(webhook.payload).pipe(
       Effect.mapError(() => new WebhookRejected({ status: 400 })),
     );
-    yield* orders.syncOrderFromWebhook({
-      shop: webhook.shop,
-      topic: webhook.topic,
-      ...orderRef(payload),
-    });
+    const { shop, topic } = webhook;
+    const { orderId, updatedAt } = orderRef(payload);
+    const status: OrderWebhookOutcome = Option.isNone(yield* shopSessions.find(shop))
+      ? "uninstalled"
+      : yield* actors.syncOrderWebhook(shop, { orderId, topic, updatedAt });
+    yield* Effect.logInfo(
+      `Webhooks.ordersWebhook: shop=${shop} topic=${topic} orderId=${orderId} status=${status}`,
+    ).pipe(Effect.annotateLogs({ shop, topic, orderId, status }));
     return ok;
   });
 

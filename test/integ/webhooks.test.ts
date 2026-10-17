@@ -14,7 +14,7 @@ import { ORDERS_KEY } from "../../src/contract/shop-actor.ts";
 import type { OrderNode } from "../../src/backend/order-sync.ts";
 import { SEED_SHOP } from "../seed-shops.ts";
 import { signWebhook } from "../shopify-webhook.ts";
-import { dev, integ, openAs } from "./actor-clients.ts";
+import { dev, integ, openAs, storeByWebhook } from "./actor-clients.ts";
 import { fileStage } from "./file-stage.ts";
 import Stack from "./stack.ts";
 
@@ -131,7 +131,7 @@ const orderSyncBody = (n: number, updatedAt: number, name = `#${String(1000 + n)
   },
 });
 
-/** Order `n` as `storeOrder` takes it, at `updatedAt`. */
+/** Order `n` as Shopify answers it, at `updatedAt`, for {@link storeByWebhook}. */
 const orderNode = (n: number, updatedAt: number): OrderNode => ({
   id: orderGid(n),
   legacyResourceId: String(n),
@@ -233,9 +233,7 @@ test(
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
     const stored = Date.parse("2026-09-02T12:00:00Z");
-    yield* integ(backendUrl, (c) =>
-      c.StoreOrder({ shop: SEED_SHOP, order: orderNode(3, stored), lineItems: [] }),
-    );
+    yield* storeByWebhook(backendUrl, SEED_SHOP, orderNode(3, stored), []);
     const before = yield* integ(backendUrl, (c) =>
       c.GetOrder({ shop: SEED_SHOP, orderId: orderGid(3) }),
     );
@@ -263,9 +261,7 @@ test(
   Effect.gen(function* () {
     const { backendUrl } = yield* stack;
     const stored = Date.parse("2026-09-02T12:00:00Z");
-    yield* integ(backendUrl, (c) =>
-      c.StoreOrder({ shop: SEED_SHOP, order: orderNode(4, stored), lineItems: [] }),
-    );
+    yield* storeByWebhook(backendUrl, SEED_SHOP, orderNode(4, stored), []);
     yield* scriptGraphql(backendUrl, [orderSyncBody(4, stored + 60_000, "#1004 edited")]);
     assert.strictEqual(
       yield* deliver(backendUrl, "/webhooks/orders", "orders/edited", {

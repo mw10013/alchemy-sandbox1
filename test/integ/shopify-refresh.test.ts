@@ -4,17 +4,18 @@ import * as Test from "alchemy/Test/Vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { ShopKey } from "../../src/contract/shop.ts";
-import { dev, integ } from "./actor-clients.ts";
+import { dev, integ, syncOrderAs } from "./actor-clients.ts";
 import { fileStage } from "./file-stage.ts";
 import type { ShopifyFakeReply } from "./rpcs.ts";
 import Stack from "./stack.ts";
 
 /**
  * The offline-token refresh over real SQL and the fake Shopify HTTP layer: `ExpireShopSession`
- * ages the seeded session, `SyncOrder` (Sync from Shopify on one order) makes the Backend's own
- * Admin call, `ScriptShopify` shapes Shopify's answers and `ShopifyCalls` shows what it was asked.
- * The order is one Shopify answers null for, so every successful call is `Gone`: the session is
- * ensured before the fetch, so `Gone` still means the refresh happened, and no actor is touched.
+ * ages the seeded session, `MerchantSyncOrder` (Sync from Shopify on one order, on a forged
+ * merchant socket) makes the shop's actor's own Admin call, `ScriptShopify` shapes Shopify's
+ * answers and `ShopifyCalls` shows what it was asked. The order is one Shopify answers null for,
+ * so every successful call is `Gone`: the session is ensured before the fetch, so `Gone` still
+ * means the refresh happened, and nothing is stored.
  */
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),
@@ -55,8 +56,7 @@ const expiredAndScripted = (
   });
 
 /** Sync from Shopify on an order Shopify does not have. */
-const sync = (backendUrl: string) =>
-  integ(backendUrl, (c) => c.SyncOrder({ shop, orderId: "gid://shopify/Order/1" }));
+const sync = (backendUrl: string) => syncOrderAs(backendUrl, shop, "gid://shopify/Order/1");
 
 /** The calls the fake served since the last script or read. */
 const shopifyCalls = (backendUrl: string) => integ(backendUrl, (c) => c.ShopifyCalls({}));

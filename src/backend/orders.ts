@@ -6,122 +6,15 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ShopNotInstalled } from "../contract/fixture.ts";
 import type { ShopKey } from "../contract/shop.ts";
-import type { OrdersSyncResult, SyncOrderResult } from "../domain/orders.ts";
-import { ShopLimits } from "../domain/platform.ts";
-import { OrderSyncResponse, orderSyncQuery, orderSyncVariables } from "./order-sync.ts";
+import type { OrdersSyncResult } from "../domain/orders.ts";
 import { OrdersSyncWorkflows } from "./orders-sync-workflow.ts";
 import { ShopActors } from "./shop-actors.ts";
 import { ShopSessions } from "./shop-sessions.ts";
-import { ShopifyAdmin } from "./shopify-admin.ts";
-
-/** What one `orders/*` delivery came to; the delivery is answered 200 for each. */
-export type OrderWebhookOutcome = "uninstalled" | "stale" | "refused" | "gone" | "stored";
 
 const make = Effect.gen(function* () {
-  const admin = yield* ShopifyAdmin;
   const shopSessions = yield* ShopSessions;
   const actors = yield* ShopActors;
   const workflows = yield* OrdersSyncWorkflows;
-
-  /**
-   * Baton's `fetchAndUpsertOrder`, its fetch half: one `OrderSync` query for `orderId`, or null
-   * when Shopify no longer has the order (deleted, or never this shop's), which counts as gone.
-   * A page cut short by `hasNextPage` is returned as is and logged at Error: the order is stored
-   * flagged rather than silently short (the rule is on `orderSyncQuery`). Fails with
-   * `ShopifyAdminError` only.
-   */
-  const fetchOrder = Effect.fn("Orders.fetchOrder")(function* (shop: ShopKey, orderId: string) {
-    const { order } = yield* admin.graphqlDecode(shop, OrderSyncResponse, orderSyncQuery, {
-      variables: orderSyncVariables(orderId),
-    });
-    if (order === null) {
-      yield* Effect.logWarning(
-        `Orders.fetchOrder: shop=${shop} orderId=${orderId}: order not found`,
-      ).pipe(Effect.annotateLogs({ shop, orderId }));
-      return null;
-    }
-    if (order.lineItems.pageInfo.hasNextPage)
-      yield* Effect.logError(
-        `Orders.fetchOrder: shop=${shop} orderId=${orderId} limit=${String(ShopLimits.maxLineItemsPerOrder)}: line items truncated`,
-      ).pipe(Effect.annotateLogs({ shop, orderId, limit: ShopLimits.maxLineItemsPerOrder }));
-    return order;
-  });
-
-  /**
-   * Baton's `syncOrderWebhook`, with the fetch moved out of the actor: the actor's version probe
-   * and ceiling (`orderVersion`), then, only for `fetch`, {@link fetchOrder} and the actor's
-   * `storeOrder`, which maps, upserts, sweeps when due and notifies. The topic decides nothing
-   * (rule 1 on `syncOrder`); a payload no newer than the row spends no Admin call (rule 2). The
-   * upsert's own version guard makes a write racing between the probe and the store harmless.
-   *
-   * The `ShopSession` read comes first, and no row means nothing is touched: an uninstalled
-   * shop's actor must never be recreated, and any stub call would recreate it, so an order
-   * webhook that arrives after `app/uninstalled` (Shopify does not order deliveries) answers
-   * 200 with no actor call. Baton had no such guard.
-   *
-   * Every refusal is a business answer and succeeds, so the delivery is 2xx and not replayed for
-   * four hours to reach the same answer. An `EnsureShopSessionError` fails, so the delivery is
-   * non-2xx and Shopify retries, as Baton did: `OfflineSessionMissing` here means the row read
-   * above was deleted since (an uninstall racing this delivery), and the retry finds no row and
-   * answers 200.
-   *
-   * The billing seam: the usage flush after a webhook write goes here, after `storeOrder`.
-   */
-  const syncOrderFromWebhook = Effect.fn("Orders.syncOrderFromWebhook")(function* ({
-    shop,
-    topic,
-    orderId,
-    updatedAt,
-  }: {
-    readonly shop: ShopKey;
-    readonly topic: string;
-    readonly orderId: string;
-    readonly updatedAt: number | null;
-  }) {
-    const outcome = (status: OrderWebhookOutcome) =>
-      Effect.logInfo(
-        `Orders.syncOrderFromWebhook: shop=${shop} topic=${topic} orderId=${orderId} status=${status}`,
-      ).pipe(Effect.annotateLogs({ shop, topic, orderId, status }), Effect.as(status));
-    if (Option.isNone(yield* shopSessions.find(shop))) return yield* outcome("uninstalled");
-    const version = yield* actors.orderVersion(shop, { orderId, updatedAt });
-    if (version !== "fetch") return yield* outcome(version);
-    const order = yield* fetchOrder(shop, orderId);
-    if (order === null) return yield* outcome("gone");
-    const { lineItems, ...node } = order;
-    const { refused } = yield* actors.storeOrder(shop, { order: node, lineItems: lineItems.nodes });
-    return yield* outcome(refused ? "refused" : "stored");
-  });
-
-  /**
-   * Sync from Shopify on one order, legacy's `syncOrder`: {@link syncOrderFromWebhook} without
-   * the version probe, since a merchant pressing the button is asking for the fetch and the
-   * upsert's own version guard still protects the row. The session read comes first, as on
-   * every background path: no row fails {@link ShopNotInstalled} with no actor call.
-   *
-   * `Gone` when Shopify answers null for the order (the stored row stays, the rule on
-   * `SyncOrderResult`); otherwise `Stored`, a ceiling refusal of an order not stored included,
-   * as legacy answered: its result knew only gone or not, and the refusal is the ceiling banner's
-   * to show, not this button's.
-   *
-   * The billing seam: the usage flush after a one-order sync goes here, after `storeOrder`,
-   * whether or not the fetch succeeded.
-   */
-  const syncOrder = Effect.fn("Orders.syncOrder")(function* (shop: ShopKey, orderId: string) {
-    if (Option.isNone(yield* shopSessions.find(shop))) return yield* new ShopNotInstalled({ shop });
-    const outcome = (status: "gone" | "refused" | "stored") =>
-      Effect.logInfo(`Orders.syncOrder: shop=${shop} orderId=${orderId} status=${status}`).pipe(
-        Effect.annotateLogs({ shop, orderId, status }),
-      );
-    const order = yield* fetchOrder(shop, orderId);
-    if (order === null) {
-      yield* outcome("gone");
-      return { _tag: "Gone" } satisfies SyncOrderResult;
-    }
-    const { lineItems, ...node } = order;
-    const { refused } = yield* actors.storeOrder(shop, { order: node, lineItems: lineItems.nodes });
-    yield* outcome(refused ? "refused" : "stored");
-    return { _tag: "Stored" } satisfies SyncOrderResult;
-  });
 
   /**
    * Sync open orders, the Backend's half of legacy's `syncOpenOrders`: the session read (no row
@@ -157,12 +50,12 @@ const make = Effect.gen(function* () {
     return result;
   });
 
-  return { fetchOrder, syncOrderFromWebhook, syncOrder, beginOpenOrdersSync };
+  return { beginOpenOrdersSync };
 });
 
 /**
- * The Backend's side of a shop's orders, as Shopify's thing: fetching one and handing it to the
- * shop's actor, which stores it. The actor owns the rows, the version guard and the sweep.
+ * The Backend's side of a shop's orders: starting the open-orders sync. The actor owns the rows,
+ * the version guard, the sweep and the one-order fetch.
  */
 export class Orders extends Context.Service<Orders, Effect.Success<typeof make>>()("app/Orders") {
   static readonly layer = Layer.effect(Orders, make);

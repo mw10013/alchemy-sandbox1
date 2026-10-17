@@ -1,9 +1,15 @@
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import { Rpc, RpcGroup, RpcMiddleware } from "effect/rpc";
-import { OrderDetail, OrdersSyncStatus } from "../domain/orders.ts";
+import {
+  OrderDetail,
+  OrdersSyncStatus,
+  SyncOrderInput,
+  SyncOrderResult,
+} from "../domain/orders.ts";
 import { ListOrdersInput, OrdersCursor } from "../domain/shop-work.ts";
 import { Email, Forbidden } from "./auth.ts";
+import { OrdersSyncFailure } from "./shopify.ts";
 
 export const Count = Schema.Struct({ value: Schema.Int });
 export type Count = typeof Count.Type;
@@ -188,6 +194,11 @@ export const MerchantRpcs = RpcGroup.make(
   Rpc.make("MerchantWhoAmI", { success: ConnectionCaller }),
   Rpc.make("MerchantListOrders", { payload: OrdersListInput, success: OrdersListPage }),
   Rpc.make("MerchantSyncStatus", { success: OrdersSyncStatus }),
+  Rpc.make("MerchantSyncOrder", {
+    payload: SyncOrderInput,
+    success: SyncOrderResult,
+    error: OrdersSyncFailure,
+  }),
 )
   .middleware(RequireMerchant)
   .middleware(ConnectionMiddleware);

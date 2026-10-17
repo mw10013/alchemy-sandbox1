@@ -7,8 +7,9 @@ import type { ShopKey } from "../contract/shop.ts";
 import type { OrdersListInput, ShopSnapshot } from "../contract/shop-actor.ts";
 import * as Match from "effect/Match";
 import { FixtureConflict } from "../contract/fixture.ts";
+import * as Schema from "effect/Schema";
+import { OrdersSyncFailure } from "../contract/shopify.ts";
 import type { ActorFixtureRows } from "./fixture.ts";
-import type { LineItemNode, OrderNode } from "./order-sync.ts";
 import ShopActor, { ABORT_UNINSTALLED } from "./shop-actor.ts";
 
 /**
@@ -40,6 +41,8 @@ export const settleDestroy = (key: ShopKey, call: Effect.Effect<void>) =>
       ).pipe(Effect.annotateLogs({ shop: key, status: "failed" })),
     ),
   );
+
+const decodeSyncFailure = Schema.decodeUnknownEffect(OrdersSyncFailure);
 
 const isUninstallAbort = (error: unknown) =>
   error instanceof Cloudflare.RpcCallError &&
@@ -110,20 +113,26 @@ const make = Effect.gen(function* () {
     return yield* actors.getByName(key).removeOrder({ orderId });
   });
 
-  /** The webhook path's probe; see `orderVersion` on {@link ShopActor}. */
-  const orderVersion = Effect.fn("ShopActors.orderVersion")(function* (
+  /**
+   * One `orders/*` delivery for an installed shop; see `syncOrderWebhook` on {@link ShopActor}.
+   * Call it only after reading the shop's `ShopSession`: any stub call recreates an uninstalled
+   * shop's actor.
+   */
+  const syncOrderWebhook = Effect.fn("ShopActors.syncOrderWebhook")(function* (
     key: ShopKey,
-    input: { readonly orderId: string; readonly updatedAt: number | null },
+    input: { readonly orderId: string; readonly topic: string; readonly updatedAt: number | null },
   ) {
-    return yield* actors.getByName(key).orderVersion(input);
+    return yield* actors.getByName(key).syncOrderWebhook(input);
   });
 
-  /** Stores one order Shopify answered for; see `storeOrder` on {@link ShopActor}. */
-  const storeOrder = Effect.fn("ShopActors.storeOrder")(function* (
-    key: ShopKey,
-    input: { readonly order: OrderNode; readonly lineItems: readonly LineItemNode[] },
-  ) {
-    return yield* actors.getByName(key).storeOrder(input);
+  /**
+   * Sync from Shopify on one order; see `syncOrder` on {@link ShopActor}. Its `Failed` answer is
+   * re-raised as the {@link OrdersSyncFailure} it carries.
+   */
+  const syncOrder = Effect.fn("ShopActors.syncOrder")(function* (key: ShopKey, orderId: string) {
+    const answer = yield* actors.getByName(key).syncOrder({ orderId });
+    if (answer._tag !== "Failed") return answer;
+    return yield* Effect.flatMap(decodeSyncFailure(answer.failure).pipe(Effect.orDie), Effect.fail);
   });
 
   /** One stored order with its items, or null. */
@@ -183,8 +192,8 @@ const make = Effect.gen(function* () {
     loadFixture,
     addFixture,
     removeOrder,
-    orderVersion,
-    storeOrder,
+    syncOrderWebhook,
+    syncOrder,
     getOrder,
     listOrders,
     beginSync,
@@ -247,8 +256,8 @@ export class ShopActors extends Context.Service<ShopActors, Effect.Success<typeo
           removedOrders.push({ key, orderId });
           return { removed: true };
         }),
-      orderVersion: () => Effect.die(new Error("ShopActors.layerTest: orderVersion")),
-      storeOrder: () => Effect.die(new Error("ShopActors.layerTest: storeOrder")),
+      syncOrderWebhook: () => Effect.die(new Error("ShopActors.layerTest: syncOrderWebhook")),
+      syncOrder: () => Effect.die(new Error("ShopActors.layerTest: syncOrder")),
       getOrder: () => Effect.die(new Error("ShopActors.layerTest: getOrder")),
       listOrders: () => Effect.die(new Error("ShopActors.layerTest: listOrders")),
       beginSync: () => Effect.die(new Error("ShopActors.layerTest: beginSync")),

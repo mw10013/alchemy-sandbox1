@@ -26,7 +26,10 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { InvalidSessionToken, ShopKey, type AdminSession } from "../contract/shop.ts";
+import { OfflineSessionMissing, ReauthorizationRequired } from "../contract/shopify.ts";
 import { ShopSessions, ShopSessionUpsert, type ShopSessionRow } from "./shop-sessions.ts";
+
+export { OfflineSessionMissing, ReauthorizationRequired };
 
 /** The fake Shopify app's API key (its client ID), bound wherever Shopify CLI is not the parent. */
 export const SHOPIFY_API_KEY = "fake-api-key";
@@ -101,36 +104,6 @@ const hasFreshAccessToken = (row: ShopSessionRow, now: number, buffer: number) =
   row.accessToken !== null &&
   row.accessTokenExpiresAt !== null &&
   row.accessTokenExpiresAt - buffer > now;
-
-/**
- * There is no offline session for the shop: the app was uninstalled or never installed here.
- * A caller does not retry. A webhook has nothing to do for the shop.
- */
-export class OfflineSessionMissing extends Schema.TaggedError<OfflineSessionMissing>()(
-  "OfflineSessionMissing",
-  { shop: ShopKey },
-) {}
-
-/**
- * The shop has a session, but only a merchant opening the app (a token exchange) can restore
- * access: it has no refresh token, the refresh token has expired, or Shopify rejected it and no
- * concurrent refresh or exchange replaced it. `refreshTokenExpiresAt` is null unless the reason
- * is `refresh-token-expired`. A caller does not retry: a webhook answers non-2xx so Shopify
- * redelivers after the merchant returns, a Workflow step dies, and a merchant-triggered action
- * tells the merchant to reopen the app.
- */
-export class ReauthorizationRequired extends Schema.TaggedError<ReauthorizationRequired>()(
-  "ReauthorizationRequired",
-  {
-    shop: ShopKey,
-    reason: Schema.Literals([
-      "no-refresh-token",
-      "refresh-token-expired",
-      "refresh-token-rejected",
-    ]),
-    refreshTokenExpiresAt: Schema.NullOr(Schema.Number),
-  },
-) {}
 
 /**
  * Shopify could not be reached: the transient retries of a refresh were exhausted (network,
