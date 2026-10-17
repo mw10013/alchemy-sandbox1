@@ -240,6 +240,9 @@ importers:
       '@cloudflare/workers-types':
         specifier: 5.20261006.1
         version: 5.20261006.1
+      '@effect/sql-sqlite-node':
+        specifier: 4.0.1
+        version: 4.0.1(effect@4.0.1)
       '@effect/vitest':
         specifier: 4.0.1
         version: 4.0.1(effect@4.0.1)(vitest@5.0.3)
@@ -723,6 +726,11 @@ packages:
 
   '@effect/sql-sqlite-do@4.0.1':
     resolution: {integrity: sha512-tS+qQok3xKsycnnhvIDX+6nvlM4Y2ouvru3voOzxtDQqX96NSOMX2xReLf4Feb6GN3jnzgEEtVGDDWk3YLrpsg==}
+    peerDependencies:
+      effect: ^4.0.1
+
+  '@effect/sql-sqlite-node@4.0.1':
+    resolution: {integrity: sha512-VBlNvfFRxyyiu1viNygxA0ZVGZcpxBHA3+QLobaLQSXgAP0submgo98IzioWTHzdZUc9Xodi7ICci5ehhbD2fQ==}
     peerDependencies:
       effect: ^4.0.1
 
@@ -4061,6 +4069,10 @@ snapshots:
       effect: 4.0.1
 
   '@effect/sql-sqlite-do@4.0.1(effect@4.0.1)':
+    dependencies:
+      effect: 4.0.1
+
+  '@effect/sql-sqlite-node@4.0.1(effect@4.0.1)':
     dependencies:
       effect: 4.0.1
 

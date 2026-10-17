@@ -1,0 +1,54 @@
+{
+  "data": {
+    "order": {
+      "id": "gid://shopify/Order/6123456789012",
+      "legacyResourceId": "6123456789012",
+      "name": "#1042",
+      "processedAt": "2026-10-14T15:02:11Z",
+      "updatedAt": "2026-10-15T09:30:45Z",
+      "cancelledAt": null,
+      "displayFulfillmentStatus": "UNFULFILLED",
+      "fullyPaid": true,
+      "note": "Please gift wrap",
+      "lineItems": {
+        "pageInfo": { "hasNextPage": false },
+        "nodes": [
+          {
+            "id": "gid://shopify/LineItem/15234567890123",
+            "title": "Walnut cutting board",
+            "variantTitle": "Large",
+            "sku": "WCB-L",
+            "quantity": 2,
+            "currentQuantity": 2,
+            "customAttributes": [
+              { "key": "Engraving", "value": "For Sam" },
+              { "key": "_design_id", "value": "d-123" }
+            ],
+            "product": { "tags": ["engraved", "wood"] }
+          },
+          {
+            "id": "gid://shopify/LineItem/15234567890124",
+            "title": "Gift card note",
+            "variantTitle": null,
+            "sku": null,
+            "quantity": 1,
+            "currentQuantity": 0,
+            "customAttributes": [],
+            "product": null
+          }
+        ]
+      }
+    }
+  },
+  "extensions": {
+    "cost": {
+      "requestedQueryCost": 254,
+      "actualQueryCost": 8,
+      "throttleStatus": {
+        "maximumAvailable": 2000.0,
+        "currentlyAvailable": 1992,
+        "restoreRate": 100.0
+      }
+    }
+  }
+}

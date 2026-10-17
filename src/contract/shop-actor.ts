@@ -1,6 +1,8 @@
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import { Rpc, RpcGroup, RpcMiddleware } from "effect/rpc";
+import { OrderDetail } from "../domain/orders.ts";
+import { ListOrdersInput, OrdersCursor } from "../domain/shop-work.ts";
 import { Email, Forbidden } from "./auth.ts";
 
 export const Count = Schema.Struct({ value: Schema.Int });
@@ -28,6 +30,30 @@ export const NoticeFrame = Schema.fromJsonString(Notice);
 
 /** The `count` reactivity key. */
 export const COUNT_KEY = "count";
+
+/** The orders list's reactivity key: a write that moved an order row, or a sweep that deleted one. */
+export const ORDERS_KEY = "orders";
+
+/**
+ * One page of the orders list, run-free: `limit` and `cursor` as `ListOrdersInput` bounds them,
+ * without its search, filter or team. `cursor` null is page one.
+ */
+export const OrdersListInput = Schema.Struct({
+  limit: ListOrdersInput.fields.limit,
+  cursor: ListOrdersInput.fields.cursor,
+});
+export type OrdersListInput = typeof OrdersListInput.Type;
+
+/**
+ * A page of the orders list: each order with its items, newest first by `processedAt`, and the
+ * cursor of the next page, null on the last. `OrdersPage` without its runs, counts and matches.
+ */
+export const OrdersListPage = Schema.Struct({
+  orders: Schema.Array(OrderDetail),
+  limit: Schema.Number,
+  nextCursor: Schema.NullOr(OrdersCursor),
+});
+export type OrdersListPage = typeof OrdersListPage.Type;
 
 /**
  * A member on a socket: Baton's `ConnectionState` for the `member` role (`memberId`,
@@ -147,6 +173,7 @@ export const MerchantRpcs = RpcGroup.make(
   Rpc.make("MerchantGetCount", { success: Count }),
   Rpc.make("MerchantResetCount", { success: Count }),
   Rpc.make("MerchantWhoAmI", { success: ConnectionCaller }),
+  Rpc.make("MerchantListOrders", { payload: OrdersListInput, success: OrdersListPage }),
 )
   .middleware(RequireMerchant)
   .middleware(ConnectionMiddleware);

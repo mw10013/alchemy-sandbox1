@@ -2,10 +2,11 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { ShopKey } from "../contract/shop.ts";
-import type { ShopSnapshot } from "../contract/shop-actor.ts";
+import type { OrdersListInput, ShopSnapshot } from "../contract/shop-actor.ts";
 import * as Match from "effect/Match";
 import { FixtureConflict } from "../contract/fixture.ts";
 import type { ActorFixtureRows } from "./fixture.ts";
+import type { LineItemNode, OrderNode } from "./order-sync.ts";
 import ShopActor from "./shop-actor.ts";
 
 const make = Effect.gen(function* () {
@@ -62,7 +63,45 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return { revoke, snapshot, loadFixture, addFixture };
+  /** The webhook path's probe; see `orderVersion` on {@link ShopActor}. */
+  const orderVersion = Effect.fn("ShopActors.orderVersion")(function* (
+    key: ShopKey,
+    input: { readonly orderId: string; readonly updatedAt: number | null },
+  ) {
+    return yield* actors.getByName(key).orderVersion(input);
+  });
+
+  /** Stores one order Shopify answered for; see `storeOrder` on {@link ShopActor}. */
+  const storeOrder = Effect.fn("ShopActors.storeOrder")(function* (
+    key: ShopKey,
+    input: { readonly order: OrderNode; readonly lineItems: readonly LineItemNode[] },
+  ) {
+    return yield* actors.getByName(key).storeOrder(input);
+  });
+
+  /** One stored order with its items, or null. */
+  const getOrder = Effect.fn("ShopActors.getOrder")(function* (key: ShopKey, orderId: string) {
+    return yield* actors.getByName(key).getOrder({ orderId });
+  });
+
+  /** One page of the shop's orders, newest first. */
+  const listOrders = Effect.fn("ShopActors.listOrders")(function* (
+    key: ShopKey,
+    input: OrdersListInput,
+  ) {
+    return yield* actors.getByName(key).listOrders(input);
+  });
+
+  return {
+    revoke,
+    snapshot,
+    loadFixture,
+    addFixture,
+    orderVersion,
+    storeOrder,
+    getOrder,
+    listOrders,
+  };
 });
 
 /**
@@ -77,7 +116,7 @@ export class ShopActors extends Context.Service<ShopActors, Effect.Success<typeo
   /**
    * Records each revoke and closes nothing, answers every snapshot with `snapshot`, and records
    * each fixture load in `loaded` and each fixture add in `added`, answering the counts of its
-   * rows; it never finds a clash.
+   * rows; it never finds a clash. Its order methods die: no unit test reaches an actor's orders.
    */
   static readonly layerTest = (
     revoked: Array<{ key: ShopKey; by: "member" | "session"; id: string }>,
@@ -110,5 +149,9 @@ export class ShopActors extends Context.Service<ShopActors, Effect.Success<typeo
             lineItems: rows.lineItems.length,
           };
         }),
+      orderVersion: () => Effect.die(new Error("ShopActors.layerTest: orderVersion")),
+      storeOrder: () => Effect.die(new Error("ShopActors.layerTest: storeOrder")),
+      getOrder: () => Effect.die(new Error("ShopActors.layerTest: getOrder")),
+      listOrders: () => Effect.die(new Error("ShopActors.layerTest: listOrders")),
     });
 }

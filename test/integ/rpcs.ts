@@ -12,6 +12,11 @@ import { Rpc, RpcGroup } from "effect/rpc";
 import { Email, ReturnPath } from "../../src/contract/auth.ts";
 import { Auth } from "../../src/backend/auth.ts";
 import { MagicLinkDelivery } from "../../src/backend/magic-link-delivery.ts";
+import { ShopKey } from "../../src/contract/shop.ts";
+import { OrdersListInput, OrdersListPage } from "../../src/contract/shop-actor.ts";
+import { OrderDetail } from "../../src/domain/orders.ts";
+import { LineItemNode, OrderNode } from "../../src/backend/order-sync.ts";
+import { ShopActors } from "../../src/backend/shop-actors.ts";
 import { ShopifyFake } from "./shopify-fake.ts";
 
 /** One scripted answer of the fake Shopify HTTP layer: which endpoint it answers, and how. */
@@ -43,6 +48,8 @@ export type ShopifyFakeCall = typeof ShopifyFakeCall.Type;
  * - `ScriptShopify` replaces {@link ShopifyFake}'s queued replies (a reply per call to its token
  *   or GraphQL endpoint, in order; an empty queue answers with defaults) and clears its call log;
  *   `ShopifyCalls` answers the calls it served since, as {@link ShopifyFakeCall}, and clears them.
+ * - `OrderVersion`, `StoreOrder`, `GetOrder` and `ListOrders` are the {@link ShopActors} methods
+ *   of the same names on `shop`'s actor, as the Backend calls them.
  */
 export const IntegRpcs = RpcGroup.make(
   Rpc.make("IssueMagicLink", {
@@ -57,6 +64,27 @@ export const IntegRpcs = RpcGroup.make(
     payload: {},
     success: Schema.Array(ShopifyFakeCall),
   }),
+  Rpc.make("OrderVersion", {
+    payload: { shop: ShopKey, orderId: Schema.String, updatedAt: Schema.NullOr(Schema.Number) },
+    success: Schema.Literals(["stale", "fetch", "refused"]),
+  }),
+  Rpc.make("StoreOrder", {
+    payload: { shop: ShopKey, order: OrderNode, lineItems: Schema.Array(LineItemNode) },
+    success: Schema.Struct({
+      written: Schema.Boolean,
+      fresh: Schema.Boolean,
+      changed: Schema.Boolean,
+      refused: Schema.Boolean,
+    }),
+  }),
+  Rpc.make("GetOrder", {
+    payload: { shop: ShopKey, orderId: Schema.String },
+    success: Schema.NullOr(OrderDetail),
+  }),
+  Rpc.make("ListOrders", {
+    payload: { shop: ShopKey, ...OrdersListInput.fields },
+    success: OrdersListPage,
+  }),
 );
 
 export const IntegHandlers = IntegRpcs.toLayer(
@@ -64,6 +92,7 @@ export const IntegHandlers = IntegRpcs.toLayer(
     const { auth, maySignIn } = yield* Auth;
     const delivery = yield* MagicLinkDelivery;
     const shopifyFake = yield* ShopifyFake;
+    const actors = yield* ShopActors;
 
     return IntegRpcs.of({
       IssueMagicLink: ({ email, returnTo }, { headers }) =>
@@ -83,6 +112,10 @@ export const IntegHandlers = IntegRpcs.toLayer(
         }).pipe(Effect.provide(RuntimeContext.phantom)),
       ScriptShopify: ({ replies }) => shopifyFake.script(replies).pipe(Effect.as({})),
       ShopifyCalls: () => shopifyFake.takeCalls,
+      OrderVersion: ({ shop, ...input }) => actors.orderVersion(shop, input),
+      StoreOrder: ({ shop, ...input }) => actors.storeOrder(shop, input),
+      GetOrder: ({ shop, orderId }) => actors.getOrder(shop, orderId),
+      ListOrders: ({ shop, ...input }) => actors.listOrders(shop, input),
     });
   }),
 );

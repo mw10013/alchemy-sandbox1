@@ -180,7 +180,9 @@ export default defineConfig(({ command, mode, isPreview }) => {
           // browser globs must not overlap because `vitest/browser` throws in Node.
           plugins: [react()],
           resolve: { alias: browserStubs },
-          optimizeDeps: { include: ["react/jsx-dev-runtime"] },
+          optimizeDeps: {
+            include: ["react/jsx-dev-runtime", "effect/SchemaGetter", "effect/Struct"],
+          },
           test: {
             name: "browser",
             include: ["test/browser/**/*.test.{ts,tsx}"],

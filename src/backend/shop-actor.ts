@@ -18,6 +18,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Forbidden } from "../contract/auth.ts";
 import { ShopKey } from "../contract/shop.ts";
+import { ShopLimits } from "../domain/platform.ts";
 import {
   CONNECTION_CLOSE_DISPLACED,
   CONNECTION_CLOSE_FORBIDDEN,
@@ -30,6 +31,9 @@ import {
   CurrentCaller,
   MAX_CONNECTIONS_PER_MEMBER,
   NoticeFrame,
+  ORDERS_KEY,
+  type OrdersListInput,
+  type OrdersListPage,
   RequireMember,
   RequireMerchant,
   ShopActorRpcs,
@@ -37,6 +41,8 @@ import {
 } from "../contract/shop-actor.ts";
 import * as ActorSocket from "./actor-socket.ts";
 import type { ActorFixtureAdded, ActorFixtureRows } from "./fixture.ts";
+import { type LineItemNode, type OrderNode, toOrderLineItems, toShopOrder } from "./order-sync.ts";
+import { makeOrderRepository, openOrdersAtCeiling, type Transaction } from "./shop-actor/orders.ts";
 
 const encodeNotice = Schema.encodeSync(NoticeFrame);
 const decodeConnectionHeader = Schema.decodeUnknownOption(Schema.fromJsonString(ConnectionCaller));
@@ -77,16 +83,20 @@ const UNIDENTIFIED_REASON = "unidentified connection";
  * While prototyping `0001_init` is the only migration and is edited in place; a schema change is
  * applied by resetting (`vp run db:reset`, `vp run cloud:reset`), which deletes every actor's
  * storage, never by a second migration.
+ *
+ * One statement per `sql` call: the unit tests run these migrations under
+ * `@effect/sql-sqlite-node`, which prepares each call as one statement and silently drops every
+ * statement after the first, where the Durable Object's `sql.exec` runs a whole script.
  */
-const migrations = SqliteMigrator.fromRecord({
+export const migrations = SqliteMigrator.fromRecord({
   "0001_init": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    // Times are epoch-ms integers.
+    //
+    // ShopOrder, not Order, which is an SQL keyword. Shopify's numeric ids are text: they
+    // exceed the 52-bit integers SqlStorage.exec round-trips losslessly, and a truncated id
+    // would silently mismatch the webhook payload it correlates with.
     yield* sql`
-      -- Times are epoch-ms integers.
-      --
-      -- ShopOrder, not Order, which is an SQL keyword. Shopify's numeric ids are text: they
-      -- exceed the 52-bit integers SqlStorage.exec round-trips losslessly, and a truncated id
-      -- would silently mismatch the webhook payload it correlates with.
       create table if not exists ShopOrder (
         id text primary key,
         legacyId text not null,
@@ -101,14 +111,20 @@ const migrations = SqliteMigrator.fromRecord({
         syncedAt integer not null,
         -- Null until the first run is created for the order: the billing meter's per-order mark.
         countedAt integer
-      );
-      -- The keyset the orders page pages on, id desc included because a shop can place several
-      -- orders in one millisecond. The retention sweep reads the same index as a range scan.
+      )
+    `;
+    // The keyset the orders page pages on, id desc included because a shop can place several
+    // orders in one millisecond. The retention sweep reads the same index as a range scan.
+    yield* sql`
       create index if not exists ShopOrder_processedAt
-        on ShopOrder (processedAt desc, id desc);
+        on ShopOrder (processedAt desc, id desc)
+    `;
+    yield* sql`
       create index if not exists ShopOrder_open_idx
         on ShopOrder (processedAt desc, id desc)
-        where fulfillmentStatus <> 'FULFILLED' and cancelledAt is null;
+        where fulfillmentStatus <> 'FULFILLED' and cancelledAt is null
+    `;
+    yield* sql`
       create table if not exists OrderLineItem (
         id text primary key,
         orderId text not null references ShopOrder(id) on delete cascade,
@@ -119,15 +135,27 @@ const migrations = SqliteMigrator.fromRecord({
         currentQuantity integer not null,
         productTags text not null,
         properties text not null
-      );
-      create index if not exists OrderLineItem_orderId on OrderLineItem (orderId);
-      -- The last sync's error, if any. Seeded so every read is a select and every write an update.
+      )
+    `;
+    yield* sql`
+      create index if not exists OrderLineItem_orderId on OrderLineItem (orderId)
+    `;
+    // The last sync's error, if any, and the open-orders sync in flight: workflowId and
+    // startedAt are set together when one starts and cleared together when it ends. Seeded so
+    // every read is a select and every write an update.
+    yield* sql`
       create table if not exists SyncState (
         id integer primary key check (id = 1),
-        lastError text
-      );
-      insert or ignore into SyncState (id) values (1);
-      -- The usage counters of the current billing cycle, independent of the plan.
+        lastError text,
+        workflowId text,
+        startedAt integer
+      )
+    `;
+    yield* sql`
+      insert or ignore into SyncState (id) values (1)
+    `;
+    // The usage counters of the current billing cycle, independent of the plan.
+    yield* sql`
       create table if not exists ShopUsage (
         id integer primary key check (id = 1),
         shopGid text,
@@ -137,9 +165,13 @@ const migrations = SqliteMigrator.fromRecord({
         ordersLimitedAt integer,
         lastSweepAt integer,
         seatsThisCycle integer not null default 0
-      );
-      insert or ignore into ShopUsage (id) values (1);
-      -- The outbox of usage events still to report to Shopify.
+      )
+    `;
+    yield* sql`
+      insert or ignore into ShopUsage (id) values (1)
+    `;
+    // The outbox of usage events still to report to Shopify.
+    yield* sql`
       create table if not exists UsageEvent (
         idempotencyKey text primary key,
         eventHandle text not null,
@@ -148,13 +180,15 @@ const migrations = SqliteMigrator.fromRecord({
         occurredAt integer not null,
         attempts integer not null default 0,
         lastError text
-      );
-      -- A workflow is the definition a merchant configures. Its tasks are one JSON document, read
-      -- and written whole by every reader and editor and short by limit, so a row per task would
-      -- buy nothing but renumbering on every reorder; a task's position is its index. The draft
-      -- is a second document of the same shape: null until the first edit, null again after it
-      -- is applied or discarded. A task's teamId is a D1 Team.id: it is checked before a write,
-      -- and deleting the team clears it.
+      )
+    `;
+    // A workflow is the definition a merchant configures. Its tasks are one JSON document, read
+    // and written whole by every reader and editor and short by limit, so a row per task would
+    // buy nothing but renumbering on every reorder; a task's position is its index. The draft
+    // is a second document of the same shape: null until the first edit, null again after it
+    // is applied or discarded. A task's teamId is a D1 Team.id: it is checked before a write,
+    // and deleting the team clears it.
+    yield* sql`
       create table if not exists Workflow (
         id text primary key,
         name text not null unique check (name = trim(name) and length(name) > 0),
@@ -163,11 +197,13 @@ const migrations = SqliteMigrator.fromRecord({
         updatedAt integer not null,
         tasks text not null default '[]',
         draftTasks text
-      );
-      -- A run is one workflow applied to one order item, its tasks copied in. A run is for the
-      -- whole item (five chairs on one line are one run of quantity 5), so lineItemId is unique
-      -- over every state, not only open runs. Order, item and workflow facts are snapshots: no
-      -- foreign key, and they survive the rows they came from.
+      )
+    `;
+    // A run is one workflow applied to one order item, its tasks copied in. A run is for the
+    // whole item (five chairs on one line are one run of quantity 5), so lineItemId is unique
+    // over every state, not only open runs. Order, item and workflow facts are snapshots: no
+    // foreign key, and they survive the rows they came from.
+    yield* sql`
       create table if not exists Run (
         id text primary key,
         workflowId text not null,
@@ -202,19 +238,27 @@ const migrations = SqliteMigrator.fromRecord({
         check (blockedAt is null or state = 'open'),
         check ((blockedAt is null) = (blockedBy is null)),
         check (state <> 'done' or startedAt is not null)
-      );
-      -- The orders index asks per order for runs in a state. With no sqlite_stat1 the planner
-      -- picked a single-column index on state and read every open run per open order; the
-      -- composite serves both terms, and its prefix every orderId-only probe.
-      create index if not exists Run_orderId_state_idx on Run (orderId, state);
+      )
+    `;
+    // The orders index asks per order for runs in a state. With no sqlite_stat1 the planner
+    // picked a single-column index on state and read every open run per open order; the
+    // composite serves both terms, and its prefix every orderId-only probe.
+    yield* sql`
+      create index if not exists Run_orderId_state_idx on Run (orderId, state)
+    `;
+    yield* sql`
       create index if not exists Run_open_age_idx
-        on Run (orderProcessedAt, lineItemId, id) where state = 'open';
+        on Run (orderProcessedAt, lineItemId, id) where state = 'open'
+    `;
+    yield* sql`
       create index if not exists Run_closed_idx
-        on Run (closedAt) where state = 'closed';
-      -- Who started or finished a task is a snapshot: a role, and an email for a member. A
-      -- merchant acts from the order page and has no Member row, so no email. Each time and its
-      -- role are set together, and done implies started. "is 'member'" rather than "=", so a
-      -- null role compares false and an email without a role is refused.
+        on Run (closedAt) where state = 'closed'
+    `;
+    // Who started or finished a task is a snapshot: a role, and an email for a member. A
+    // merchant acts from the order page and has no Member row, so no email. Each time and its
+    // role are set together, and done implies started. "is 'member'" rather than "=", so a
+    // null role compares false and an email without a role is refused.
+    yield* sql`
       create table if not exists RunTask (
         id text primary key,
         runId text not null references Run (id) on delete cascade,
@@ -237,12 +281,29 @@ const migrations = SqliteMigrator.fromRecord({
         check ((startedByRole is 'member') = (startedByEmail is not null)),
         check ((doneByRole is 'member') = (doneByEmail is not null)),
         check (doneAt is null or startedAt is not null)
-      );
-      -- A member's open tasks by team.
-      create index if not exists RunTask_teamId_idx on RunTask (teamId, doneAt);
+      )
+    `;
+    // A member's open tasks by team.
+    yield* sql`
+      create index if not exists RunTask_teamId_idx on RunTask (teamId, doneAt)
     `;
   }),
 });
+
+/**
+ * {@link Transaction} over `sql`: `body` in one storage transaction (`storage.transaction`, rolled
+ * back on failure). The transaction closes the object's input gate, behind which a timer never
+ * fires, so a fiber yield scheduled on a timer inside it could wait forever; the body runs on a
+ * `"sync"` scheduler instead, which yields through microtasks, as Alchemy's
+ * `Drizzle.DurableObject` does. Build it once per activation.
+ *
+ * @see refs/alchemy/packages/alchemy/src/Drizzle/Cloudflare.ts (`DurableObject`)
+ */
+export const syncTransaction = (sql: SqlClient.SqlClient): Transaction => {
+  const scheduler = new Scheduler.MixedScheduler("sync");
+  return (body) =>
+    sql.withTransaction(body).pipe(Effect.provideService(Scheduler.Scheduler, scheduler));
+};
 
 /** Each role middleware admits exactly its role; see `MemberRpcs`. */
 const requireRole = (role: ConnectionCaller["role"]) =>
@@ -296,7 +357,8 @@ const tagsOf = (caller: ConnectionCaller) =>
  *
  * It has two surfaces that never overlap. Browsers call `ShopActorRpcs` with Effect RPC over a
  * hibernating WebSocket; there is no HTTP RPC into the actor. The Backend calls the schemaless
- * methods `revoke`, `snapshot`, `loadFixture` and `addFixture` on its stub, which no browser can reach.
+ * methods `revoke`, `snapshot`, `loadFixture`, `addFixture`, `orderVersion`, `storeOrder`,
+ * `getOrder` and `listOrders` on its stub, which no browser can reach.
  *
  * Who is on a socket is fixed when the socket is accepted: the Backend's gate resolves the
  * browser and names it in {@link CONNECTION_HEADER} on the upgrade it forwards, and the actor
@@ -317,8 +379,7 @@ const tagsOf = (caller: ConnectionCaller) =>
  * half-migrated store. The client is built on the ambient scope, as Alchemy's
  * `Drizzle.DurableObject` does: it wraps the object's local storage, so nothing behind it needs
  * releasing. A single-statement write needs no transaction; a multi-statement one goes through
- * `transaction`, the client's `withTransaction` with the workaround Alchemy's
- * `Drizzle.DurableObject` uses.
+ * `transaction` ({@link syncTransaction}), and the orders repository is built over both.
  */
 export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
   "ShopActor",
@@ -337,22 +398,9 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
       );
       const activationId = yield* Effect.sync(() => crypto.randomUUID());
 
-      /**
-       * Built once per activation for {@link transaction}; a `"sync"` scheduler yields through
-       * microtasks rather than timers.
-       */
-      const syncScheduler = new Scheduler.MixedScheduler("sync");
-
-      /**
-       * `body` in one storage transaction (`storage.transaction`, rolled back on failure). The
-       * transaction closes the object's input gate, behind which a timer never fires, so a fiber
-       * yield scheduled on a timer inside it could wait forever; the body runs on
-       * {@link syncScheduler} instead, as Alchemy's `Drizzle.DurableObject` does.
-       *
-       * @see refs/alchemy/packages/alchemy/src/Drizzle/Cloudflare.ts (`DurableObject`)
-       */
-      const transaction = <A, E, R>(body: Effect.Effect<A, E, R>) =>
-        sql.withTransaction(body).pipe(Effect.provideService(Scheduler.Scheduler, syncScheduler));
+      /** Every multi-statement write's transaction; see {@link syncTransaction}. */
+      const transaction = syncTransaction(sql);
+      const orders = makeOrderRepository(sql, transaction);
 
       /**
        * The count the shop page shows, in memory: an example of the socket's reads, writes and
@@ -416,6 +464,7 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
         MemberActivation: () => Effect.succeed({ id: activationId }),
         MemberWhoAmI: () => Effect.service(CurrentCaller),
         MerchantWhoAmI: () => Effect.service(CurrentCaller),
+        MerchantListOrders: (input) => orders.listOrders(input).pipe(Effect.orDie),
       });
 
       const socket = yield* ActorSocket.make({
@@ -602,6 +651,121 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
         Effect.provide(runtime),
       );
 
+      /**
+       * The webhook path's probe, before the Backend asks Shopify for the order: `stale` when the
+       * payload's version is not newer than the stored row (an edit has no version, `null`, and
+       * always fetches); for an order not stored, `refused` at the order ceiling, read against
+       * the open orders stored now, which marks `ordersLimitedAt` (rule 5 on `syncOrder`);
+       * otherwise `fetch`. Every order already stored keeps receiving its updates. A refusal
+       * notifies nothing: it stored no order.
+       */
+      const orderVersion = Effect.fn("ShopActor.orderVersion")(
+        function* ({
+          orderId,
+          updatedAt,
+        }: {
+          readonly orderId: string;
+          readonly updatedAt: number | null;
+        }) {
+          const stored = yield* orders.getOrderUpdatedAt(orderId);
+          if (updatedAt !== null && Option.isSome(stored) && updatedAt <= stored.value) {
+            yield* Effect.logInfo(
+              `ShopActor.orderVersion: shop=${shop} orderId=${orderId} status=stale`,
+            ).pipe(Effect.annotateLogs({ shop, orderId, status: "stale" }));
+            return "stale" as const;
+          }
+          if (Option.isNone(stored)) {
+            const openOrders = yield* orders.countOpenOrders();
+            if (openOrdersAtCeiling(openOrders)) {
+              const limit = ShopLimits.maxOpenOrders;
+              yield* orders.markOrdersLimited(yield* Clock.currentTimeMillis);
+              yield* Effect.logError(
+                `ShopActor.orderVersion: shop=${shop} orderId=${orderId} status=order-ceiling openOrders=${String(openOrders)} limit=${String(limit)}`,
+              ).pipe(
+                Effect.annotateLogs({
+                  shop,
+                  orderId,
+                  status: "order-ceiling",
+                  openOrders,
+                  limit,
+                }),
+              );
+              return "refused" as const;
+            }
+          }
+          yield* Effect.logInfo(
+            `ShopActor.orderVersion: shop=${shop} orderId=${orderId} status=fetch`,
+          ).pipe(Effect.annotateLogs({ shop, orderId, status: "fetch" }));
+          return "fetch" as const;
+        },
+        Effect.orDie,
+        Effect.provide(runtime),
+      );
+
+      /**
+       * Stores one order Shopify answered for: mapped through `toShopOrder` and
+       * `toOrderLineItems` at the actor's clock, then `upsertOrder`, which probes, gates and
+       * writes in one transaction. Then the retention pass, rate-limited by `lastSweepAt` rather
+       * than run on every delivery (`ShopLimits.sweepIntervalMs`): a busy shop must not pay for a
+       * batch of deletes per webhook. Notifies {@link ORDERS_KEY} when the order row moved or the
+       * sweep deleted a row, and only then: a sweep is a write the screens show even when the
+       * order did not change, and a rewrite of the same version shows nothing new (rule 17).
+       */
+      const storeOrder = Effect.fn("ShopActor.storeOrder")(
+        function* ({
+          order: node,
+          lineItems: nodes,
+        }: {
+          readonly order: OrderNode;
+          readonly lineItems: readonly LineItemNode[];
+        }) {
+          const orderId = node.id;
+          const order = toShopOrder({ node, syncedAt: yield* Clock.currentTimeMillis });
+          const upsert = yield* orders.upsertOrder({
+            order,
+            lineItems: yield* toOrderLineItems({ shop, orderId, nodes }),
+          });
+          const { written, fresh, changed, refused } = upsert;
+          yield* Effect.logInfo(
+            `ShopActor.storeOrder: shop=${shop} orderId=${orderId} written=${String(written)} changed=${String(changed)}`,
+          ).pipe(Effect.annotateLogs({ shop, orderId, written, changed, refused }));
+          const now = yield* Clock.currentTimeMillis;
+          const lastSweepAt = yield* orders.lastSweepAt();
+          const swept =
+            lastSweepAt === null || now - lastSweepAt >= ShopLimits.sweepIntervalMs
+              ? yield* orders.sweepExpiredOrders({ now })
+              : { orders: 0, runs: 0 };
+          const sweptAny = swept.orders > 0 || swept.runs > 0;
+          if (sweptAny)
+            yield* Effect.logInfo(
+              `ShopActor.storeOrder: shop=${shop} sweptOrders=${String(swept.orders)} sweptRuns=${String(swept.runs)}`,
+            ).pipe(Effect.annotateLogs({ shop, sweptOrders: swept.orders, sweptRuns: swept.runs }));
+          if (changed || sweptAny) yield* notify([ORDERS_KEY]);
+          return { written, fresh, changed, refused };
+        },
+        Effect.orDie,
+        Effect.provide(runtime),
+      );
+
+      /** One stored order with its items, or null. */
+      const getOrder = Effect.fn("ShopActor.getOrder")(
+        function* ({ orderId }: { readonly orderId: string }) {
+          return Option.getOrNull(yield* orders.getOrder(orderId));
+        },
+        Effect.orDie,
+        Effect.provide(runtime),
+      );
+
+      /** One page of the orders list; the same read as `MerchantListOrders`. */
+      const listOrders = Effect.fn("ShopActor.listOrders")(
+        function* (input: OrdersListInput) {
+          const page: OrdersListPage = yield* orders.listOrders(input);
+          return page;
+        },
+        Effect.orDie,
+        Effect.provide(runtime),
+      );
+
       return {
         fetch,
         webSocketMessage: socket.webSocketMessage,
@@ -611,6 +775,10 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
         snapshot,
         loadFixture,
         addFixture,
+        orderVersion,
+        storeOrder,
+        getOrder,
+        listOrders,
       };
     });
   }),

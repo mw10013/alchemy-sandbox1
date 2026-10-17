@@ -1,10 +1,16 @@
 import { Memory } from "@alchemy.run/better-auth";
+import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
+import * as SqliteMigrator from "@effect/sql-sqlite-node/SqliteMigrator";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as References from "effect/References";
 import type { Member } from "../../../src/contract/members.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
+import { migrations, syncTransaction } from "../../../src/backend/shop-actor.ts";
+import { makeOrderRepository } from "../../../src/backend/shop-actor/orders.ts";
 import { Auth } from "../../../src/backend/auth.ts";
 import { MagicLinkDelivery } from "../../../src/backend/magic-link-delivery.ts";
 import { Mailer } from "../../../src/backend/mailer.ts";
@@ -71,3 +77,21 @@ export const testAuth = <A, E, R>({
     Layer.provide(Memory()),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ AUTH_ORIGIN: TEST_ORIGIN }))),
   );
+
+/**
+ * The shop actor's SQLite in memory, migrated by the actor's own `migrations`, fresh per
+ * provide: `node:sqlite` through `@effect/sql-sqlite-node`, which runs one statement per `sql`
+ * call, as `migrations` is written for.
+ */
+export const ActorSqliteTest = Layer.effectDiscard(
+  SqliteMigrator.run({ loader: migrations }).pipe(Effect.orDie),
+).pipe(Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })), Layer.orDie);
+
+/**
+ * The actor's orders repository over {@link ActorSqliteTest}'s client and the actor's own
+ * `syncTransaction`, which runs unchanged under Node.
+ */
+export const testOrderRepository = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  return makeOrderRepository(sql, syncTransaction(sql));
+});
