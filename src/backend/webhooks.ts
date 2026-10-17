@@ -6,8 +6,10 @@ import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { EpochMillis } from "../domain/platform.ts";
+import { Orders } from "./orders.ts";
 import { ShopSessions } from "./shop-sessions.ts";
-import { Shopify, type ValidatedWebhook } from "./shopify.ts";
+import { Shopify, type ValidatedWebhook, WebhookRejected } from "./shopify.ts";
 
 /**
  * The topics Baton answers, in the storage form `Shopify.validateWebhook` hands on. They are
@@ -33,6 +35,55 @@ export const ScopesUpdatePayload = Schema.Struct({
   current: Schema.Array(Schema.String),
 });
 const decodeScopesUpdate = Schema.decodeUnknownEffect(ScopesUpdatePayload);
+
+/**
+ * Everything the four order-shaped topics (`orders/create`, `orders/paid`, `orders/cancelled`,
+ * `orders/fulfilled`) have in common after `include_fields` trimming, decoded laxly: Shopify may
+ * widen the payload at any time.
+ *
+ * `id` is a REST numeric id that exceeds `Number.MAX_SAFE_INTEGER` for newer shops, so it is
+ * only ever used to reconstruct a GID when `admin_graphql_api_id` is missing, which
+ * `include_fields` makes unlikely.
+ */
+export const OrderWebhookPayload = Schema.Struct({
+  id: Schema.Number,
+  admin_graphql_api_id: Schema.optional(Schema.String),
+  updated_at: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+/**
+ * `orders/edited` alone: Shopify's order-editing guide says the payload "reports what the edit
+ * changed, not the order's new state", so it carries an `order_edit` object rather than an
+ * order. `order_id` is the REST numeric id the GID is built from, small enough to be exact in
+ * practice, and compared against nothing. There is no `updated_at`, so an edit always fetches;
+ * edits are rare, so that costs nothing worth guarding.
+ */
+export const OrderEditWebhookPayload = Schema.Struct({
+  order_edit: Schema.Struct({ order_id: Schema.Number }),
+});
+
+/** Either `orders/*` payload; one that decodes as neither is a 400. */
+export const OrdersWebhookPayload = Schema.Union([OrderEditWebhookPayload, OrderWebhookPayload]);
+export type OrdersWebhookPayload = typeof OrdersWebhookPayload.Type;
+const decodeOrdersPayload = Schema.decodeUnknownEffect(OrdersWebhookPayload);
+
+const decodeUpdatedAt = Schema.decodeUnknownOption(EpochMillis);
+
+/**
+ * The GID and the stale-guard value for either payload shape. An edit has no `updated_at`, and
+ * `null` is what the actor's version probe reads as "no guard, fetch it"; so is an `updated_at`
+ * that is missing, null or not a timestamp.
+ */
+export const orderRef = (payload: OrdersWebhookPayload) =>
+  "order_edit" in payload
+    ? {
+        orderId: `gid://shopify/Order/${String(payload.order_edit.order_id)}`,
+        updatedAt: null,
+      }
+    : {
+        orderId: payload.admin_graphql_api_id ?? `gid://shopify/Order/${String(payload.id)}`,
+        updatedAt: Option.getOrNull(decodeUpdatedAt(payload.updated_at)),
+      };
 
 const ok = HttpServerResponse.empty({ status: 200 });
 
@@ -79,6 +130,7 @@ const compliance = Effect.succeed(ok);
 const make = Effect.gen(function* () {
   const shopify = yield* Shopify;
   const shopSessions = yield* ShopSessions;
+  const orders = yield* Orders;
 
   /**
    * Baton's `handleWebhook`: validates `request` (a rejection fails as `WebhookRejected` and
@@ -113,9 +165,33 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * One handler per {@link WebhookTopic}. `app/uninstalled` and `orders/*` answer 200 and do
-   * nothing yet, so a delivery is not retried for four hours against a handler that does not
-   * exist.
+   * The real-time half of order intake, all five order topics. The payload is a signal, not the
+   * data: REST-shaped, with no product tags or enriched line-item metadata, and trimmed to ids by
+   * `include_fields` anyway, so the order it names is fetched (`Orders.syncOrderFromWebhook`).
+   * Shopify's own OMS guidance is exactly this: query the full order after each webhook, and
+   * reconcile periodically for the ones that never arrived. The work is awaited inside Shopify's
+   * five-second budget.
+   *
+   * A payload that decodes as neither shape fails as a 400 {@link WebhookRejected}, the answer a
+   * malformed delivery gets, rather than a 500: the fault is the payload, not Baton. Any other
+   * failure propagates to a non-2xx too, so Shopify retries for four hours; subscriptions declared in `shopify.app.toml` are never auto-deleted for
+   * consecutive failures, so a bad deploy cannot silently unsubscribe a shop.
+   */
+  const ordersWebhook = Effect.fn("Webhooks.ordersWebhook")(function* (webhook: ValidatedWebhook) {
+    const payload = yield* decodeOrdersPayload(webhook.payload).pipe(
+      Effect.mapError(() => new WebhookRejected({ status: 400 })),
+    );
+    yield* orders.syncOrderFromWebhook({
+      shop: webhook.shop,
+      topic: webhook.topic,
+      ...orderRef(payload),
+    });
+    return ok;
+  });
+
+  /**
+   * One handler per {@link WebhookTopic}. `app/uninstalled` answers 200 and does nothing yet,
+   * so a delivery is not retried for four hours against a handler that does not exist.
    */
   const dispatch = (webhook: ValidatedWebhook) =>
     Option.match(decodeTopic(webhook.topic), {
@@ -139,7 +215,7 @@ const make = Effect.gen(function* () {
               "ORDERS_CANCELLED",
               "ORDERS_FULFILLED",
             ),
-            () => Effect.succeed(ok),
+            () => ordersWebhook(webhook),
           ),
           Match.exhaustive,
         ),

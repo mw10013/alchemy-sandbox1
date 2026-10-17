@@ -7,7 +7,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as References from "effect/References";
+import * as Schema from "effect/Schema";
 import type { Member } from "../../../src/contract/members.ts";
+import type { ShopKey } from "../../../src/contract/shop.ts";
+import type { LineItemNode, OrderNode } from "../../../src/backend/order-sync.ts";
+import { ShopifyAdmin, type ShopifyAdminError } from "../../../src/backend/shopify-admin.ts";
 import { ShopActors } from "../../../src/backend/shop-actors.ts";
 import { migrations, syncTransaction } from "../../../src/backend/shop-actor.ts";
 import { makeOrderRepository } from "../../../src/backend/shop-actor/orders.ts";
@@ -95,3 +99,80 @@ export const testOrderRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   return makeOrderRepository(sql, syncTransaction(sql));
 });
+
+/** One Admin call {@link testShopifyAdmin} served. */
+export interface AdminCall {
+  readonly shop: ShopKey;
+  readonly query: string;
+  readonly variables: Record<string, unknown> | undefined;
+}
+
+/**
+ * {@link ShopifyAdmin} answering each call with the next of `replies` (the GraphQL `data`, or a
+ * failure), recording it in `calls`. A call past the last reply is a defect, so a test that
+ * expects no Admin call passes none.
+ */
+export const testShopifyAdmin = (
+  replies: Array<Effect.Effect<unknown, ShopifyAdminError>>,
+  calls: Array<AdminCall>,
+) => {
+  const graphql = (
+    shop: ShopKey,
+    query: string,
+    options?: { readonly variables?: Record<string, unknown> | undefined },
+  ) =>
+    Effect.suspend(() => {
+      calls.push({ shop, query, variables: options?.variables });
+      return replies.shift() ?? Effect.die(new Error("testShopifyAdmin: unscripted call"));
+    });
+  return Layer.succeed(ShopifyAdmin, {
+    graphql: (shop, query, options) =>
+      Effect.map(graphql(shop, query, options), (data) => ({ data })),
+    graphqlDecode: (shop, schema, query, options) =>
+      Effect.flatMap(graphql(shop, query, options), (data) =>
+        Schema.decodeUnknownEffect(schema)(data).pipe(Effect.orDie),
+      ),
+  });
+};
+
+/** The order calls {@link testOrderActors} recorded. */
+export interface OrderActorCalls {
+  readonly versions: Array<{
+    readonly key: ShopKey;
+    readonly orderId: string;
+    readonly updatedAt: number | null;
+  }>;
+  readonly stored: Array<{
+    readonly key: ShopKey;
+    readonly order: OrderNode;
+    readonly lineItems: ReadonlyArray<LineItemNode>;
+  }>;
+}
+
+/**
+ * `ShopActors.layerTest` whose `orderVersion` answers `version` and whose `storeOrder` writes a
+ * fresh, changed row, each recorded in `calls`.
+ */
+export const testOrderActors = (
+  calls: OrderActorCalls,
+  version: "stale" | "fetch" | "refused" = "fetch",
+) =>
+  Layer.effect(
+    ShopActors,
+    Effect.gen(function* () {
+      const base = yield* ShopActors;
+      return {
+        ...base,
+        orderVersion: (key, { orderId, updatedAt }) =>
+          Effect.sync(() => {
+            calls.versions.push({ key, orderId, updatedAt });
+            return version;
+          }),
+        storeOrder: (key, { order, lineItems }) =>
+          Effect.sync(() => {
+            calls.stored.push({ key, order, lineItems });
+            return { written: true, fresh: true, changed: true, refused: false };
+          }),
+      };
+    }),
+  ).pipe(Layer.provide(ShopActors.layerTest([])));

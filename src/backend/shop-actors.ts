@@ -116,7 +116,8 @@ export class ShopActors extends Context.Service<ShopActors, Effect.Success<typeo
   /**
    * Records each revoke and closes nothing, answers every snapshot with `snapshot`, and records
    * each fixture load in `loaded` and each fixture add in `added`, answering the counts of its
-   * rows; it never finds a clash. Its order methods die: no unit test reaches an actor's orders.
+   * rows; it never finds a clash. Its order methods die: a test that reaches an actor's orders
+   * overrides them.
    */
   static readonly layerTest = (
     revoked: Array<{ key: ShopKey; by: "member" | "session"; id: string }>,

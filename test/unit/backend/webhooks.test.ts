@@ -4,12 +4,24 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import { orderSyncQuery, orderSyncVariables } from "../../../src/backend/order-sync.ts";
+import { Orders } from "../../../src/backend/orders.ts";
 import { ShopSessions, type ShopSessionRow } from "../../../src/backend/shop-sessions.ts";
-import { Shopify } from "../../../src/backend/shopify.ts";
-import { Webhooks } from "../../../src/backend/webhooks.ts";
+import { ReauthorizationRequired, Shopify } from "../../../src/backend/shopify.ts";
+import type { ShopifyAdminError } from "../../../src/backend/shopify-admin.ts";
+import { orderRef, OrdersWebhookPayload, Webhooks } from "../../../src/backend/webhooks.ts";
 import { SEED_SHOP } from "../../seed-shops.ts";
 import { signWebhook } from "../../shopify-webhook.ts";
-import { QuietLogs, testShopify } from "./layers.ts";
+import recorded from "./fixtures/order-sync-response.json";
+import {
+  type AdminCall,
+  type OrderActorCalls,
+  QuietLogs,
+  testOrderActors,
+  testShopify,
+  testShopifyAdmin,
+} from "./layers.ts";
 import appToml from "../../../shopify.app.toml?raw";
 import stagingToml from "../../../shopify.app.staging.toml?raw";
 
@@ -28,9 +40,38 @@ const session: ShopSessionRow = {
   planBoundaryAt: null,
 };
 
-/** {@link Webhooks} over {@link testShopify} holding `rows`, which stays readable. */
-const layer = (rows: ReadonlyArray<ShopSessionRow> = [session]) =>
-  Webhooks.layer.pipe(Layer.provideMerge(testShopify(rows)), Layer.provideMerge(QuietLogs));
+/**
+ * {@link Webhooks} over {@link testShopify} holding `rows`, which stays readable, and
+ * {@link Orders} over {@link testOrderActors} answering `version` and {@link testShopifyAdmin}
+ * answering `replies`, both recording into `calls`.
+ */
+const layer = (
+  rows: ReadonlyArray<ShopSessionRow> = [session],
+  {
+    calls = newCalls(),
+    version = "fetch",
+    replies = [],
+  }: {
+    calls?: Calls;
+    version?: "stale" | "fetch" | "refused";
+    replies?: Array<Effect.Effect<unknown, ShopifyAdminError>>;
+  } = {},
+) =>
+  Webhooks.layer.pipe(
+    Layer.provideMerge(Orders.layer),
+    Layer.provideMerge(
+      Layer.mergeAll(testOrderActors(calls, version), testShopifyAdmin(replies, calls.admin)),
+    ),
+    Layer.provideMerge(testShopify(rows)),
+    Layer.provideMerge(QuietLogs),
+  );
+
+/** Every call an `orders/*` delivery can make past the session read. */
+interface Calls extends OrderActorCalls {
+  readonly admin: Array<AdminCall>;
+}
+
+const newCalls = (): Calls => ({ versions: [], stored: [], admin: [] });
 
 /**
  * A delivery of `payload` for `topic` (the header's form), signed by {@link signWebhook}.
@@ -260,14 +301,12 @@ describe("Webhooks.serve", () => {
     }).pipe(Effect.provide(layer())),
   );
 
-  it.effect.each(["app/uninstalled", "orders/create", "orders/edited"])(
-    "%s answers 200 and acts on nothing yet",
-    (topic) =>
-      Effect.gen(function* () {
-        const response = yield* serve(yield* webhookRequest({ topic, payload: { id: 1 } }));
-        assert.strictEqual(response.status, 200);
-        assert.deepStrictEqual(yield* storedScope, Option.some("read_products"));
-      }).pipe(Effect.provide(layer())),
+  it.effect.each(["app/uninstalled"])("%s answers 200 and acts on nothing yet", (topic) =>
+    Effect.gen(function* () {
+      const response = yield* serve(yield* webhookRequest({ topic, payload: { id: 1 } }));
+      assert.strictEqual(response.status, 200);
+      assert.deepStrictEqual(yield* storedScope, Option.some("read_products"));
+    }).pipe(Effect.provide(layer())),
   );
 
   it.effect("a validated topic Baton does not subscribe to answers 404", () =>
@@ -293,6 +332,179 @@ describe("Webhooks.serve", () => {
       assert.strictEqual(response.status, 405);
     }).pipe(Effect.provide(layer())),
   );
+});
+
+const decodeOrdersPayload = Schema.decodeUnknownSync(OrdersWebhookPayload);
+
+const ORDER_GID = "gid://shopify/Order/6123456789012";
+
+describe("orderRef", () => {
+  it("takes the GID and updated_at of an order payload", () => {
+    assert.deepStrictEqual(
+      orderRef(
+        decodeOrdersPayload({
+          id: 6123456789012,
+          admin_graphql_api_id: ORDER_GID,
+          updated_at: "2026-10-15T09:30:45-04:00",
+        }),
+      ),
+      { orderId: ORDER_GID, updatedAt: Date.parse("2026-10-15T13:30:45Z") },
+    );
+  });
+
+  it("builds the GID from id when admin_graphql_api_id is missing", () => {
+    assert.deepStrictEqual(
+      orderRef(decodeOrdersPayload({ id: 1001, updated_at: "2026-09-02T12:00:00Z" })),
+      { orderId: "gid://shopify/Order/1001", updatedAt: Date.parse("2026-09-02T12:00:00Z") },
+    );
+  });
+
+  it.each<{ name: string; payload: Record<string, unknown> }>([
+    { name: "a missing updated_at", payload: {} },
+    { name: "a null updated_at", payload: { updated_at: null } },
+    { name: "an updated_at that is not a timestamp", payload: { updated_at: "yesterday" } },
+  ])("reads $name as null, which fetches", ({ payload }) => {
+    assert.deepStrictEqual(
+      orderRef(decodeOrdersPayload({ id: 1001, admin_graphql_api_id: ORDER_GID, ...payload })),
+      { orderId: ORDER_GID, updatedAt: null },
+    );
+  });
+
+  it("resolves an edit from order_edit.order_id with no version, so it always fetches", () => {
+    assert.deepStrictEqual(orderRef(decodeOrdersPayload({ order_edit: { order_id: 1001 } })), {
+      orderId: "gid://shopify/Order/1001",
+      updatedAt: null,
+    });
+  });
+
+  it("decodes a payload of neither shape as nothing", () => {
+    assert.isTrue(
+      Option.isNone(Schema.decodeUnknownOption(OrdersWebhookPayload)({ order: { id: 1 } })),
+    );
+  });
+});
+
+describe("orders webhooks", () => {
+  const delivery = (topic: string, payload: unknown) =>
+    Effect.gen(function* () {
+      return yield* serve(yield* webhookRequest({ topic, payload }));
+    });
+  const paid = {
+    id: 6123456789012,
+    admin_graphql_api_id: ORDER_GID,
+    updated_at: "2026-10-15T09:30:45Z",
+  };
+
+  it.effect.each(["orders/create", "orders/paid", "orders/cancelled", "orders/fulfilled"])(
+    "%s fetches the order it names and stores it with its line items",
+    (topic) => {
+      const calls = newCalls();
+      return Effect.gen(function* () {
+        const response = yield* delivery(topic, paid);
+        assert.strictEqual(response.status, 200);
+        assert.deepStrictEqual(calls.versions, [
+          { key: SEED_SHOP, orderId: ORDER_GID, updatedAt: Date.parse("2026-10-15T09:30:45Z") },
+        ]);
+        assert.deepStrictEqual(calls.admin, [
+          { shop: SEED_SHOP, query: orderSyncQuery, variables: orderSyncVariables(ORDER_GID) },
+        ]);
+        assert.lengthOf(calls.stored, 1);
+        const [stored] = calls.stored;
+        assert.strictEqual(stored?.key, SEED_SHOP);
+        assert.strictEqual(stored?.order.id, ORDER_GID);
+        assert.notProperty(stored?.order, "lineItems");
+        assert.deepStrictEqual(
+          stored?.lineItems.map(({ id }) => id),
+          ["gid://shopify/LineItem/15234567890123", "gid://shopify/LineItem/15234567890124"],
+        );
+      }).pipe(
+        Effect.provide(layer([session], { calls, replies: [Effect.succeed(recorded.data)] })),
+      );
+    },
+  );
+
+  it.effect("an orders/edited delivery fetches the order of order_edit.order_id", () => {
+    const calls = newCalls();
+    return Effect.gen(function* () {
+      const response = yield* delivery("orders/edited", {
+        order_edit: { order_id: 6123456789012 },
+      });
+      assert.strictEqual(response.status, 200);
+      assert.deepStrictEqual(calls.versions, [
+        { key: SEED_SHOP, orderId: ORDER_GID, updatedAt: null },
+      ]);
+      assert.lengthOf(calls.admin, 1);
+      assert.lengthOf(calls.stored, 1);
+    }).pipe(Effect.provide(layer([session], { calls, replies: [Effect.succeed(recorded.data)] })));
+  });
+
+  it.effect("a shop with no session answers 200 and makes no actor call", () => {
+    const calls = newCalls();
+    return Effect.gen(function* () {
+      const response = yield* delivery("orders/create", paid);
+      assert.strictEqual(response.status, 200);
+      assert.deepStrictEqual(calls, newCalls());
+    }).pipe(Effect.provide(layer([], { calls })));
+  });
+
+  it.effect.each(["stale", "refused"] as const)(
+    "a %s version answers 200 with no Admin call and nothing stored",
+    (version) => {
+      const calls = newCalls();
+      return Effect.gen(function* () {
+        const response = yield* delivery("orders/paid", paid);
+        assert.strictEqual(response.status, 200);
+        assert.lengthOf(calls.versions, 1);
+        assert.deepStrictEqual(calls.admin, []);
+        assert.deepStrictEqual(calls.stored, []);
+      }).pipe(Effect.provide(layer([session], { calls, version })));
+    },
+  );
+
+  it.effect("an order Shopify no longer has answers 200 and stores nothing", () => {
+    const calls = newCalls();
+    return Effect.gen(function* () {
+      const response = yield* delivery("orders/cancelled", paid);
+      assert.strictEqual(response.status, 200);
+      assert.lengthOf(calls.admin, 1);
+      assert.deepStrictEqual(calls.stored, []);
+    }).pipe(
+      Effect.provide(layer([session], { calls, replies: [Effect.succeed({ order: null })] })),
+    );
+  });
+
+  it.effect("an EnsureShopSessionError answers non-2xx so Shopify retries", () => {
+    const calls = newCalls();
+    return Effect.gen(function* () {
+      const response = yield* delivery("orders/create", paid);
+      assert.strictEqual(response.status, 500);
+      assert.deepStrictEqual(calls.stored, []);
+    }).pipe(
+      Effect.provide(
+        layer([session], {
+          calls,
+          replies: [
+            Effect.fail(
+              new ReauthorizationRequired({
+                shop: SEED_SHOP,
+                reason: "no-refresh-token",
+                refreshTokenExpiresAt: null,
+              }),
+            ),
+          ],
+        }),
+      ),
+    );
+  });
+
+  it.effect("a payload of neither shape answers 400 and makes no actor call", () => {
+    const calls = newCalls();
+    return Effect.gen(function* () {
+      const response = yield* delivery("orders/create", { order: { id: 1 } });
+      assert.strictEqual(response.status, 400);
+      assert.deepStrictEqual(calls, newCalls());
+    }).pipe(Effect.provide(layer([session], { calls })));
+  });
 });
 
 /** Each `[[webhooks.subscriptions]]` block of `toml` whose `uri` is `uri`. */
