@@ -22,7 +22,7 @@ import {
 } from "../contract/shop.ts";
 import { ShoutInput } from "../contract/playground.ts";
 import { ShopNotInstalled } from "../contract/fixture.ts";
-import { ListOrdersRequest, SyncOpenOrdersRequest, SyncOrderRequest } from "../contract/orders.ts";
+import { ListOrdersRequest } from "../contract/orders.ts";
 import { ShopActors } from "./shop-actors.ts";
 import { Auth } from "./auth.ts";
 import { MagicLinkDelivery } from "./magic-link-delivery.ts";
@@ -72,8 +72,6 @@ const decodeMagicLinkInput = Schema.decodeUnknownEffect(MagicLinkInput);
 const decodeSnapshotInput = Schema.decodeUnknownEffect(ShopSnapshotInput);
 const decodeAuthenticateAdminInput = Schema.decodeUnknownEffect(AuthenticateAdminInput);
 const decodeListOrdersRequest = Schema.decodeUnknownEffect(ListOrdersRequest);
-const decodeSyncOpenOrdersRequest = Schema.decodeUnknownEffect(SyncOpenOrdersRequest);
-const decodeSyncOrderRequest = Schema.decodeUnknownEffect(SyncOrderRequest);
 const encodeAdminSession = Schema.encodeSync(AdminSession);
 const encodeMagicLinkRequested = Schema.encodeSync(MagicLinkRequested);
 
@@ -219,36 +217,6 @@ const make = Effect.gen(function* () {
     return yield* actors.listOrders(shop, { limit, cursor });
   });
 
-  /**
-   * Sync open orders for the token's shop, the token as on {@link listOrders}: the session read
-   * (no row is {@link ShopNotInstalled}, no actor call), then the shop's actor's start, whose
-   * failure is re-raised as its class.
-   */
-  const syncOpenOrders = Effect.fn("BackendApi.syncOpenOrders")(function* (
-    _request: RequestInfo,
-    payload: SyncOpenOrdersRequest,
-  ) {
-    const { sessionToken } = yield* decodeSyncOpenOrdersRequest(payload).pipe(Effect.orDie);
-    const shop = yield* shopify.sessionTokenShop(sessionToken);
-    if (Option.isNone(yield* shopSessions.find(shop))) return yield* new ShopNotInstalled({ shop });
-    return yield* actors.syncOpenOrders(shop);
-  });
-
-  /**
-   * Sync from Shopify on one order of the token's shop, the token as on {@link listOrders}: the
-   * session read (no row is {@link ShopNotInstalled}, no actor call), then the shop's actor's
-   * one-order sync, whose failure is re-raised as its class.
-   */
-  const syncOrder = Effect.fn("BackendApi.syncOrder")(function* (
-    _request: RequestInfo,
-    payload: SyncOrderRequest,
-  ) {
-    const { sessionToken, orderId } = yield* decodeSyncOrderRequest(payload).pipe(Effect.orDie);
-    const shop = yield* shopify.sessionTokenShop(sessionToken);
-    if (Option.isNone(yield* shopSessions.find(shop))) return yield* new ShopNotInstalled({ shop });
-    return yield* actors.syncOrder(shop, orderId);
-  });
-
   return {
     hello,
     shout,
@@ -259,8 +227,6 @@ const make = Effect.gen(function* () {
     shopSnapshot,
     authenticateAdmin,
     listOrders,
-    syncOpenOrders,
-    syncOrder,
   };
 });
 

@@ -267,15 +267,8 @@ describe("BackendApi.authenticateAdmin", () => {
 
 describe("BackendApi orders", () => {
   const page = { orders: [], limit: 25, nextCursor: null };
-  /**
-   * {@link ShopActors.layerTest} whose `listOrders` answers {@link page}, recording each shop,
-   * whose `syncOpenOrders` answers `InFlight` and whose `syncOrder` answers `Gone`, recording
-   * each shop (and order) in `synced`.
-   */
-  const listingActors = (
-    listed: Array<ShopKey>,
-    synced: Array<{ readonly shop: ShopKey; readonly orderId?: string }> = [],
-  ) =>
+  /** {@link ShopActors.layerTest} whose `listOrders` answers {@link page}, recording each shop. */
+  const listingActors = (listed: Array<ShopKey>) =>
     Layer.effect(
       ShopActors,
       Effect.gen(function* () {
@@ -287,16 +280,6 @@ describe("BackendApi orders", () => {
               listed.push(key);
               return page;
             }),
-          syncOpenOrders: (shop: ShopKey) =>
-            Effect.sync(() => {
-              synced.push({ shop });
-              return { _tag: "InFlight" } as const;
-            }),
-          syncOrder: (shop: ShopKey, orderId: string) =>
-            Effect.sync(() => {
-              synced.push({ shop, orderId });
-              return { _tag: "Gone" } as const;
-            }),
         };
       }),
     ).pipe(Layer.provide(ShopActors.layerTest([], snapshot)));
@@ -304,51 +287,28 @@ describe("BackendApi orders", () => {
 
   it.live("each refuses a token signed with another secret, touching nothing", () => {
     const listed: Array<ShopKey> = [];
-    const orderCalls: Array<{ readonly shop: ShopKey }> = [];
     return Effect.gen(function* () {
       const api = yield* BackendApi;
       const sessionToken = yield* badToken;
-      const request = withCookie(undefined);
-      const errors = [
-        yield* api.listOrders(request, { sessionToken, limit: 25, cursor: null }).pipe(Effect.flip),
-        yield* api.syncOpenOrders(request, { sessionToken }).pipe(Effect.flip),
-        yield* api
-          .syncOrder(request, { sessionToken, orderId: "gid://shopify/Order/1" })
-          .pipe(Effect.flip),
-      ];
-      assert.deepStrictEqual(
-        errors.map((error) => error._tag),
-        ["InvalidSessionToken", "InvalidSessionToken", "InvalidSessionToken"],
-      );
+      const error = yield* api
+        .listOrders(withCookie(undefined), { sessionToken, limit: 25, cursor: null })
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "InvalidSessionToken");
       assert.deepStrictEqual(listed, []);
-      assert.deepStrictEqual(orderCalls, []);
-    }).pipe(Effect.provide(TestBackend({ actors: listingActors(listed, orderCalls) })));
+    }).pipe(Effect.provide(TestBackend({ actors: listingActors(listed) })));
   });
 
   it.live("each acts for the shop its token names", () => {
     const listed: Array<ShopKey> = [];
-    const orderCalls: Array<{ readonly shop: ShopKey; readonly orderId?: string }> = [];
     return Effect.gen(function* () {
       const api = yield* BackendApi;
       const sessionToken = yield* mintSessionToken({ shop: SEED_SHOP });
-      const request = withCookie(undefined);
       assert.deepStrictEqual(
-        yield* api.listOrders(request, { sessionToken, limit: 25, cursor: null }),
+        yield* api.listOrders(withCookie(undefined), { sessionToken, limit: 25, cursor: null }),
         page,
       );
-      assert.deepStrictEqual(yield* api.syncOpenOrders(request, { sessionToken }), {
-        _tag: "InFlight",
-      });
-      assert.deepStrictEqual(
-        yield* api.syncOrder(request, { sessionToken, orderId: "gid://shopify/Order/1" }),
-        { _tag: "Gone" },
-      );
       assert.deepStrictEqual(listed, [SEED_SHOP]);
-      assert.deepStrictEqual(orderCalls, [
-        { shop: SEED_SHOP },
-        { shop: SEED_SHOP, orderId: "gid://shopify/Order/1" },
-      ]);
-    }).pipe(Effect.provide(TestBackend({ actors: listingActors(listed, orderCalls) })));
+    }).pipe(Effect.provide(TestBackend({ actors: listingActors(listed) })));
   });
 
   it.live(

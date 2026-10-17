@@ -330,6 +330,28 @@ export const merchantSyncStatusAtom = ShopActorClient.query("MerchantSyncStatus"
   serializationKey: "merchant-sync-status",
 }).pipe(Atom.withReactivity([SYNC_KEY]), refreshOnFocus);
 
+/** Sync open orders: the screen's one button, so one mutation atom. */
+export const syncOpenOrdersAtom = ShopActorClient.mutation("MerchantSyncOpenOrders");
+
+/**
+ * Sync from Shopify on one order, one atom per order id, each row's loading state its own.
+ * `ShopActorClient.mutation` is one atom per procedure, and a second call re-runs it and
+ * interrupts the first (its body is a `runtime.fn` without `concurrent`); the interrupt reaches
+ * the actor and stops that order's sync, so pressing two rows would sync one. This is AtomRpc's
+ * own mutation body, keyed on the order.
+ *
+ * @see refs/effect/packages/effect/src/reactivity/AtomRpc.ts (`mutation`)
+ * @see refs/effect/packages/effect/src/reactivity/Atom.ts (`makeResultFn`)
+ */
+export const syncOrderAtom = Atom.family((orderId: string) =>
+  ShopActorClient.runtime.fn<void>()(
+    Effect.fnUntraced(function* () {
+      const client = yield* ShopActorClient;
+      return yield* client("MerchantSyncOrder", { orderId });
+    }),
+  ),
+);
+
 /**
  * Names the merchant orders screen's socket: the shop and the token source ({@link nameSocket}).
  * Run once, in the browser, before the screen reads any socket atom; {@link seedOrders} then

@@ -6,18 +6,9 @@ import { OrdersCursor } from "../../domain/shop-work.ts";
 import { mintSessionToken } from "../client/app-bridge.ts";
 import { ORDERS_PAGE_SIZE } from "../client/shop-actor-client.ts";
 import { useNavigateOnClick } from "../components/navigate.ts";
-import OrdersPage, { type OrdersActions } from "../components/OrdersPage.tsx";
-import { listOrders, syncOpenOrders, syncOrder } from "../server/orders.ts";
+import OrdersPage from "../components/OrdersPage.tsx";
+import { listOrders } from "../server/orders.ts";
 import { appSearch } from "./-app-search.ts";
-
-/**
- * The screen's presses as the server functions; from the browser, App Bridge's bearer is the
- * session token.
- */
-const actions: OrdersActions = {
-  syncOpenOrders: () => syncOpenOrders({ data: {} }),
-  syncOrder: (orderId) => syncOrder({ data: { orderId } }),
-};
 
 /**
  * `?after=` is the page, as the keyset cursor it starts after; an absent `after` is page one.
@@ -68,7 +59,6 @@ export const Route = createFileRoute("/app/orders")({
         page={Route.useLoaderData()}
         pageLink={pageLink}
         merchantToken={mintSessionToken}
-        actions={actions}
       />
     );
   },

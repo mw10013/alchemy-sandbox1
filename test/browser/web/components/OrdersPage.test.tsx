@@ -1,12 +1,14 @@
 import * as Effect from "effect/Effect";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import type { OrdersListPage } from "../../../../src/contract/shop-actor.ts";
-import type { OrderDetail, OrdersSyncStatus } from "../../../../src/domain/orders.ts";
+import type {
+  OrderDetail,
+  OrdersSyncResult,
+  OrdersSyncStatus,
+  SyncOrderResult,
+} from "../../../../src/domain/orders.ts";
 import type { AppBridge } from "../../../../src/web/client/app-bridge.ts";
-import OrdersPage, {
-  type OrdersActions,
-  type OrdersPageLink,
-} from "../../../../src/web/components/OrdersPage.tsx";
+import OrdersPage, { type OrdersPageLink } from "../../../../src/web/components/OrdersPage.tsx";
 import { renderInApp } from "../../render.tsx";
 import { shopTestRegistry } from "../../shop-actor.ts";
 import { SEED_SHOP } from "../../../seed-shops.ts";
@@ -57,11 +59,14 @@ const pageLink: OrdersPageLink = (cursor) => ({
 
 const idle: OrdersSyncStatus = { inFlight: false, lastError: null };
 
-/** Presses that answer nothing interesting unless a test says otherwise. */
-const quiet: OrdersActions = {
-  syncOpenOrders: () => Promise.resolve({ _tag: "Started" }),
-  syncOrder: () => Promise.resolve({ _tag: "Stored" }),
-};
+/**
+ * What the two sync procedures answer from the in-memory actor; nothing interesting unless a test
+ * says otherwise.
+ */
+interface Presses {
+  readonly syncOpenOrders?: OrdersSyncResult;
+  readonly syncOrder?: SyncOrderResult;
+}
 
 /**
  * App Bridge's `shopify` global, which the embedded document defines and a test page does not:
@@ -88,7 +93,7 @@ afterEach(() => {
 
 const render = (
   page: OrdersListPage,
-  options: { status?: OrdersSyncStatus; actions?: OrdersActions } = {},
+  options: { status?: OrdersSyncStatus; presses?: Presses } = {},
 ) =>
   renderInApp(
     <OrdersPage
@@ -97,11 +102,13 @@ const render = (
       page={page}
       pageLink={pageLink}
       merchantToken={Effect.succeed("token")}
-      actions={options.actions ?? quiet}
     />,
     shopTestRegistry({
       MerchantListOrders: () => Effect.succeed(page),
       MerchantSyncStatus: () => Effect.succeed(options.status ?? idle),
+      MerchantSyncOpenOrders: () =>
+        Effect.succeed(options.presses?.syncOpenOrders ?? { _tag: "Started" }),
+      MerchantSyncOrder: () => Effect.succeed(options.presses?.syncOrder ?? { _tag: "Stored" }),
     }),
   );
 
@@ -181,7 +188,7 @@ describe("OrdersPage", () => {
     // The empty state's twin: outside the admin, the title bar's copy is in `s-page`'s actions,
     // which a narrow test page folds away; in the admin App Bridge hoists it.
     const screen = await render(pageOf([]), {
-      actions: { ...quiet, syncOpenOrders: () => Promise.resolve({ _tag: "InFlight" }) },
+      presses: { syncOpenOrders: { _tag: "InFlight" } },
     });
     await screen.getByRole("button", { name: "Sync open orders" }).click();
     await expect
@@ -191,7 +198,7 @@ describe("OrdersPage", () => {
 
   it("Sync from Shopify on an order Shopify no longer has toasts Gone", async () => {
     const screen = await render(pageOf([order(1)]), {
-      actions: { ...quiet, syncOrder: () => Promise.resolve({ _tag: "Gone" }) },
+      presses: { syncOrder: { _tag: "Gone" } },
     });
     await screen.getByRole("button", { name: "Sync #1 from Shopify" }).click();
     await expect

@@ -7,8 +7,6 @@ import type { ShopKey } from "../contract/shop.ts";
 import type { OrdersListInput, ShopSnapshot } from "../contract/shop-actor.ts";
 import * as Match from "effect/Match";
 import { FixtureConflict } from "../contract/fixture.ts";
-import * as Schema from "effect/Schema";
-import { OrdersSyncFailure } from "../contract/shopify.ts";
 import type { ActorFixtureRows } from "./fixture.ts";
 import ShopActor, { ABORT_UNINSTALLED } from "./shop-actor.ts";
 
@@ -41,8 +39,6 @@ export const settleDestroy = (key: ShopKey, call: Effect.Effect<void>) =>
       ).pipe(Effect.annotateLogs({ shop: key, status: "failed" })),
     ),
   );
-
-const decodeSyncFailure = Schema.decodeUnknownEffect(OrdersSyncFailure);
 
 const isUninstallAbort = (error: unknown) =>
   error instanceof Cloudflare.RpcCallError &&
@@ -125,26 +121,6 @@ const make = Effect.gen(function* () {
     return yield* actors.getByName(key).syncOrderWebhook(input);
   });
 
-  /**
-   * Sync from Shopify on one order; see `syncOrder` on {@link ShopActor}. Its `Failed` answer is
-   * re-raised as the {@link OrdersSyncFailure} it carries.
-   */
-  const syncOrder = Effect.fn("ShopActors.syncOrder")(function* (key: ShopKey, orderId: string) {
-    const answer = yield* actors.getByName(key).syncOrder({ orderId });
-    if (answer._tag !== "Failed") return answer;
-    return yield* Effect.flatMap(decodeSyncFailure(answer.failure).pipe(Effect.orDie), Effect.fail);
-  });
-
-  /**
-   * Sync open orders; see `syncOpenOrders` on {@link ShopActor}. Its `Failed` answer is re-raised
-   * as `syncOrder`'s is.
-   */
-  const syncOpenOrders = Effect.fn("ShopActors.syncOpenOrders")(function* (key: ShopKey) {
-    const answer = yield* actors.getByName(key).syncOpenOrders();
-    if (answer._tag !== "Failed") return answer;
-    return yield* Effect.flatMap(decodeSyncFailure(answer.failure).pipe(Effect.orDie), Effect.fail);
-  });
-
   /** One stored order with its items, or null. */
   const getOrder = Effect.fn("ShopActors.getOrder")(function* (key: ShopKey, orderId: string) {
     return yield* actors.getByName(key).getOrder({ orderId });
@@ -195,10 +171,8 @@ const make = Effect.gen(function* () {
     addFixture,
     removeOrder,
     syncOrderWebhook,
-    syncOrder,
     getOrder,
     listOrders,
-    syncOpenOrders,
     onOrdersStream,
     onOrdersSyncEmpty,
     onOrdersSyncError,
@@ -259,10 +233,8 @@ export class ShopActors extends Context.Service<ShopActors, Effect.Success<typeo
           return { removed: true };
         }),
       syncOrderWebhook: () => Effect.die(new Error("ShopActors.layerTest: syncOrderWebhook")),
-      syncOrder: () => Effect.die(new Error("ShopActors.layerTest: syncOrder")),
       getOrder: () => Effect.die(new Error("ShopActors.layerTest: getOrder")),
       listOrders: () => Effect.die(new Error("ShopActors.layerTest: listOrders")),
-      syncOpenOrders: () => Effect.die(new Error("ShopActors.layerTest: syncOpenOrders")),
       onOrdersStream: () => Effect.die(new Error("ShopActors.layerTest: onOrdersStream")),
       onOrdersSyncEmpty: () => Effect.die(new Error("ShopActors.layerTest: onOrdersSyncEmpty")),
       onOrdersSyncError: () => Effect.die(new Error("ShopActors.layerTest: onOrdersSyncError")),

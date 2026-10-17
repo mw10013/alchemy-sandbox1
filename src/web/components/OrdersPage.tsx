@@ -1,16 +1,20 @@
-import { RegistryContext, useAtomMount, useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomMount, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useHydrated } from "@tanstack/react-router";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import type * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
-import { useContext, useMemo, useState } from "react";
+import * as Schema from "effect/Schema";
+import { type ReactNode, useContext, useMemo, useState } from "react";
 import { isFixtureOrder } from "../../contract/fixture.ts";
-import { ORDER_SYNC_WINDOW_DAYS, type OrdersCallFailure } from "../../contract/orders.ts";
+import { ORDER_SYNC_WINDOW_DAYS } from "../../contract/orders.ts";
+import { OrdersSyncFailure } from "../../contract/shopify.ts";
 import type { ShopKey } from "../../contract/shop.ts";
 import type { OrdersListInput, OrdersListPage } from "../../contract/shop-actor.ts";
-import type { OrderDetail, OrdersSyncResult, SyncOrderResult } from "../../domain/orders.ts";
+import type { OrderDetail } from "../../domain/orders.ts";
 import { formatNumber, ShopLimits } from "../../domain/platform.ts";
 import { ORDER_POSITION_LABEL, orderPosition } from "../../domain/shop-work.ts";
 import { lostAtom, merchantExpiredAtom, uninstalledAtom } from "../client/actor-connection.ts";
@@ -21,16 +25,11 @@ import {
   nameOrdersSocket,
   noticesAtom,
   seedOrders,
+  syncOpenOrdersAtom,
+  syncOrderAtom,
 } from "../client/shop-actor-client.ts";
-import type { OrdersCallAnswer } from "../server/orders.ts";
 import { EmptyLine } from "./screen/EmptyLine.tsx";
 import { IndexSection } from "./screen/IndexSection.tsx";
-
-/** What the screen asks the Backend to do; the route passes the server functions. */
-export interface OrdersActions {
-  readonly syncOpenOrders: () => Promise<OrdersCallAnswer<OrdersSyncResult>>;
-  readonly syncOrder: (orderId: string) => Promise<OrdersCallAnswer<SyncOrderResult>>;
-}
 
 /**
  * The Next page link's `href` and click for the page starting after `cursor`; the route builds
@@ -50,8 +49,8 @@ const CEILING = `New orders stopped syncing at ${formatNumber(ShopLimits.maxOpen
 const UNINSTALLED = "Baton was uninstalled from this shop.";
 const EXPIRED = "Your Shopify session expired.";
 
-/** Why a Backend order call could not act, as the toast says it; `what` names the press. */
-const failureCopy = (reason: OrdersCallFailure["_tag"], what: string) =>
+/** Why a sync press could not act, as the toast says it; `what` names the press. */
+const failureCopy = (reason: OrdersSyncFailure["_tag"], what: string) =>
   Match.value(reason).pipe(
     Match.when(
       "ReauthorizationRequired",
@@ -64,6 +63,23 @@ const failureCopy = (reason: OrdersCallFailure["_tag"], what: string) =>
 /** A press that threw: its message, as legacy shows it, or `fallback`. */
 const thrownCopy = (error: unknown, fallback: string) =>
   error instanceof Error && error.message !== "" ? error.message : fallback;
+
+const isSyncFailure = Schema.is(OrdersSyncFailure);
+
+/**
+ * A press that failed, as its error toast: a session failure in `syncFailure`'s words, anything
+ * else (a lost socket, a defect) in `thrownCopy`'s.
+ */
+const toastFailure = (
+  cause: Cause.Cause<unknown>,
+  syncFailure: (failure: OrdersSyncFailure) => string,
+  fallback: string,
+) => {
+  const error = Cause.squash(cause);
+  toast(isSyncFailure(error) ? syncFailure(error) : thrownCopy(error, fallback), {
+    isError: true,
+  });
+};
 
 /** Legacy's `adminOrderUrl`: the order in the Shopify admin, which App Bridge resolves. */
 const adminOrderUrl = ({ legacyId }: OrderDetail["order"]) => `shopify://admin/orders/${legacyId}`;
@@ -99,9 +115,56 @@ interface OrdersView {
   readonly banners: ReadonlyArray<string>;
   readonly syncInFlight: boolean;
   readonly syncing: boolean;
-  readonly syncingOrders: ReadonlySet<string>;
   readonly onSyncOpenOrders: () => void;
-  readonly onSyncOrder: (orderId: string) => void;
+  /** A row's Sync from Shopify button. */
+  readonly syncOrderButton: (order: OrderDetail["order"]) => ReactNode;
+}
+
+/** A row's Sync from Shopify button, as its press and loading state say. */
+function SyncOrderButton(props: {
+  readonly order: OrderDetail["order"];
+  readonly loading: boolean;
+  readonly onClick: () => void;
+}) {
+  return (
+    <s-button
+      variant="tertiary"
+      loading={props.loading}
+      accessibilityLabel={`Sync ${props.order.name} from Shopify`}
+      onClick={props.onClick}
+    >
+      Sync from Shopify
+    </s-button>
+  );
+}
+
+/**
+ * A row's Sync from Shopify once hydrated: `MerchantSyncOrder` through the row's own
+ * {@link syncOrderAtom}, whose state is the button's loading. `Gone` toasts; `Stored` toasts
+ * nothing (legacy).
+ */
+function LiveSyncOrderButton({ order }: { readonly order: OrderDetail["order"] }) {
+  const atom = syncOrderAtom(order.id);
+  const loading = AsyncResult.isWaiting(useAtomValue(atom));
+  const sync = useAtomSet(atom, { mode: "promiseExit" });
+  const onClick = () => {
+    void sync(undefined).then(
+      Exit.match({
+        onSuccess: (answer) =>
+          Match.valueTags(answer, {
+            Stored: () => {},
+            Gone: () => toast("Shopify no longer has this order"),
+          }),
+        onFailure: (cause) =>
+          toastFailure(
+            cause,
+            (failure) => failureCopy(failure._tag, "sync the order"),
+            "Couldn't sync the order.",
+          ),
+      }),
+    );
+  };
+  return <SyncOrderButton order={order} loading={loading} onClick={onClick} />;
 }
 
 /**
@@ -194,16 +257,7 @@ function OrdersScreen(view: OrdersView) {
                           accessibilityLabel={`Open ${detail.order.name} in Shopify`}
                         />
                       </s-table-cell>
-                      <s-table-cell>
-                        <s-button
-                          variant="tertiary"
-                          loading={view.syncingOrders.has(detail.order.id)}
-                          accessibilityLabel={`Sync ${detail.order.name} from Shopify`}
-                          onClick={() => view.onSyncOrder(detail.order.id)}
-                        >
-                          Sync from Shopify
-                        </s-button>
-                      </s-table-cell>
+                      <s-table-cell>{view.syncOrderButton(detail.order)}</s-table-cell>
                     </>
                   )}
                 </s-table-row>
@@ -242,44 +296,22 @@ function LiveOrders(props: OrdersPageProps) {
   const uninstalled = useAtomValue(uninstalledAtom);
   const expired = useAtomValue(merchantExpiredAtom);
   const lost = useAtomValue(lostAtom);
-  const [syncing, setSyncing] = useState(false);
-  const [syncingOrders, setSyncingOrders] = useState<ReadonlySet<string>>(new Set());
+  const syncing = AsyncResult.isWaiting(useAtomValue(syncOpenOrdersAtom));
+  const syncOpenOrders = useAtomSet(syncOpenOrdersAtom, { mode: "promiseExit" });
 
   const onSyncOpenOrders = () => {
-    setSyncing(true);
-    props.actions
-      .syncOpenOrders()
-      .then((answer) =>
-        Match.valueTags(answer, {
-          Started: () => toast("Syncing open orders"),
-          InFlight: () => toast("A sync is already running"),
-          Refused: () => toast(CEILING, { isError: true }),
-          Failed: () => toast("Couldn't start the sync.", { isError: true }),
-        }),
-      )
-      .catch((error: unknown) =>
-        toast(thrownCopy(error, "Couldn't start the sync."), { isError: true }),
-      )
-      .finally(() => setSyncing(false));
-  };
-
-  const onSyncOrder = (orderId: string) => {
-    setSyncingOrders((current) => new Set([...current, orderId]));
-    props.actions
-      .syncOrder(orderId)
-      .then((answer) =>
-        Match.valueTags(answer, {
-          Stored: () => {},
-          Gone: () => toast("Shopify no longer has this order"),
-          Failed: ({ reason }) => toast(failureCopy(reason, "sync the order"), { isError: true }),
-        }),
-      )
-      .catch((error: unknown) =>
-        toast(thrownCopy(error, "Couldn't sync the order."), { isError: true }),
-      )
-      .finally(() =>
-        setSyncingOrders((current) => new Set([...current].filter((id) => id !== orderId))),
-      );
+    void syncOpenOrders({ payload: undefined }).then(
+      Exit.match({
+        onSuccess: (answer) =>
+          Match.valueTags(answer, {
+            Started: () => toast("Syncing open orders"),
+            InFlight: () => toast("A sync is already running"),
+            Refused: () => toast(CEILING, { isError: true }),
+          }),
+        onFailure: (cause) =>
+          toastFailure(cause, () => "Couldn't start the sync.", "Couldn't start the sync."),
+      }),
+    );
   };
 
   const banners = [
@@ -296,9 +328,8 @@ function LiveOrders(props: OrdersPageProps) {
       banners={banners}
       syncInFlight={Option.exists(status, ({ inFlight }) => inFlight)}
       syncing={syncing}
-      syncingOrders={syncingOrders}
       onSyncOpenOrders={onSyncOpenOrders}
-      onSyncOrder={onSyncOrder}
+      syncOrderButton={(order) => <LiveSyncOrderButton order={order} />}
     />
   );
 }
@@ -310,7 +341,6 @@ interface OrdersPageProps {
   readonly page: OrdersListPage;
   readonly pageLink: OrdersPageLink;
   readonly merchantToken: Effect.Effect<string>;
-  readonly actions: OrdersActions;
 }
 
 /**
@@ -320,7 +350,8 @@ interface OrdersPageProps {
  * loader's page with no socket, so the server markup and the first client render agree.
  *
  * A sync's failure is the critical banner in the list's head (`lastError`); a press is a toast:
- * a sync started, or a press that did nothing or failed.
+ * a sync started, or a press that did nothing or failed. Both presses are merchant procedures on
+ * the socket (`MerchantSyncOpenOrders`, `MerchantSyncOrder`).
  */
 export default function OrdersPage(props: OrdersPageProps) {
   const hydrated = useHydrated();
@@ -332,9 +363,10 @@ export default function OrdersPage(props: OrdersPageProps) {
       banners={[]}
       syncInFlight={false}
       syncing={false}
-      syncingOrders={new Set()}
       onSyncOpenOrders={() => {}}
-      onSyncOrder={() => {}}
+      syncOrderButton={(order) => (
+        <SyncOrderButton order={order} loading={false} onClick={() => {}} />
+      )}
     />
   );
 }

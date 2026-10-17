@@ -24,7 +24,6 @@ import { Forbidden } from "../contract/auth.ts";
 import { ShopKey } from "../contract/shop.ts";
 import {
   OfflineSessionMissing,
-  OrdersSyncFailure,
   ShopifyUnavailable as ShopifyUnreachable,
 } from "../contract/shopify.ts";
 import { ShopLimits } from "../domain/platform.ts";
@@ -65,7 +64,6 @@ import { runOrdersStream } from "./shop-actor/orders-stream.ts";
 import { ShopifyAdmin } from "./shopify-admin.ts";
 
 const encodeNotice = Schema.encodeSync(NoticeFrame);
-const encodeSyncFailure = Schema.encodeSync(OrdersSyncFailure);
 const decodeConnectionHeader = Schema.decodeUnknownOption(Schema.fromJsonString(ConnectionCaller));
 const decodeShopKey = Schema.decodeUnknownOption(ShopKey);
 const decodeIdentity = Schema.decodeUnknownOption(
@@ -458,7 +456,7 @@ const makeShopActor = Effect.gen(function* () {
     });
 
     /**
-     * Sync open orders, for `MerchantSyncOpenOrders`: the shop's `ShopSession` read first, so a
+     * Sync open orders, `MerchantSyncOpenOrders`: the shop's `ShopSession` read first, so a
      * row deleted while the socket stayed open is {@link OfflineSessionMissing} with nothing
      * recorded and no instance created, then `OrdersAgent.syncOpenOrders`.
      */
@@ -470,7 +468,7 @@ const makeShopActor = Effect.gen(function* () {
       }).pipe(Effect.catch(syncFailure(operation)));
 
     /**
-     * A sync press's failure as its caller is told it ({@link OrdersSyncFailure}): a session
+     * A sync press's failure as its caller is told it (`OrdersSyncFailure`): a session
      * failure crosses as it is, except `ShopifyUnavailable`, whose cause is logged here and never
      * sent. A storage failure is a defect.
      */
@@ -758,39 +756,6 @@ const makeShopActor = Effect.gen(function* () {
       Effect.provide(runtime),
     );
 
-    /**
-     * Sync from Shopify on one order for the Backend's `syncOrder` until the orders screen calls
-     * `MerchantSyncOrder` itself: the same call, answering a failure as data
-     * (`{ _tag: "Failed", failure }`, the {@link OrdersSyncFailure} encoded), since a stub method
-     * carries no typed failure; the Backend re-raises it.
-     */
-    const syncOrder = Effect.fn("ShopActor.syncOrder")(function* (input: {
-      readonly orderId: string;
-    }) {
-      return yield* ordersAgent.syncOrder(input).pipe(
-        Effect.catch(syncFailure("ShopActor.syncOrder")),
-        Effect.catch((failure) =>
-          Effect.succeed({
-            _tag: "Failed" as const,
-            failure: encodeSyncFailure(failure),
-          }),
-        ),
-      );
-    }, Effect.provide(runtime));
-
-    /**
-     * Sync open orders for the Backend's `syncOpenOrders` until the orders screen calls
-     * `MerchantSyncOpenOrders` itself: the same call, its failure answered as data as `syncOrder`
-     * answers it.
-     */
-    const syncOpenOrders = Effect.fn("ShopActor.syncOpenOrders")(function* () {
-      return yield* syncOpenOrdersFor("ShopActor.syncOpenOrders").pipe(
-        Effect.catch((failure) =>
-          Effect.succeed({ _tag: "Failed" as const, failure: encodeSyncFailure(failure) }),
-        ),
-      );
-    }, Effect.provide(runtime));
-
     /** One stored order with its items, or null. */
     const getOrder = Effect.fn("ShopActor.getOrder")(
       function* ({ orderId }: { readonly orderId: string }) {
@@ -977,8 +942,6 @@ const makeShopActor = Effect.gen(function* () {
       addFixture,
       removeOrder,
       syncOrderWebhook,
-      syncOrder,
-      syncOpenOrders,
       getOrder,
       listOrders,
       onOrdersStream,
@@ -997,9 +960,8 @@ const makeShopActor = Effect.gen(function* () {
  * It has two surfaces that never overlap. Browsers call `ShopActorRpcs` with Effect RPC over a
  * hibernating WebSocket; there is no HTTP RPC into the actor. The Backend and the orders sync
  * Workflow call the schemaless methods `revoke`, `snapshot`, `loadFixture`, `addFixture`,
- * `removeOrder`, `syncOrderWebhook`, `syncOrder`, `syncOpenOrders`, `getOrder`, `listOrders`,
- * `onOrdersStream`, `onOrdersSyncEmpty`, `onOrdersSyncError` and `destroy` on its stub, which no
- * browser can reach.
+ * `removeOrder`, `syncOrderWebhook`, `getOrder`, `listOrders`, `onOrdersStream`,
+ * `onOrdersSyncEmpty`, `onOrdersSyncError` and `destroy` on its stub, which no browser can reach.
  *
  * It owns its shop, as legacy's `ShopAgent` does: it fetches an order from the Admin API itself
  * (`OrdersAgent`, over the Backend's own `ShopifyAdmin`, which refreshes the offline token when a

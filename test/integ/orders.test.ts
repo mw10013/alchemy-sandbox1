@@ -536,29 +536,17 @@ test(
     const bad = yield* mintSessionToken({ shop: SEED_SHOP, apiSecret: "other-secret" });
     const good = yield* mintSessionToken({ shop: SEED_SHOP });
     const uninstalled = yield* mintSessionToken({ shop: UNINSTALLED_SHOP });
-    yield* integ(backendUrl, (c) =>
-      c.ScriptShopify({
-        replies: [{ route: "graphql", status: 200, body: { data: { order: null } } }],
-      }),
-    );
+    yield* script([]);
     yield* integ(backendUrl, (c) =>
       Effect.gen(function* () {
-        const refusals = [
-          yield* c.ApiListOrders({ sessionToken: bad, limit: 25, cursor: null }).pipe(Effect.flip),
-          yield* c.ApiSyncOrder({ sessionToken: bad, orderId: orderId(21) }).pipe(Effect.flip),
-        ];
-        assert.deepStrictEqual(
-          refusals.map((error) => error._tag),
-          ["InvalidSessionToken", "InvalidSessionToken"],
-        );
+        const refusal = yield* c
+          .ApiListOrders({ sessionToken: bad, limit: 25, cursor: null })
+          .pipe(Effect.flip);
+        assert.strictEqual(refusal._tag, "InvalidSessionToken");
         const page = yield* c.ApiListOrders({ sessionToken: good, limit: 25, cursor: null });
         assert.deepStrictEqual(
           page.orders.map(({ order, lineItems }) => [order.id, lineItems.length]),
           [[orderId(21), 1]],
-        );
-        assert.deepStrictEqual(
-          yield* c.ApiSyncOrder({ sessionToken: good, orderId: orderId(21) }),
-          { _tag: "Gone" },
         );
         const notInstalled = yield* c
           .ApiListOrders({ sessionToken: uninstalled, limit: 25, cursor: null })
@@ -566,10 +554,7 @@ test(
         assert.strictEqual(notInstalled._tag, "ShopNotInstalled");
       }),
     );
-    assert.deepStrictEqual(
-      (yield* integ(backendUrl, (c) => c.ShopifyCalls({}))).map(({ route }) => route),
-      ["graphql"],
-    );
+    assert.deepStrictEqual(yield* integ(backendUrl, (c) => c.ShopifyCalls({})), []);
   }),
 );
 
@@ -624,10 +609,8 @@ test(
  * socket could name; here they are stub methods of the same names, which only the Backend's
  * Workflow holds, so no browser procedure carries them. Legacy's two sync buttons were
  * merchant-only callables; here they are the merchant procedures `MerchantSyncOpenOrders` and
- * `MerchantSyncOrder`, which a member's socket is `Forbidden`, as it is the sync's status. The
- * `BackendApi.syncOrder` the screen still calls takes a Shopify session token and nothing else,
- * so a member, whose only credential is a Better Auth session, is refused it as an invalid
- * token.
+ * `MerchantSyncOrder`, which a member's socket is `Forbidden`, as it is the sync's status, and no
+ * Shopify call is made.
  */
 test(
   "the stream's callbacks are not callable from a socket, and the two sync buttons refuse a member",
@@ -666,10 +649,6 @@ test(
       );
     }).pipe(Effect.scoped);
     yield* script([]);
-    const refusal = yield* integ(backendUrl, (c) =>
-      c.ApiSyncOrder({ sessionToken: sessionId, orderId: orderId(31) }).pipe(Effect.flip),
-    );
-    assert.strictEqual(refusal._tag, "InvalidSessionToken");
     assert.deepStrictEqual(yield* integ(backendUrl, (c) => c.ShopifyCalls({})), []);
   }),
 );

@@ -186,6 +186,8 @@ export default defineConfig(({ command, mode, isPreview }) => {
               "effect/SchemaGetter",
               "effect/Struct",
               "effect/DateTime",
+              "effect/Cause",
+              "effect/Exit",
             ],
           },
           test: {
