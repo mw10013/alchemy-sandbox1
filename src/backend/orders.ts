@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ShopNotInstalled } from "../contract/fixture.ts";
 import type { ShopKey } from "../contract/shop.ts";
-import type { OrdersSyncResult } from "../domain/orders.ts";
+import type { OrdersSyncResult, SyncOrderResult } from "../domain/orders.ts";
 import { ShopLimits } from "../domain/platform.ts";
 import { OrderSyncResponse, orderSyncQuery, orderSyncVariables } from "./order-sync.ts";
 import { OrdersSyncWorkflows } from "./orders-sync-workflow.ts";
@@ -93,6 +93,37 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * Sync from Shopify on one order, legacy's `syncOrder`: {@link syncOrderFromWebhook} without
+   * the version probe, since a merchant pressing the button is asking for the fetch and the
+   * upsert's own version guard still protects the row. The session read comes first, as on
+   * every background path: no row fails {@link ShopNotInstalled} with no actor call.
+   *
+   * `Gone` when Shopify answers null for the order (the stored row stays, the rule on
+   * `SyncOrderResult`); otherwise `Stored`, a ceiling refusal of an order not stored included,
+   * as legacy answered: its result knew only gone or not, and the refusal is the ceiling banner's
+   * to show, not this button's.
+   *
+   * The billing seam: the usage flush after a one-order sync goes here, after `storeOrder`,
+   * whether or not the fetch succeeded.
+   */
+  const syncOrder = Effect.fn("Orders.syncOrder")(function* (shop: ShopKey, orderId: string) {
+    if (Option.isNone(yield* shopSessions.find(shop))) return yield* new ShopNotInstalled({ shop });
+    const outcome = (status: "gone" | "refused" | "stored") =>
+      Effect.logInfo(`Orders.syncOrder: shop=${shop} orderId=${orderId} status=${status}`).pipe(
+        Effect.annotateLogs({ shop, orderId, status }),
+      );
+    const order = yield* fetchOrder(shop, orderId);
+    if (order === null) {
+      yield* outcome("gone");
+      return { _tag: "Gone" } satisfies SyncOrderResult;
+    }
+    const { lineItems, ...node } = order;
+    const { refused } = yield* actors.storeOrder(shop, { order: node, lineItems: lineItems.nodes });
+    yield* outcome(refused ? "refused" : "stored");
+    return { _tag: "Stored" } satisfies SyncOrderResult;
+  });
+
+  /**
    * Sync open orders, the Backend's half of legacy's `syncOpenOrders`: the session read (no row
    * fails {@link ShopNotInstalled} with no actor call, as every background path guards), then the
    * actor's `beginSync` under a fresh instance id, then, only on `Started`, the
@@ -126,7 +157,7 @@ const make = Effect.gen(function* () {
     return result;
   });
 
-  return { fetchOrder, syncOrderFromWebhook, beginOpenOrdersSync };
+  return { fetchOrder, syncOrderFromWebhook, syncOrder, beginOpenOrdersSync };
 });
 
 /**

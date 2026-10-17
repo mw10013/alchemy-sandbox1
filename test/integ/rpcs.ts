@@ -15,11 +15,16 @@ import { MagicLinkDelivery } from "../../src/backend/magic-link-delivery.ts";
 import { Members } from "../../src/backend/members.ts";
 import { ShopKey } from "../../src/contract/shop.ts";
 import { OrdersListInput, OrdersListPage } from "../../src/contract/shop-actor.ts";
-import { OrderDetail, OrdersSyncResult } from "../../src/domain/orders.ts";
+import { OrderDetail, OrdersSyncResult, SyncOrderResult } from "../../src/domain/orders.ts";
 import { ShopNotInstalled } from "../../src/contract/fixture.ts";
 import { Orders } from "../../src/backend/orders.ts";
 import { LineItemNode, OrderNode } from "../../src/backend/order-sync.ts";
 import { ShopActors } from "../../src/backend/shop-actors.ts";
+import {
+  OfflineSessionMissing,
+  ReauthorizationRequired,
+  ShopifyUnavailable,
+} from "../../src/backend/shopify.ts";
 import { ShopifyFake } from "./shopify-fake.ts";
 
 /**
@@ -56,8 +61,9 @@ export type ShopifyFakeCall = typeof ShopifyFakeCall.Type;
  *   `ShopifyCalls` answers the calls it served since, as {@link ShopifyFakeCall}, and clears them.
  * - `OrderVersion`, `StoreOrder`, `GetOrder` and `ListOrders` are the {@link ShopActors} methods
  *   of the same names on `shop`'s actor, as the Backend calls them.
- * - `SyncOpenOrders` is `Orders.beginOpenOrdersSync`, the Backend's Sync open orders, because
- *   integ has no merchant page to press it on.
+ * - `SyncOpenOrders` is `Orders.beginOpenOrdersSync`, the Backend's Sync open orders, and
+ *   `SyncOrder` is `Orders.syncOrder`, its Sync from Shopify on one order, because integ has no
+ *   merchant page to press either on.
  * - `TrackSync` and `SyncFailed` are the {@link ShopActors} methods `beginSync` and `syncFailed`
  *   on `shop`'s actor: a start recorded at a `startedAt` the test picks (an old one is a dead
  *   sync's record) with no Workflow behind it, and a sync's end as a late caller reports it.
@@ -102,6 +108,16 @@ export const IntegRpcs = RpcGroup.make(
     payload: { shop: ShopKey },
     success: OrdersSyncResult,
     error: ShopNotInstalled,
+  }),
+  Rpc.make("SyncOrder", {
+    payload: { shop: ShopKey, orderId: Schema.String },
+    success: SyncOrderResult,
+    error: Schema.Union([
+      ShopNotInstalled,
+      OfflineSessionMissing,
+      ReauthorizationRequired,
+      ShopifyUnavailable,
+    ]),
   }),
   Rpc.make("TrackSync", {
     payload: { shop: ShopKey, workflowId: Schema.String, startedAt: Schema.Number },
@@ -149,6 +165,7 @@ export const IntegHandlers = IntegRpcs.toLayer(
       GetOrder: ({ shop, orderId }) => actors.getOrder(shop, orderId),
       ListOrders: ({ shop, ...input }) => actors.listOrders(shop, input),
       SyncOpenOrders: ({ shop }) => orders.beginOpenOrdersSync(shop),
+      SyncOrder: ({ shop, orderId }) => orders.syncOrder(shop, orderId),
       TrackSync: ({ shop, workflowId, startedAt }) =>
         actors.beginSync(shop, { workflowId, now: startedAt }),
       SyncFailed: ({ shop, ...input }) => actors.syncFailed(shop, input).pipe(Effect.as({})),

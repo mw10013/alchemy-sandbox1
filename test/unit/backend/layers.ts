@@ -158,13 +158,15 @@ export interface OrderActorCalls {
 
 /**
  * `ShopActors.layerTest` whose `orderVersion` answers `version`, whose `storeOrder` writes a
- * fresh, changed row, and whose `destroy` reads `stub` as the actor's answer through the real
- * {@link settleDestroy}, each recorded in `calls`.
+ * fresh, changed row (or, when `refused`, is refused at the ceiling and writes nothing), and
+ * whose `destroy` reads `stub` as the actor's answer through the real {@link settleDestroy},
+ * each recorded in `calls`.
  */
 export const testOrderActors = (
   calls: OrderActorCalls,
   version: "stale" | "fetch" | "refused" = "fetch",
   stub: Effect.Effect<void> = Effect.void,
+  refused = false,
 ) =>
   Layer.effect(
     ShopActors,
@@ -181,7 +183,9 @@ export const testOrderActors = (
         storeOrder: (key, { order, lineItems }) =>
           Effect.sync(() => {
             calls.stored.push({ key, order, lineItems });
-            return { written: true, fresh: true, changed: true, refused: false };
+            return refused
+              ? { written: false, fresh: false, changed: false, refused: true }
+              : { written: true, fresh: true, changed: true, refused: false };
           }),
         destroy: (key) =>
           Effect.gen(function* () {

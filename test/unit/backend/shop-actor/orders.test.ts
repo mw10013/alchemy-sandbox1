@@ -406,6 +406,77 @@ describe("OrderRepository.sweepExpiredOrders, the retention sweep", () => {
   );
 });
 
+/**
+ * Stores `n` orders placed past retention, oldest first (`expired-1` is the oldest), each with an
+ * open run, straight to SQL: the sweep reads rows, and `upsertOrder` refuses an expired new one.
+ */
+const storeExpiredOrders = (sql: SqlClient.SqlClient, n: number) =>
+  sql.withTransaction(
+    Effect.gen(function* () {
+      for (let i = 1; i <= n; i++) {
+        const id = `gid://shopify/Order/expired-${String(i)}`;
+        yield* sql`
+          insert into ShopOrder (id, legacyId, name, processedAt, updatedAt, cancelledAt, fulfillmentStatus, fullyPaid, note, syncedAt)
+          values (${id}, ${`expired-${String(i)}`}, ${`#expired-${String(i)}`}, ${EXPIRED - n + i}, ${EXPIRED}, null, 'UNFULFILLED', 1, null, ${EXPIRED})
+        `;
+        yield* runWith(id, "open", EXPIRED)(sql);
+      }
+    }),
+  );
+
+describe("OrderRepository.sweepExpiredOrders, batch and chunking", () => {
+  /**
+   * 250 expired orders: the first pass takes the oldest 200, which the repository deletes in three
+   * chunks (90, 90, 20), the second the last 50, the third nothing. A chunk left out or cut short
+   * leaves its orders or runs behind. The 90 itself is not observable here: Node's SQLite admits
+   * far more bound parameters per statement than the Durable Object does.
+   */
+  it.effect(
+    "a sweep deletes at most sweepBatch orders, oldest first, each chunk with its runs",
+    () =>
+      runInRepository((repository, sql) =>
+        Effect.gen(function* () {
+          yield* storeExpiredOrders(sql, 250);
+          yield* upsert(repository, anOrder({ id: orderId(1), processedAt: KEPT }), []);
+          const expired = (from: number, to: number) =>
+            Array.from(
+              { length: to - from + 1 },
+              (_, i) => `gid://shopify/Order/expired-${String(from + i)}`,
+            );
+
+          const first = yield* repository.sweepExpiredOrders({ now: NOW });
+          assert.deepStrictEqual(first, {
+            orders: ShopLimits.sweepBatch,
+            runs: ShopLimits.sweepBatch,
+          });
+          assert.deepStrictEqual(
+            (yield* ids(sql, "ShopOrder")).toSorted(),
+            [orderId(1), ...expired(201, 250)].toSorted(),
+          );
+          assert.deepStrictEqual(
+            (yield* ids(sql, "Run")).toSorted(),
+            expired(201, 250)
+              .map((id) => `run-${id}-open`)
+              .toSorted(),
+          );
+
+          assert.deepStrictEqual(yield* repository.sweepExpiredOrders({ now: NOW }), {
+            orders: 50,
+            runs: 50,
+          });
+          assert.deepStrictEqual(yield* ids(sql, "ShopOrder"), [orderId(1)]);
+          assert.deepStrictEqual(yield* ids(sql, "Run"), []);
+
+          assert.deepStrictEqual(yield* repository.sweepExpiredOrders({ now: NOW }), {
+            orders: 0,
+            runs: 0,
+          });
+          assert.strictEqual(yield* repository.lastSweepAt(), NOW);
+        }),
+      ),
+  );
+});
+
 describe("OrderRepository retention", () => {
   it.effect("an order older than retention is never stored again", () =>
     runInRepository((repository, sql) =>
