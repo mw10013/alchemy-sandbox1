@@ -434,6 +434,11 @@ STAGING: ready for the orchestrator (head d8fa411, after Follow-up round 2).
 - 2026-10-17 Orchestrator decisions: the socket accept and close logs go to Info (one line per connection, visible in dev and staging without `DEBUG`); the "Next page" link and `RemoveOrder` are accepted as built.
 - 2026-10-17 [Follow-up 2] Lead: `ShopActor.fetch`'s "socket accepted" and `ShopActor.webSocketClose`'s lines are `Effect.logInfo`, the close JSDoc says Info; no test names the level. `vp check` green (246 files, 202 linted); `vp test` 44 files, 517 tests, 45.5 s.
 
+### Follow-up round 3
+
+- 2026-10-17 Orchestrator, staging defect (`mw10013-staging-shop-00`, head d8fa411, after `cloud:reset`): Sync open orders listed the store's 3 orders (`OrdersSyncWorkflow.run … status=complete objectCount=7`). Uninstall delivered `APP_UNINSTALLED`; the log shows `ShopActors.destroy … status=destroyed` and `ShopActor.destroy … sockets=0 closed=true: storage deleted`. After a reinstall from the Dev Dashboard, `/app/orders` still listed the same 3 orders, with no sync and no `storeOrder` in the log between. Cause: SQLite-backed storage coalesces writes, and `destroy` aborted right after `deleteAll` resolved, so the reset discarded the pending delete (`refs/cloudflare-docs/src/content/partials/durable-objects/api-storage-other-methods.mdx`, "deleteAll" and "sync"). Local workerd writes synchronously, so integ could not show it.
+- 2026-10-17 [Follow-up 3] Lead: `ShopActor.destroy` now runs `Effect.promise(() => state.raw.storage.sync())` after `deleteAll` (order: close sockets, `deleteAlarm`, `deleteAll`, sync, close wait, log, abort); its JSDoc states the rule with an `@see` to the docs path. `test/integ/uninstall.test.ts`' JSDoc says local workerd cannot show this; no assertion added. `vp check` green (246 files, 202 linted); `vp test` 44 files, 517 tests, 45.2 s; `vp run test:e2e` 34 passed, 2.7 min.
+
 ### Human steps requested
 
 - 2026-10-17 [Step 7] `embedded/orders.spec.ts` needs store auth on the e2e store. Run once, approve the Shopify CLI Connector App install in the browser page it opens:

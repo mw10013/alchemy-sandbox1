@@ -17,7 +17,9 @@ import Stack from "./stack.ts";
 /**
  * `app/uninstalled` against the real Backend, D1 and actor, on a stage of its own so the shop it
  * tears down is no other file's: the session and its cascade go, the actor's sockets close
- * terminally, its storage goes, and a later delivery does not bring the actor back.
+ * terminally, its storage goes, and a later delivery does not bring the actor back. Local
+ * workerd writes storage synchronously, so this cannot show a delete lost to a reset before
+ * `storage.sync()`; only staging can.
  */
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),

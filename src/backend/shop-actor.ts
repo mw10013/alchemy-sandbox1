@@ -984,12 +984,19 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
       /**
        * Tears the shop's actor down on uninstall: closes every socket with
        * {@link CONNECTION_CLOSE_UNINSTALLED} (best effort, as every close here), deletes the alarm
-       * and then all storage, which is what ends the object's storage billing, waits up to
-       * {@link CLOSE_HANDSHAKE_WAIT} for the closes to complete, and aborts the object with
-       * {@link ABORT_UNINSTALLED}. The abort matters: the actor migrates once per activation, so
+       * and then all storage, which is what ends the object's storage billing, syncs storage to
+       * disk, waits up to {@link CLOSE_HANDSHAKE_WAIT} for the closes to complete, and aborts the
+       * object with {@link ABORT_UNINSTALLED}.
+       *
+       * SQLite-backed storage coalesces writes: `deleteAll` resolving does not mean the delete
+       * reached disk, and a reset discards writes that are still coalescing. So a method that
+       * deletes storage syncs before it aborts; without the sync, production kept the shop's
+       * orders across an uninstall. Local workerd writes synchronously and never shows this. The abort matters: the actor migrates once per activation, so
        * without it this activation would keep serving with its tables gone. The abort lands
        * mid-call, so the stub call rejects instead of answering; `ShopActors.destroy` reads that
        * rejection as success.
+       *
+       * @see refs/cloudflare-docs/src/content/partials/durable-objects/api-storage-other-methods.mdx ("deleteAll", "sync")
        */
       const destroy = Effect.fn("ShopActor.destroy")(function* () {
         const sockets = yield* state.getWebSockets();
@@ -997,6 +1004,7 @@ export default class ShopActor extends Cloudflare.DurableObject<ShopActor>()(
           yield* closeSocket(ws, CONNECTION_CLOSE_UNINSTALLED, UNINSTALLED_REASON);
         yield* state.storage.deleteAlarm();
         yield* state.storage.deleteAll();
+        yield* Effect.promise(() => state.raw.storage.sync());
         const closed = yield* Effect.sync(() =>
           sockets.every((ws) => ws.ws.readyState === WebSocket.CLOSED),
         ).pipe(
